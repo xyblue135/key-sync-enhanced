@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "id": "action-interaction",
+  "name": "动作探索/交互",
+  "category": "action",
+  "description": "强化交互、拾取和菜单操作。",
+  "coordinateMode": "normalized",
+  "items": [
+    {
+      "type": "WASD",
+      "x": 0.04,
+      "y": 0.63,
+      "scale": 0.9,
+      "centerX": 0.1025,
+      "centerY": 0.6875,
+      "wX": 0.1025,
+      "wY": 0.6375,
+      "aX": 0.0575,
+      "aY": 0.6875,
+      "sX": 0.1025,
+      "sY": 0.7375,
+      "dX": 0.1475,
+      "dY": 0.6875
+    },
+    {
+      "type": "KEY",
+      "keyCode": "SPACE",
+      "x": 0.74,
+      "y": 0.82,
+      "size": 0.055
+    },
+    {
+      "type": "KEY",
+      "keyCode": "E",
+      "x": 0.84,
+      "y": 0.6,
+      "size": 0.05
+    },
+    {
+      "type": "KEY",
+      "keyCode": "F",
+      "x": 0.84,
+      "y": 0.7,
+      "size": 0.05
+    },
+    {
+      "type": "KEY",
+      "keyCode": "TAB",
+      "x": 0.7,
+      "y": 0.5,
+      "size": 0.05
+    },
+    {
+      "type": "KEY",
+      "keyCode": "ESCAPE",
+      "x": 0.76,
+      "y": 0.5,
+      "size": 0.05
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "id": "racing-arrows",
+  "name": "赛车方向键",
+  "category": "racing",
+  "description": "方向键赛车控制。",
+  "coordinateMode": "normalized",
+  "items": [
+    {
+      "type": "KEY",
+      "keyCode": "UP",
+      "x": 0.78,
+      "y": 0.58,
+      "size": 0.055
+    },
+    {
+      "type": "KEY",
+      "keyCode": "LEFT",
+      "x": 0.7,
+      "y": 0.67,
+      "size": 0.055
+    },
+    {
+      "type": "KEY",
+      "keyCode": "DOWN",
+      "x": 0.78,
+      "y": 0.76,
+      "size": 0.055
+    },
+    {
+      "type": "KEY",
+      "keyCode": "RIGHT",
+      "x": 0.86,
+      "y": 0.67,
+      "size": 0.055
+    },
+    {
+      "type": "KEY",
+      "keyCode": "SPACE",
+      "x": 0.7,
+      "y": 0.82,
+      "size": 0.05
+    },
+    {
+      "type": "KEY",
+      "keyCode": "SHIFT_LEFT",
+      "x": 0.84,
+      "y": 0.82,
+      "size": 0.05
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "moba-standard",
+  "name": "MOBA 标准",
+  "category": "moba",
+  "description": "WASD 移动 + QWER 技能 + 常用功能键。",
+  "coordinateMode": "normalized",
+  "items": [
+    {"type":"WASD","x":0.04,"y":0.63,"scale":0.95,"centerX":0.1025,"centerY":0.6925,"wX":0.1025,"wY":0.6425,"aX":0.0525,"aY":0.6925,"sX":0.1025,"sY":0.7425,"dX":0.1525,"dY":0.6925},
+    {"type":"KEY","keyCode":"Q","x":0.74,"y":0.58,"size":0.05},
+    {"type":"KEY","keyCode":"E","x":0.86,"y":0.58,"size":0.05},
+    {"type":"KEY","keyCode":"R","x":0.92,"y":0.58,"size":0.05},
+    {"type":"KEY","keyCode":"F","x":0.86,"y":0.68,"size":0.05},
+    {"type":"KEY","keyCode":"SPACE","x":0.76,"y":0.80,"size":0.055},
+    {"type":"KEY","keyCode":"TAB","x":0.70,"y":0.48,"size":0.05}
+  ]
+}

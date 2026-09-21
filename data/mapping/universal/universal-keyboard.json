@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "universal-keyboard",
+  "name": "通用键盘",
+  "category": "universal",
+  "description": "WASD + 常用功能键的基础模板。",
+  "coordinateMode": "normalized",
+  "items": [
+    {"type":"WASD","x":0.04,"y":0.62,"scale":0.95,"centerX":0.1025,"centerY":0.6825,"wX":0.1025,"wY":0.6325,"aX":0.0525,"aY":0.6825,"sX":0.1025,"sY":0.7325,"dX":0.1525,"dY":0.6825},
+    {"type":"KEY","keyCode":"SPACE","x":0.72,"y":0.82,"size":0.055},
+    {"type":"KEY","keyCode":"E","x":0.82,"y":0.60,"size":0.05},
+    {"type":"KEY","keyCode":"Q","x":0.76,"y":0.60,"size":0.05},
+    {"type":"KEY","keyCode":"R","x":0.88,"y":0.60,"size":0.05},
+    {"type":"KEY","keyCode":"F","x":0.82,"y":0.70,"size":0.05},
+    {"type":"KEY","keyCode":"TAB","x":0.70,"y":0.48,"size":0.05}
+  ]
+}

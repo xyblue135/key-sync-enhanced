@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "universal-wasd",
+  "name": "通用 WASD",
+  "category": "universal",
+  "description": "适合大多数使用左摇杆/方向轮盘移动的游戏。",
+  "coordinateMode": "normalized",
+  "items": [
+    {"type":"WASD","x":0.05,"y":0.62,"scale":1.0,"centerX":0.115,"centerY":0.685,"wX":0.115,"wY":0.635,"aX":0.065,"aY":0.685,"sX":0.115,"sY":0.735,"dX":0.165,"dY":0.685}
+  ]
+}

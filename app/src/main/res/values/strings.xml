@@ -1,0 +1,202 @@
+<resources>
+    <string name="app_name">键位同步</string>
+
+    <!-- 加号菜单：4 个分组 -->
+    <string name="section_movement">移动</string>
+    <string name="section_combat">战斗</string>
+    <string name="section_weapons">武器</string>
+    <string name="section_interaction">交互</string>
+
+    <!-- 加号菜单：22 个按钮的 label / contentDescription -->
+    <string name="label_key">按键</string>
+    <string name="label_tap_key">点击键</string>
+    <string name="label_hold_key">按住键</string>
+    <string name="label_compass">罗盘</string>
+    <string name="label_jump">跳跃</string>
+    <string name="label_crouch">蹲下</string>
+    <string name="label_prone">趴下</string>
+    <string name="label_sprint">冲刺</string>
+    <string name="label_fire">开火</string>
+    <string name="label_shoot_mode">射击模式</string>
+    <string name="label_scope">倍镜</string>
+    <string name="label_reload">装弹</string>
+    <string name="label_melee">近战</string>
+    <string name="label_grenade">手雷</string>
+    <string name="label_heal">治疗</string>
+    <string name="label_weapon_1">武器 1</string>
+    <string name="label_weapon_2">武器 2</string>
+    <string name="label_weapon_3">武器 3</string>
+    <string name="label_mouse_mid">鼠标中键</string>
+    <string name="label_bag_map">背包/地图</string>
+    <string name="label_interact">互动</string>
+    <string name="label_ping">标记</string>
+    <string name="label_emote">表情</string>
+    <string name="label_inspect">检视</string>
+    <string name="label_backpack">背包</string>
+    <string name="label_map">地图</string>
+    <string name="label_quick_switch">切枪</string>
+    <string name="label_use">使用</string>
+    <string name="label_esc">菜单</string>
+
+    <string name="cd_bag_map">背包/地图</string>
+    <string name="cd_scope">倍镜</string>
+    <string name="cd_shooting_mode">射击模式</string>
+    <string name="cd_fire">开火</string>
+
+    <!-- 悬浮窗 -->
+    <string name="dialog_add_keymap_for">添加键位映射：</string>
+    <string name="slider_pointer_sensitivity">指针灵敏度：</string>
+    <string name="slider_overlay_opacity">悬浮窗透明度：</string>
+    <string name="cd_advanced_settings">高级设置</string>
+    <string name="cd_close">关闭</string>
+
+    <!-- ContainerItems -->
+    <string name="cd_remove">移除</string>
+    <string name="cd_scale">缩放</string>
+    <string name="cd_configure_key">修改按键</string>
+
+    <!-- Key re-bind dialog -->
+    <string name="key_rebind_title">修改按键</string>
+    <string name="key_rebind_current">当前按键：%1$s</string>
+    <string name="key_rebind_hint">点击下方按钮后按任意键进行重绑</string>
+    <string name="key_rebind_capture">点击此处捕获按键</string>
+    <string name="key_rebind_captured">已捕获：%1$s</string>
+    <string name="key_rebind_confirm">保存</string>
+    <string name="key_rebind_cancel">取消</string>
+    <string name="key_touch_mode_title">触摸模式</string>
+    <string name="key_touch_mode_tap">点击（按一下触发一次）</string>
+    <string name="key_touch_mode_hold">按住（按下持续，松开结束，适合探头）</string>
+    <string name="key_touch_mode_mixed">混合（短按/长按）</string>
+    <string name="key_touch_mode_wheel">轮盘（按住 + 滚轮 360° 选择）</string>
+    <string name="key_touch_mode_global">跟随全局设置</string>
+    <string name="shooting_mode_key_title">射击模式切换键</string>
+    <string name="shooting_mode_key_grave">` 键（反引号）</string>
+    <string name="shooting_mode_key_mmb">鼠标中键</string>
+
+    <!-- Profile management -->
+    <string name="profile_manager_title">键鼠预设</string>
+    <string name="profile_manager_active">当前</string>
+    <string name="profile_manager_new">新建预设</string>
+    <string name="profile_manager_rename">重命名</string>
+    <string name="profile_manager_delete">删除</string>
+    <string name="profile_manager_more">更多操作</string>
+    <string name="profile_manager_hint">为不同游戏配置多套键鼠布局，手动切换</string>
+    <string name="profile_new_name_hint">输入预设名称（留空使用默认名）</string>
+    <string name="profile_cannot_delete_last">至少需要保留一个预设</string>
+    <string name="profile_manager_hint_hotkey">为不同游戏配置多套键鼠布局，可手动切换或用热键切换</string>
+
+    <!-- Profile copy / share -->
+    <string name="profile_duplicate">复制副本</string>
+    <string name="profile_export">导出</string>
+    <string name="profile_import">导入</string>
+    <string name="profile_export_title">导出预设</string>
+    <string name="profile_export_hint">复制下面的内容即可分享或备份这套布局</string>
+    <string name="profile_import_title">导入预设</string>
+    <string name="profile_import_hint">粘贴预设内容后导入，会作为新预设加入</string>
+    <string name="profile_copy_to_clipboard">复制</string>
+    <string name="profile_paste_from_clipboard">粘贴</string>
+    <string name="profile_copied">已复制到剪贴板</string>
+
+    <!-- Profile switch hotkeys -->
+    <string name="profile_switch_enable">启用预设切换热键</string>
+    <string name="profile_switch_enable_hint">关闭时已配置的热键会保留，但不会生效</string>
+    <string name="profile_hotkey_title">切换热键</string>
+    <string name="profile_hotkey_add">添加热键</string>
+    <string name="profile_hotkey_empty">还没有切换热键</string>
+    <string name="profile_hotkey_hint">按下时先触发本预设里该键的映射动作，抬手时才切换预设，两者互不冲突</string>
+    <string name="profile_hotkey_capture">请按下一个键</string>
+    <string name="profile_hotkey_target_next">循环下一个</string>
+    <string name="profile_hotkey_target_label">切换到</string>
+    <string name="profile_hotkey_arrow">→</string>
+
+    <!-- 通用 -->
+    <string name="common_cancel">取消</string>
+    <string name="common_confirm">确定</string>
+    <string name="common_delete">删除</string>
+    <string name="common_dismiss">关闭</string>
+    <string name="cd_back">返回</string>
+
+    <!-- AboutScreen -->
+    <string name="about_title">关于</string>
+    <string name="about_github">Github</string>
+
+    <!-- MainScreen -->
+    <string name="main_add_games">添加游戏</string>
+    <string name="cd_apply_preset">应用预设</string>
+    <string name="cd_delete_selected">删除选中项</string>
+    <string name="cd_advanced_setting">高级设置</string>
+    <string name="cd_add_app">添加应用</string>
+    <string name="main_devices_count">%1$d 个设备</string>
+    <string name="main_connected_devices">已连接设备</string>
+    <string name="main_no_devices">未检测到外接键鼠</string>
+    <string name="main_selected_count">已选择 %1$d 项</string>
+    <string name="main_clear_selection">取消选择</string>
+    <string name="main_empty_title">还没有添加游戏</string>
+    <string name="main_empty_hint">点击右下角的加号，把要用键鼠玩的游戏加进来</string>
+    <string name="main_search_hint">搜索应用名称或包名</string>
+    <string name="main_search_no_match">没有匹配的应用</string>
+    <string name="main_already_added">“%1$s” 已经在列表里了</string>
+    <string name="main_added">已添加 “%1$s”</string>
+    <string name="main_remove_title">移除游戏</string>
+    <string name="main_remove_message">确定要从列表里移除这 %1$d 个游戏吗？</string>
+    <string name="main_remove_message_with_data">确定要从列表里移除这 %1$d 个游戏吗？\n\n已开启「删除已卸载应用的键位映射」，这些游戏的键位数据也会一并清除。</string>
+    <string name="main_preset_title">选择键盘预设</string>
+    <string name="main_preset_for">为「%1$s」应用预设</string>
+    <string name="main_preset_replace_hint">应用预设会替换当前预设里的全部按键，已有的自定义布局将被覆盖。</string>
+    <string name="main_preset_empty">没有可用预设。请检查 data/mapping/index.json。</string>
+    <string name="main_preset_apply">应用</string>
+    <string name="main_preset_applied">预设已应用，下次打开悬浮窗即可生效</string>
+    <string name="main_preset_not_found">找不到这个预设</string>
+    <string name="main_preset_failed">应用预设失败：%1$s</string>
+    <string name="main_launch_failed">无法启动 %1$s</string>
+
+    <!-- SettingsScreen -->
+    <string name="settings_discard_title">放弃修改？</string>
+    <string name="settings_discard_message">有尚未保存的设置改动，确定要返回吗？</string>
+    <string name="settings_discard_keep">继续编辑</string>
+    <string name="settings_discard_leave">放弃并返回</string>
+    <string name="settings_reset_title">恢复默认设置？</string>
+    <string name="settings_reset_message">所有设置项（主题、触摸模式、按钮大小等）都会恢复为默认值。键位布局不受影响。</string>
+    <string name="settings_profile_delete_title">删除预设</string>
+    <string name="settings_profile_delete_message">确定要删除预设「%1$s」吗？此操作无法撤销。</string>
+    <string name="settings_profile_delete_active">这是当前正在使用的预设，删除后会自动切换到「%1$s」。</string>
+    <string name="settings_profile_name_duplicate">已存在同名预设，请换一个名字</string>
+    <string name="settings_saved">设置已保存</string>
+
+    <!-- 权限 / Shizuku -->
+    <string name="shizuku_not_running">请先启动 Shizuku 服务</string>
+    <string name="permission_needed">请先完成授权</string>
+    <string name="permission_action_settings">去设置</string>
+    <string name="settings_profile_created">已创建并切换到「%1$s」</string>
+
+    <!-- 悬浮窗：气泡菜单 -->
+    <string name="settings_title">设置</string>
+    <string name="settings_key_configuration">按键配置</string>
+    <string name="settings_delete_data">删除数据</string>
+    <string name="settings_touch_mode">触摸模式</string>
+    <string name="settings_cancelable_button">可取消按钮</string>
+    <string name="settings_scope">倍镜</string>
+    <string name="settings_theme">主题</string>
+    <string name="settings_button_size">按钮大小</string>
+    <string name="settings_button_size_value">%1$d %%</string>
+    <string name="settings_delete_keymap">删除已卸载应用的键位映射</string>
+    <string name="settings_touch_cancel">可取消按钮的触摸行为</string>
+    <string name="settings_touch_scope">倍镜按钮的触摸行为</string>
+    <string name="settings_theme_pref">应用主题偏好</string>
+    <string name="settings_shooting_mode_key">切换射击模式键：</string>
+    <string name="settings_fire_key">开火键：</string>
+    <string name="settings_scope_key">倍镜键：</string>
+    <string name="settings_about">关于</string>
+    <string name="settings_save">保存</string>
+    <string name="settings_reset_defaults">恢复默认设置</string>
+    <string name="settings_screen_mirror_compat">投屏键鼠兼容</string>
+    <string name="settings_screen_mirror_compat_desc">使用投屏 / 键鼠映射（如熊猫映射）时开启，让 PC 鼠标输入到游戏。单指点击 = 左键，双指点击 = 右键，长按 = 中键。</string>
+
+    <!-- 悬浮窗：加号菜单 -->
+    <string name="overlay_advanced_settings">高级设置</string>
+    <string name="overlay_close_overlay">关闭悬浮窗</string>
+    <string name="cd_toggle_keys">显示/隐藏按键</string>
+    <string name="cd_add_item">添加按键</string>
+    <string name="cd_overlay_settings">悬浮窗设置</string>
+    <string name="overlay_loading_apps">正在读取应用列表…</string>
+</resources>

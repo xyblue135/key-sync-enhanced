@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "id": "moba-four-skill-alt",
+  "name": "MOBA 四技能 QERT",
+  "category": "moba",
+  "description": "四技能版本使用 Q/E/R/T，避免 W 与移动冲突。",
+  "coordinateMode": "normalized",
+  "items": [
+    {
+      "type": "WASD",
+      "x": 0.04,
+      "y": 0.63,
+      "scale": 0.9,
+      "centerX": 0.1025,
+      "centerY": 0.6875,
+      "wX": 0.1025,
+      "wY": 0.6375,
+      "aX": 0.0575,
+      "aY": 0.6875,
+      "sX": 0.1025,
+      "sY": 0.7375,
+      "dX": 0.1475,
+      "dY": 0.6875
+    },
+    {
+      "type": "KEY",
+      "keyCode": "Q",
+      "x": 0.7,
+      "y": 0.6,
+      "size": 0.05
+    },
+    {
+      "type": "KEY",
+      "keyCode": "E",
+      "x": 0.76,
+      "y": 0.6,
+      "size": 0.05
+    },
+    {
+      "type": "KEY",
+      "keyCode": "R",
+      "x": 0.82,
+      "y": 0.6,
+      "size": 0.05
+    },
+    {
+      "type": "KEY",
+      "keyCode": "T",
+      "x": 0.88,
+      "y": 0.6,
+      "size": 0.05
+    },
+    {
+      "type": "KEY",
+      "keyCode": "F",
+      "x": 0.82,
+      "y": 0.7,
+      "size": 0.05
+    }
+  ]
+}

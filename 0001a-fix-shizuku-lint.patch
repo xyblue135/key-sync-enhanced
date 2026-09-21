@@ -1,0 +1,41 @@
+diff --git a/app/src/main/java/com/devoid/keysync/data/external/ShizukuSystemServerAPi.kt b/app/src/main/java/com/devoid/keysync/data/external/ShizukuSystemServerAPi.kt
+index 166883e..057cfdd 100644
+--- a/app/src/main/java/com/devoid/keysync/data/external/ShizukuSystemServerAPi.kt
++++ b/app/src/main/java/com/devoid/keysync/data/external/ShizukuSystemServerAPi.kt
+@@ -16,21 +16,22 @@ class ShizukuSystemServerAPi {
+ 
+     @Synchronized
+     private fun connectInputApi() {
+-        if (injectInputEventFunction != null && inputManagerInstance != null) return
++        if (injectInputEventFunction != null && inputManagerInstance != null) {
++            return
++        }
+ 
+-            val inputManagerBinder: IBinder =
+-                ShizukuBinderWrapper(SystemServiceHelper.getSystemService("input"))
+-            val inputManagerStub = Class.forName("android.hardware.input.IInputManager\$Stub")
+-            val inputManagerClass = Class.forName("android.hardware.input.IInputManager")
+-             inputManagerInstance =
+-                inputManagerStub.getMethod("asInterface", IBinder::class.java)
+-                    .invoke(null, inputManagerBinder)
+-            val injectInputEvent = inputManagerClass.getMethod(
+-                "injectInputEvent",
+-                InputEvent::class.java,
+-                Int::class.java
+-            )
+-            injectInputEventFunction = injectInputEvent
++        val inputManagerBinder: IBinder =
++            ShizukuBinderWrapper(SystemServiceHelper.getSystemService("input"))
++        val inputManagerStub = Class.forName("android.hardware.input.IInputManager\$Stub")
++        val inputManagerClass = Class.forName("android.hardware.input.IInputManager")
++        inputManagerInstance =
++            inputManagerStub.getMethod("asInterface", IBinder::class.java)
++                .invoke(null, inputManagerBinder)
++        injectInputEventFunction = inputManagerClass.getMethod(
++            "injectInputEvent",
++            InputEvent::class.java,
++            Int::class.java
++        )
+     }
+ 
+     @Synchronized

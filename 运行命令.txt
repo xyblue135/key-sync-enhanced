@@ -1,0 +1,14 @@
+先停止 Gradle：
+
+.\gradlew.bat --stop
+
+然后关闭 Android Studio，再删除生成目录：
+
+Remove-Item -Recurse -Force .\app\build
+
+如果删除成功，再运行：
+
+.\gradlew.bat clean build -x test
+
+
+还有local.properties里面的安卓sdk的配置sdk.dir=C\:\\Users\\xyblu\\AppData\\Local\\Android\\Sdk

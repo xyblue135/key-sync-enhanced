@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "id": "action-combat",
+  "name": "动作战斗",
+  "category": "action",
+  "description": "偏战斗操作：攻击、闪避、跳跃和技能。",
+  "coordinateMode": "normalized",
+  "items": [
+    {
+      "type": "WASD",
+      "x": 0.04,
+      "y": 0.63,
+      "scale": 0.9,
+      "centerX": 0.1025,
+      "centerY": 0.6875,
+      "wX": 0.1025,
+      "wY": 0.6375,
+      "aX": 0.0575,
+      "aY": 0.6875,
+      "sX": 0.1025,
+      "sY": 0.7375,
+      "dX": 0.1475,
+      "dY": 0.6875
+    },
+    {
+      "type": "KEY",
+      "keyCode": "SPACE",
+      "x": 0.74,
+      "y": 0.82,
+      "size": 0.055
+    },
+    {
+      "type": "KEY",
+      "keyCode": "SHIFT_LEFT",
+      "x": 0.64,
+      "y": 0.8,
+      "size": 0.05
+    },
+    {
+      "type": "KEY",
+      "keyCode": "Q",
+      "x": 0.8,
+      "y": 0.6,
+      "size": 0.05
+    },
+    {
+      "type": "KEY",
+      "keyCode": "E",
+      "x": 0.86,
+      "y": 0.6,
+      "size": 0.05
+    },
+    {
+      "type": "KEY",
+      "keyCode": "F",
+      "x": 0.86,
+      "y": 0.7,
+      "size": 0.05
+    }
+  ]
+}

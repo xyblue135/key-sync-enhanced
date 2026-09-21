@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "universal-arrow",
+  "name": "通用方向键",
+  "category": "universal",
+  "description": "适合不使用 WASD 轮盘的方向键式游戏。",
+  "coordinateMode": "normalized",
+  "items": [
+    {
+      "type": "KEY",
+      "keyCode": "UP",
+      "x": 0.78,
+      "y": 0.57,
+      "size": 0.055
+    },
+    {
+      "type": "KEY",
+      "keyCode": "LEFT",
+      "x": 0.7,
+      "y": 0.65,
+      "size": 0.055
+    },
+    {
+      "type": "KEY",
+      "keyCode": "DOWN",
+      "x": 0.78,
+      "y": 0.73,
+      "size": 0.055
+    },
+    {
+      "type": "KEY",
+      "keyCode": "RIGHT",
+      "x": 0.86,
+      "y": 0.65,
+      "size": 0.055
+    },
+    {
+      "type": "KEY",
+      "keyCode": "SPACE",
+      "x": 0.78,
+      "y": 0.82,
+      "size": 0.05
+    }
+  ]
+}

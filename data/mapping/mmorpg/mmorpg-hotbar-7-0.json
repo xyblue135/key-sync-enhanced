@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "mmorpg-hotbar-7-0",
+  "name": "MMORPG 7-0 技能栏",
+  "category": "mmorpg",
+  "description": "常见 7-0 快捷栏布局。",
+  "coordinateMode": "normalized",
+  "items": [
+    {
+      "type": "WASD",
+      "x": 0.04,
+      "y": 0.63,
+      "scale": 0.9,
+      "centerX": 0.1025,
+      "centerY": 0.6875,
+      "wX": 0.1025,
+      "wY": 0.6375,
+      "aX": 0.0575,
+      "aY": 0.6875,
+      "sX": 0.1025,
+      "sY": 0.7375,
+      "dX": 0.1475,
+      "dY": 0.6875
+    },
+    {
+      "type": "KEY",
+      "keyCode": "7",
+      "x": 0.66,
+      "y": 0.6,
+      "size": 0.045
+    },
+    {
+      "type": "KEY",
+      "keyCode": "8",
+      "x": 0.73,
+      "y": 0.6,
+      "size": 0.045
+    },
+    {
+      "type": "KEY",
+      "keyCode": "9",
+      "x": 0.8,
+      "y": 0.6,
+      "size": 0.045
+    },
+    {
+      "type": "KEY",
+      "keyCode": "0",
+      "x": 0.8700000000000001,
+      "y": 0.6,
+      "size": 0.045
+    },
+    {
+      "type": "KEY",
+      "keyCode": "Q",
+      "x": 0.76,
+      "y": 0.7,
+      "size": 0.05
+    },
+    {
+      "type": "KEY",
+      "keyCode": "E",
+      "x": 0.82,
+      "y": 0.7,
+      "size": 0.05
+    }
+  ]
+}

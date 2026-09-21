@@ -1,0 +1,827 @@
+diff --git a/app/src/main/java/com/devoid/keysync/MainActivity.kt b/app/src/main/java/com/devoid/keysync/MainActivity.kt
+index bb58dec..3c1d823 100644
+--- a/app/src/main/java/com/devoid/keysync/MainActivity.kt
++++ b/app/src/main/java/com/devoid/keysync/MainActivity.kt
+@@ -295,6 +295,7 @@ class MainActivity : ComponentActivity() {
+                             else -> {}
+                         }
+                     }
++                    return false
+                 }
+ 
+                 return true
+diff --git a/app/src/main/java/com/devoid/keysync/MainActivityViewModel.kt b/app/src/main/java/com/devoid/keysync/MainActivityViewModel.kt
+index 9e54c0c..daeb1a7 100644
+--- a/app/src/main/java/com/devoid/keysync/MainActivityViewModel.kt
++++ b/app/src/main/java/com/devoid/keysync/MainActivityViewModel.kt
+@@ -74,18 +74,22 @@ class MainActivityViewModel @Inject constructor(
+     private val labelCache = ConcurrentHashMap<String, String>()
+ 
+     private var deviceListener: InputManager.InputDeviceListener? = null
++    private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
++        val binder = Shizuku.getBinder()
++        binder?.let {
++            _shizukuState.value = UiState.ShizukuRunning(it)
++        }
++    }
++    private val binderDeadListener = Shizuku.OnBinderDeadListener {
++        _shizukuState.value = UiState.ShizukuNotRunning
++        // A dead injector must not leave virtual fingers held in the game.
++        stateManager.clearActivePointers()
++    }
+ 
+     init {
+         Shizuku.addRequestPermissionResultListener(this)
+-        Shizuku.addBinderReceivedListener {
+-            val binder = Shizuku.getBinder()
+-            binder?.let {
+-                _shizukuState.value = UiState.ShizukuRunning(it)
+-            }
+-        }
+-        Shizuku.addBinderDeadListener {
+-            _shizukuState.value = UiState.ShizukuNotRunning
+-        }
++        Shizuku.addBinderReceivedListener(binderReceivedListener)
++        Shizuku.addBinderDeadListener(binderDeadListener)
+         getShizukuBinder()
+         getConnectedExternalDevices()
+         viewModelScope.launch(Dispatchers.IO) {
+@@ -315,6 +319,8 @@ class MainActivityViewModel @Inject constructor(
+ 
+     override fun onCleared() {
+         Shizuku.removeRequestPermissionResultListener(this)
++        Shizuku.removeBinderReceivedListener(binderReceivedListener)
++        Shizuku.removeBinderDeadListener(binderDeadListener)
+         deviceListener?.let {
+             (context.getSystemService(INPUT_SERVICE) as? InputManager)
+                 ?.unregisterInputDeviceListener(it)
+diff --git a/app/src/main/java/com/devoid/keysync/data/external/ShizukuSystemServerAPi.kt b/app/src/main/java/com/devoid/keysync/data/external/ShizukuSystemServerAPi.kt
+index 9c0dca4..166883e 100644
+--- a/app/src/main/java/com/devoid/keysync/data/external/ShizukuSystemServerAPi.kt
++++ b/app/src/main/java/com/devoid/keysync/data/external/ShizukuSystemServerAPi.kt
+@@ -13,10 +13,11 @@ class ShizukuSystemServerAPi {
+     private val TAG = "ShizukuSystemServerApi"
+     private var injectInputEventFunction : Method? = null
+     private  var inputManagerInstance:Any? =null
+-    init {
+-        injectInputEventFunction = getInputApi()
+-    }
+-        private fun getInputApi(): Method? {
++
++    @Synchronized
++    private fun connectInputApi() {
++        if (injectInputEventFunction != null && inputManagerInstance != null) return
++
+             val inputManagerBinder: IBinder =
+                 ShizukuBinderWrapper(SystemServiceHelper.getSystemService("input"))
+             val inputManagerStub = Class.forName("android.hardware.input.IInputManager\$Stub")
+@@ -29,8 +30,29 @@ class ShizukuSystemServerAPi {
+                 InputEvent::class.java,
+                 Int::class.java
+             )
+-            return injectInputEvent
++            injectInputEventFunction = injectInputEvent
++    }
++
++    @Synchronized
++    private fun resetInputApi() {
++        injectInputEventFunction = null
++        inputManagerInstance = null
++    }
++
++    private fun injectInputEvent(event: InputEvent) {
++        try {
++            connectInputApi()
++            injectInputEventFunction!!.invoke(inputManagerInstance, event, INJECT_MODE_ASYNC)
++        } catch (first: Throwable) {
++            // The proxy becomes stale when Shizuku/system_server restarts.
++            // Drop the cached proxy so the *next* input re-acquires it. Do not
++            // retry the same event here: if the remote side accepted it before
++            // the binder failed, replaying a DOWN/UP could duplicate an edge.
++            Log.w(TAG, "input proxy failed; next event will reconnect", first)
++            resetInputApi()
++            throw first
+         }
++    }
+ 
+     /**
+      * Injection mode passed to `IInputManager.injectInputEvent`.
+@@ -52,13 +74,10 @@ class ShizukuSystemServerAPi {
+     }
+ 
+     fun getEventHandler(): EventHandler {
+-        if (injectInputEventFunction==null||inputManagerInstance==null){
+-            throw IllegalStateException("Input manager Service not connected")
+-        }
+        return EventHandler(object : EventInjectorImpl(){
+            override fun inject(event: InputEvent) {
+ //               Log.d(TAG, "inject: injecting: $event")
+-               injectInputEventFunction?.invoke(inputManagerInstance, event, INJECT_MODE_ASYNC)
++               injectInputEvent(event)
+            }
+        })
+     }
+diff --git a/app/src/main/java/com/devoid/keysync/domain/EventHandler.kt b/app/src/main/java/com/devoid/keysync/domain/EventHandler.kt
+index 59a424d..7ef0954 100644
+--- a/app/src/main/java/com/devoid/keysync/domain/EventHandler.kt
++++ b/app/src/main/java/com/devoid/keysync/domain/EventHandler.kt
+@@ -451,12 +451,15 @@ private const val MASK_D = 1 shl 3
+ // 例如 MASK_W or MASK_SPRINT 表示“向左前方疾跑”。
+ private const val MASK_SPRINT = 1 shl 9
+ 
+-const val KEYCODE_CANCEL = 1 shl 4//cancel button for cancelable components
+-
+-const val KEYCODE_WASD = 1 shl 5//custom keycode for key groups
+-const val KEYCODE_LMC = 1 shl 6//mouse left click
+-const val KEYCODE_RMC = 1 shl 7//mouse right click
+-const val KEYCODE_MMC = 1 shl 8//mouse middle click
++// Internal bindings must never live in Android's KeyEvent namespace.  The old
++// values (32/64/128/256) are all valid Android key codes, so a real keyboard
++// key could silently alias a joystick/mouse binding.  Use a negative namespace
++// for virtual devices instead.  Stored legacy mouse codes are migrated by
++// FloatingWindowStateManager.
++const val KEYCODE_WASD = -10_001
++const val KEYCODE_LMC = -10_002
++const val KEYCODE_RMC = -10_003
++const val KEYCODE_MMC = -10_004
+ 
+ 
+ private fun keyToWasdMask(keyCode: Int): Int = when (keyCode) {
+@@ -485,6 +488,7 @@ class EventHandler(
+     // what lets the joystick and the action keys stay down at the same time.
+     private val wasdMap = HashMap<Int, KeyMap>(16)
+     private val keyMap = HashMap<Int, KeyMap>(64)
++    private val cancelKeyMap = HashMap<Int, KeyMap>(32)
+ 
+     // Do not assume Android key codes fit a fixed array. External keyboards and
+     // vendor-specific keys can legally use values outside the old 338-entry range.
+@@ -644,21 +648,28 @@ class EventHandler(
+         keyCodes.forEach { keyCode ->
+             val wasdBit = keyToWasdMask(keyCode)
+             val sprintBit = keyToSprintMask(keyCode)
+-            val pointerId = pointerIds[if (wasdBit != 0) KEYCODE_WASD else keyCode]
+-                ?: return@forEach
++            val hasWasd = pointerIds.containsKey(KEYCODE_WASD)
++            val handlesAsWasd = wasdBit != 0 && hasWasd
+             when {
+-                // 按住的 Shift 也要恢复疾跑档。
+-                sprintBit != 0 && pointerIds.containsKey(KEYCODE_WASD) -> {
++                // Explicit Shift mapping wins over the optional WASD sprint
++                // modifier. Several bundled presets intentionally bind Shift
++                // to an on-screen button while also containing a WASD group.
++                sprintBit != 0 && hasWasd && !keyMap.containsKey(keyCode) &&
++                    !switchHotkeys.containsKey(keyCode) -> {
+                     wasdMask = wasdMask or sprintBit
+                     handleWasd(pointerIds[KEYCODE_WASD]!!)
+                 }
+ 
+-                wasdBit != 0 -> {
++                handlesAsWasd -> {
++                    val pointerId = pointerIds[KEYCODE_WASD] ?: return@forEach
+                     wasdMask = wasdMask or wasdBit
+                     handleWasd(pointerId)
+                 }
+ 
+-                else -> handleKeyDown(keyCode, pointerId)
++                else -> {
++                    val pointerId = pointerIds[keyCode] ?: return@forEach
++                    handleKeyDown(keyCode, pointerId)
++                }
+             }
+         }
+     }
+@@ -676,14 +687,23 @@ class EventHandler(
+     fun restoreShootingModeContact() {
+         if (!shootingMode) return
+         val key = shootingModeKeyCode
+-        val pointerId = pointerIds[key] ?: return
+-        keyMap[key]?.let {
+-            // 切换预设会重建映射，重新锚定回中基准到 SHOOTING_MODE 按钮位置（可拖动准心）。
+-            val center = it.position
+-            aimCenter = center
+-            aimPosition = center
+-            eventInjector.injectPointer(pointerId, center)
++        val pointerId = pointerIds[key]
++        val mapping = keyMap[key]
++        if (pointerId == null || mapping == null) {
++            // The new profile has no shooting-mode contact. Keeping the flag
++            // true would hide/lock the normal cursor while all aim movement is
++            // dropped, leaving the user stuck in a mode they cannot use.
++            setShootingMode(false)
++            aimCenter = Offset.Zero
++            aimPosition = Offset.Zero
++            return
+         }
++
++        // 切换预设会重建映射，重新锚定回中基准到 SHOOTING_MODE 按钮位置（可拖动准心）。
++        val center = mapping.position
++        aimCenter = center
++        aimPosition = center
++        eventInjector.injectPointer(pointerId, center)
+     }
+ 
+     /* ---------- key events ---------- */
+@@ -691,13 +711,15 @@ class EventHandler(
+     fun handleKeyEvent(event: KeyEvent): Boolean {
+         val wasdBit = keyToWasdMask(event.keyCode)
+         val sprintBit = keyToSprintMask(event.keyCode)
+-        val pointerIdKey = if (wasdBit != 0) KEYCODE_WASD else event.keyCode
++        val hasWasd = pointerIds.containsKey(KEYCODE_WASD)
++        val handlesAsWasd = wasdBit != 0 && hasWasd
++        val pointerIdKey = if (handlesAsWasd) KEYCODE_WASD else event.keyCode
+         val pointerId = pointerIds[pointerIdKey]
+         val isSwitchKey = switchHotkeys.containsKey(event.keyCode)
+ 
+         // Shift 作为 WASD 疾跑修饰键（当存在 WASD 摇杆时）。按下时把疾跑位并入
+         // wasdMask，让摇杆沿中心方向延长到疾跑档，而不是触发独立的 SPRINT 按钮。
+-        if (sprintBit != 0 && pointerIds.containsKey(KEYCODE_WASD)) {
++        if (sprintBit != 0 && hasWasd && !keyMap.containsKey(event.keyCode) && !isSwitchKey) {
+             val wasdPointerId = pointerIds[KEYCODE_WASD]!!
+             when (event.action) {
+                 MotionEvent.ACTION_DOWN -> {
+@@ -727,7 +749,7 @@ class EventHandler(
+                 // is also mapped still triggers its action here, with no
+                 // added latency.
+                 if (pointerId != null) {
+-                    if (wasdBit != 0) {
++                    if (handlesAsWasd) {
+                         wasdMask = wasdMask or wasdBit
+                         handleWasd(pointerId)
+                     } else {
+@@ -743,7 +765,7 @@ class EventHandler(
+                 // Release against the mapping that received the press, i.e.
+                 // the profile we are about to leave.
+                 if (pointerId != null) {
+-                    if (wasdBit != 0) {
++                    if (handlesAsWasd) {
+                         wasdMask = wasdMask and wasdBit.inv()
+                         handleWasd(pointerId)
+                     } else {
+@@ -765,15 +787,32 @@ class EventHandler(
+     /* ---------- WASD ---------- */
+ 
+     private fun handleWasd(pointerId: Int) {
+-        // 只看方向位：只剩 Shift（疾跑修饰）而没有任何方向时，视为摇杆归零。
+-        val directionMask = wasdMask and (MASK_W or MASK_A or MASK_S or MASK_D)
++        // Resolve opposite directions before lookup. W+S and A+D used to have
++        // no entry in wasdMap, so the joystick stayed at its previous position
++        // until another key changed the mask. Treat opposite axes as neutral.
++        val rawDirectionMask = wasdMask and (MASK_W or MASK_A or MASK_S or MASK_D)
++        val vertical = when {
++            rawDirectionMask and MASK_W != 0 && rawDirectionMask and MASK_S == 0 -> MASK_W
++            rawDirectionMask and MASK_S != 0 && rawDirectionMask and MASK_W == 0 -> MASK_S
++            else -> 0
++        }
++        val horizontal = when {
++            rawDirectionMask and MASK_A != 0 && rawDirectionMask and MASK_D == 0 -> MASK_A
++            rawDirectionMask and MASK_D != 0 && rawDirectionMask and MASK_A == 0 -> MASK_D
++            else -> 0
++        }
++        val directionMask = vertical or horizontal
+         if (directionMask == 0) {
+             eventInjector.releaseGesture(pointerId)
+             lastWasdMask = 0
+             return
+         }
+ 
+-        wasdMap[wasdMask]?.let {
++        val requestedMask = directionMask or (wasdMask and MASK_SPRINT)
++        // Profiles with sprintScale <= 1 do not create sprint entries. Shift
++        // should not freeze movement in that case; fall back to normal speed.
++        val effectiveMask = if (wasdMap.containsKey(requestedMask)) requestedMask else directionMask
++        wasdMap[effectiveMask]?.let {
+             val wasActive = lastWasdMask != 0
+ //            val isCombo = wasdMask.countOneBits() > 1
+ 
+@@ -785,7 +824,7 @@ class EventHandler(
+                 eventInjector.injectGesture(pointerId, it.center!!, it.position)
+             }
+ 
+-            lastWasdMask = wasdMask
++            lastWasdMask = effectiveMask
+         }
+     }
+ 
+@@ -803,7 +842,7 @@ class EventHandler(
+                 val id = keyId(keyCode)
+                 val wasPressed = cancelToggle[id] ?: false
+                 cancelToggle[id] = if (wasPressed) {
+-                    keyMap[keyCode or KEYCODE_CANCEL]?.let { cancelMap ->
++                    cancelKeyMap[keyCode]?.let { cancelMap ->
+                         handler.handleTouchEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode), wasPressed, pointerId, cancelMap)
+                     } ?: false
+                 } else {
+@@ -835,14 +874,13 @@ class EventHandler(
+     }
+ 
+     private fun handleKeyUp(keyCode: Int, pointerId: Int) {
+-//        val cancelKey = keyCode or KEYCODE_CANCEL
+         val id = keyId(keyCode)
+         keyMap[keyCode]?.let {
+             if (it.type == KeymapType.CANCELABLE){
+                 val handler = cancelableHandler(keyTouchMode[keyCode] ?: cancelableTouchMode)
+                 val wasPressed = cancelToggle[id] ?: false
+                 cancelToggle[id] = if (wasPressed) {
+-                    keyMap[keyCode or KEYCODE_CANCEL]?.let { cancelMap ->
++                    cancelKeyMap[keyCode]?.let { cancelMap ->
+                         handler.handleTouchEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode), wasPressed, pointerId, cancelMap)
+                     } ?: false
+                 } else {
+@@ -1028,8 +1066,13 @@ class EventHandler(
+         // the next finger would be announced with ACTION_POINTER_DOWN instead of
+         // ACTION_DOWN, which invalidates the gesture. Lift everything first.
+         eventInjector.clear()
++        // A MIXED-mode tap may have a delayed release queued on the main
++        // thread. Invalidate it before pointer ids are re-used by this mapping.
++        normalHandlers.values.filterIsInstance<MixedModeTouchHandler>()
++            .forEach { it.resetPendingActions() }
+         wasdMap.clear()
+         keyMap.clear()
++        cancelKeyMap.clear()
+         pointerIds.clear()
+         keyIdMap.clear()
+         mappingPressed.clear()
+@@ -1155,8 +1198,7 @@ class EventHandler(
+                         Offset(cancelPosition.x + shrinkSize, cancelPosition.y + shrinkSize)
+                     keyMap[k] =
+                         KeyMap(type = KeymapType.CANCELABLE, position = position, end = end)
+-                    val cancelKey = k or KEYCODE_CANCEL
+-                    keyMap[cancelKey] =
++                    cancelKeyMap[k] =
+                         KeyMap(
+                             type = KeymapType.CANCELABLE,
+                             position = cancelPosition,
+@@ -1172,6 +1214,8 @@ class EventHandler(
+     }
+ 
+     fun clear() {
++        normalHandlers.values.filterIsInstance<MixedModeTouchHandler>()
++            .forEach { it.resetPendingActions() }
+         eventInjector.clear()
+         pressedKeyCodes.clear()
+         mappingPressed.clear()
+diff --git a/app/src/main/java/com/devoid/keysync/domain/EventInjectorImpl.kt b/app/src/main/java/com/devoid/keysync/domain/EventInjectorImpl.kt
+index a65b3a5..f41e10c 100644
+--- a/app/src/main/java/com/devoid/keysync/domain/EventInjectorImpl.kt
++++ b/app/src/main/java/com/devoid/keysync/domain/EventInjectorImpl.kt
+@@ -48,7 +48,22 @@ abstract class EventInjectorImpl(private val eventManager: EventManager = EventM
+     init {
+         scope.launch {
+             for (task in taskQueue) {
+-                task.invoke()
++                try {
++                    task.invoke()
++                } catch (t: Throwable) {
++                    // A transient Shizuku/binder/reflection failure must not
++                    // kill the only queue-draining coroutine. If it dies, the
++                    // UNLIMITED channel keeps accepting input forever and the
++                    // app appears alive while controls are permanently dead.
++                    Log.e(TAG, "input injection task failed; resetting pointer state", t)
++                    pendingMoveDeltas.clear()
++                    moveFlushPending.clear()
++                    try {
++                        eventManager.clear()
++                    } catch (resetError: Throwable) {
++                        Log.e(TAG, "failed to reset pointer state after injection error", resetError)
++                    }
++                }
+             }
+         }
+     }
+@@ -154,8 +169,11 @@ abstract class EventInjectorImpl(private val eventManager: EventManager = EventM
+                     val action = eventManager.getPointerAction(pointerID, false)
+                     val event = eventManager.createMotionEvent(action)
+                     event?.let {
+-                        inject(it)
+-                        it.recycle()
++                        try {
++                            inject(it)
++                        } finally {
++                            it.recycle()
++                        }
+                     }
+                 }
+             }
+@@ -169,19 +187,28 @@ abstract class EventInjectorImpl(private val eventManager: EventManager = EventM
+                 return@enqueue
+             val event = eventManager.createMotionEvent(action)
+             event?.let {
+-                inject(it)
+-                it.recycle()
++                try {
++                    inject(it)
++                } finally {
++                    it.recycle()
++                }
+             }
+             eventManager.removePointer(pointerID)
+         }
+     }
+ 
+     override fun clear() {
++        // Drop coalesced MOVE data immediately. Otherwise an already queued
++        // flush may run after CANCEL and resurrect movement from the old state.
++        pendingMoveDeltas.clear()
+         enqueue {
+             val event = eventManager.createMotionEvent(MotionEvent.ACTION_CANCEL)
+             event?.let {
+-                inject(it)
+-                it.recycle()
++                try {
++                    inject(it)
++                } finally {
++                    it.recycle()
++                }
+             }
+             eventManager.clear()
+         }
+@@ -194,8 +221,11 @@ abstract class EventInjectorImpl(private val eventManager: EventManager = EventM
+     /** Builds an event for the current pointer set and pushes it to the input manager. */
+     private suspend fun dispatch(action: Int) {
+         val event = eventManager.createMotionEvent(action) ?: return
+-        inject(event)
+-        event.recycle()
++        try {
++            inject(event)
++        } finally {
++            event.recycle()
++        }
+     }
+ 
+     private companion object {
+diff --git a/app/src/main/java/com/devoid/keysync/domain/MultiModeTouchHandlerImpl.kt b/app/src/main/java/com/devoid/keysync/domain/MultiModeTouchHandlerImpl.kt
+index cbf30ce..385091e 100644
+--- a/app/src/main/java/com/devoid/keysync/domain/MultiModeTouchHandlerImpl.kt
++++ b/app/src/main/java/com/devoid/keysync/domain/MultiModeTouchHandlerImpl.kt
+@@ -58,6 +58,18 @@ class HoldModeTouchHandler(private val eventInjector: EventInjector) : MultiMode
+ class MixedModeTouchHandler(private val eventInjector: EventInjector) : MultiModeTouchHandler {
+     private var lastKeyDownMap = hashMapOf<Int, Long>()
+     private val minDifference = 200L
++    private var generation = 0L
++
++    /**
++     * Invalidate delayed releases created by the previous mapping generation.
++     * Pointer ids are currently re-assigned when a profile/layout changes, so
++     * an old 200 ms callback must never release a newly assigned contact that
++     * happens to reuse the same numeric id.
++     */
++    fun resetPendingActions() {
++        generation++
++        lastKeyDownMap.clear()
++    }
+ 
+     override fun handleTouchEvent(
+         keyEvent: KeyEvent,
+@@ -82,8 +94,11 @@ class MixedModeTouchHandler(private val eventInjector: EventInjector) : MultiMod
+             if (held < minDifference) {
+                 // Very short tap: keep the contact alive for the minimum pulse
+                 // so the game has a chance to sample it, then lift it.
++                val scheduledGeneration = generation
+                 mainHandler.postDelayed({
+-                    eventInjector.releasePointer(pointerId)
++                    if (generation == scheduledGeneration) {
++                        eventInjector.releasePointer(pointerId)
++                    }
+                 }, minDifference - held)
+             } else {
+                 eventInjector.releasePointer(pointerId)
+diff --git a/app/src/main/java/com/devoid/keysync/service/FloatingBubbleService.kt b/app/src/main/java/com/devoid/keysync/service/FloatingBubbleService.kt
+index f1ecd30..cd94d35 100644
+--- a/app/src/main/java/com/devoid/keysync/service/FloatingBubbleService.kt
++++ b/app/src/main/java/com/devoid/keysync/service/FloatingBubbleService.kt
+@@ -97,6 +97,7 @@ class FloatingBubbleService : Service() {
+     private val scope = CoroutineScope(Dispatchers.Main)
+     private var containerView: ComposeView? = null
+     private var floatingBubbleView: ComposeView? = null
++    private var overlayInitialized = false
+ 
+ 
+     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+@@ -113,6 +114,7 @@ class FloatingBubbleService : Service() {
+         val notificationManager = getSystemService(NotificationManager::class.java)
+         notificationManager.createNotificationChannel(channel)
+         val notification = NotificationCompat.Builder(this, "channel1").apply {
++            setSmallIcon(R.drawable.ic_launcher_foreground)
+             setContentTitle(ContextCompat.getString(baseContext, R.string.app_name))
+             setContentText(
+                 "${
+@@ -133,7 +135,10 @@ class FloatingBubbleService : Service() {
+             lifecycleOwner.performRestore(null)
+         }
+         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_START)
+-        init()
++        if (!overlayInitialized) {
++            overlayInitialized = true
++            init()
++        }
+         return START_NOT_STICKY
+     }
+ 
+@@ -184,7 +189,7 @@ class FloatingBubbleService : Service() {
+             stateManager.get().isBubbleExpanded.collect { expanded ->
+                 itemsContainerLP.apply {
+                     width = WindowManager.LayoutParams.MATCH_PARENT
+-                    height = containerView?.rootView?.height ?: 0
++                    height = WindowManager.LayoutParams.MATCH_PARENT
+                 }
+                 if (expanded) {
+                     itemsContainerLP.flags =
+@@ -370,6 +375,7 @@ class FloatingBubbleService : Service() {
+ 
+     override fun onDestroy() {
+         _isRunning.value = false
++        overlayInitialized = false
+         removeAllViews()
+         stateManager.get().onDestroy()
+         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+diff --git a/app/src/main/java/com/devoid/keysync/service/FloatingWindowStateManager.kt b/app/src/main/java/com/devoid/keysync/service/FloatingWindowStateManager.kt
+index 6681341..95aada4 100644
+--- a/app/src/main/java/com/devoid/keysync/service/FloatingWindowStateManager.kt
++++ b/app/src/main/java/com/devoid/keysync/service/FloatingWindowStateManager.kt
+@@ -166,6 +166,17 @@ class FloatingWindowStateManager @Inject constructor(
+             dataStoreManager.saveProfiles(stored)
+         }
+ 
++        // Virtual mouse buttons used to be persisted as 64/128/256. Those
++        // numbers are legitimate Android KeyEvent codes, so the input layer
++        // now uses a negative private namespace. Migrate only the semantic
++        // fixed buttons that historically owned those values.
++        migrateLegacyVirtualMouseCodes(stored).let { migrated ->
++            if (migrated != null) {
++                stored = migrated
++                dataStoreManager.saveProfiles(stored)
++            }
++        }
++
+         // 一次性迁移：把旧版全局 POINTER_SENSITIVITY 值并入第一个预设，
+         // 之后删除全局键，避免再次覆盖用户手动设回默认值的操作。
+         migrateLegacySensitivity(stored).let { migrated ->
+@@ -187,6 +198,29 @@ class FloatingWindowStateManager @Inject constructor(
+         applyActiveProfile()
+     }
+ 
++    private fun migrateLegacyVirtualMouseCodes(stored: List<Profile>): List<Profile>? {
++        var changed = false
++        val migrated = stored.map { profile ->
++            val items = profile.items.map { item ->
++                if (item !is DraggableItem.FixedKey) return@map item
++
++                val migratedKeyCode = when {
++                    item.type == DraggableItemType.FIRE && item.keyCode == LEGACY_KEYCODE_LMC -> KEYCODE_LMC
++                    item.type == DraggableItemType.SCOPE && item.keyCode == LEGACY_KEYCODE_RMC -> KEYCODE_RMC
++                    (item.type == DraggableItemType.SHOOTING_MODE || item.type == DraggableItemType.MOUSE_MID) &&
++                        item.keyCode == LEGACY_KEYCODE_MMC -> KEYCODE_MMC
++                    else -> item.keyCode
++                }
++                if (migratedKeyCode != item.keyCode) {
++                    changed = true
++                    item.copy(keyCode = migratedKeyCode)
++                } else item
++            }
++            profile.copy(items = items)
++        }
++        return migrated.takeIf { changed }
++    }
++
+     /**
+      * Returns profiles with the legacy global sensitivity folded into the
+      * first profile's appConfig, or null when there is nothing to migrate
+@@ -637,6 +671,9 @@ class FloatingWindowStateManager @Inject constructor(
+         _pressedKeys.value = emptySet()
+         if (!_isBubbleExpanded.value) {
+             eventHandler.updateKeyMapping(containerItems.value)
++            // Position/size edits currently mutate DraggableItem in place, so
++            // closing edit mode is the natural commit point for persistence.
++            persistActiveProfile()
+         }
+     }
+ 
+@@ -671,21 +708,23 @@ class FloatingWindowStateManager @Inject constructor(
+         when (motionEvent.action) {
+ 
+             MotionEvent.ACTION_BUTTON_PRESS -> {
+-                mouseButtonToKeyCode(motionEvent.actionButton)?.let { kc ->
++                val button = modifiedMouseButton(motionEvent)
++                mouseButtonToKeyCode(button)?.let { kc ->
+                     _pressedKeys.value = _pressedKeys.value + kc
+                 }
+                 eventHandler.mousePointerPosition = pointerOffset.value
+-                eventHandler.handleMouseButton(motionEvent.actionButton, true)
++                eventHandler.handleMouseButton(button, true)
+             }
+ 
+             MotionEvent.ACTION_BUTTON_RELEASE -> {
+-                mouseButtonToKeyCode(motionEvent.actionButton)?.let { kc ->
++                val button = modifiedMouseButton(motionEvent)
++                mouseButtonToKeyCode(button)?.let { kc ->
+                     _pressedKeys.value = _pressedKeys.value - kc
+                 }
+-                eventHandler.handleMouseButton(motionEvent.actionButton, false)
++                eventHandler.handleMouseButton(button, false)
+             }
+ 
+-            MotionEvent.ACTION_MOVE -> {
++            MotionEvent.ACTION_MOVE, MotionEvent.ACTION_HOVER_MOVE -> {
+                 // requestPointerCapture() 会冻结屏幕上的光标，真正的移动量放在
+                 // AXIS_RELATIVE_X/Y（相对位移）里，而不是 rawX/rawY（绝对坐标）。
+                 // 旧代码直接读 rawX/rawY，拿到的是捕获后不再变化的一组固定值，
+@@ -740,8 +779,21 @@ class FloatingWindowStateManager @Inject constructor(
+         else -> null
+     }
+ 
++    /**
++     * ACTION_BUTTON_* normally exposes the changed button through actionButton.
++     * TouchToMouseTranslator cannot call MotionEvent.setActionButton because it
++     * is a hidden Android API, so its synthetic events encode that one button
++     * in buttonState as an internal fallback.
++     */
++    private fun modifiedMouseButton(event: MotionEvent): Int =
++        event.actionButton.takeIf { it != 0 } ?: event.buttonState
++
+     fun onDestroy() {
+         _isBubbleExpanded.value = false
++        // Drag operations mutate the runtime item objects directly. Persist
++        // once more before the overlay disappears so a service stop does not
++        // lose the last positioning edit.
++        persistActiveProfile()
+         eventHandler.clear()
+     }
+ 
+@@ -758,3 +810,7 @@ class FloatingWindowStateManager @Inject constructor(
+         }
+     }
+ }
++
++private const val LEGACY_KEYCODE_LMC = 64
++private const val LEGACY_KEYCODE_RMC = 128
++private const val LEGACY_KEYCODE_MMC = 256
+diff --git a/app/src/main/java/com/devoid/keysync/util/TouchToMouseTranslator.kt b/app/src/main/java/com/devoid/keysync/util/TouchToMouseTranslator.kt
+index cd81883..ecfeac3 100644
+--- a/app/src/main/java/com/devoid/keysync/util/TouchToMouseTranslator.kt
++++ b/app/src/main/java/com/devoid/keysync/util/TouchToMouseTranslator.kt
+@@ -1,6 +1,8 @@
+ package com.devoid.keysync.util
+ 
+ import android.os.SystemClock
++import android.os.Handler
++import android.os.Looper
+ import android.view.InputDevice
+ import android.view.MotionEvent
+ import kotlin.math.hypot
+@@ -52,6 +54,21 @@ class TouchToMouseTranslator(
+     private var twoFingerTapCandidate = false
+     private var longPressFired = false
+     private var middleButtonHeld = false
++    private val mainHandler = Handler(Looper.getMainLooper())
++    private var longPressEvent: MotionEvent? = null
++    private val longPressRunnable = Runnable {
++        val event = longPressEvent ?: return@Runnable
++        longPressEvent = null
++        if (pointerCount == 1 &&
++            !longPressFired &&
++            !twoFingerTapCandidate &&
++            maxMoveDist <= tapSlopPx
++        ) {
++            longPressFired = true
++            pressMiddleButton(event)
++        }
++        event.recycle()
++    }
+ 
+     /** px threshold for "is this a tap or a drag". ~24dp at 1x density. */
+     private val tapSlopPx = 48f
+@@ -86,9 +103,10 @@ class TouchToMouseTranslator(
+         pointerCount = 1
+         twoFingerTapCandidate = false
+         longPressFired = false
++        scheduleLongPress(event)
+         // Send a hover-move so the on-screen mouse pointer tracks where the
+         // touch began even before any button is "pressed".
+-        onMouseEvent(synthesize(event, MotionEvent.ACTION_HOVER_MOVE, 0))
++        dispatchSynthetic(event, MotionEvent.ACTION_HOVER_MOVE, 0)
+         return true
+     }
+ 
+@@ -96,6 +114,7 @@ class TouchToMouseTranslator(
+         pointerCount = event.pointerCount
+         if (pointerCount == 2) {
+             twoFingerTapCandidate = true
++            cancelLongPressCandidate()
+             // Cancel any pending long-press: a second finger is now on screen.
+             if (middleButtonHeld) {
+                 releaseMiddleButton(event)
+@@ -110,21 +129,10 @@ class TouchToMouseTranslator(
+         val dy = event.y - downY
+         val dist = hypot(dx, dy)
+         if (dist > maxMoveDist) maxMoveDist = dist
++        if (maxMoveDist > tapSlopPx) cancelLongPressCandidate()
+ 
+         // Always forward as hover-move so the on-screen mouse pointer follows.
+-        onMouseEvent(synthesize(event, MotionEvent.ACTION_HOVER_MOVE, 0))
+-
+-        // Long-press detection: 1 finger down, hasn't moved past slop, still
+-        // hasn't fired.
+-        if (pointerCount == 1 &&
+-            !longPressFired &&
+-            !twoFingerTapCandidate &&
+-            maxMoveDist <= tapSlopPx &&
+-            event.eventTime - downTime >= longPressTimeoutMs
+-        ) {
+-            longPressFired = true
+-            pressMiddleButton(event)
+-        }
++        dispatchSynthetic(event, MotionEvent.ACTION_HOVER_MOVE, 0)
+         return true
+     }
+ 
+@@ -137,8 +145,8 @@ class TouchToMouseTranslator(
+     }
+ 
+     private fun handleActionUp(event: MotionEvent): Boolean {
++        cancelLongPressCandidate()
+         val duration = event.eventTime - downTime
+-        val totalDuration = event.eventTime - downTime
+ 
+         when {
+             // Long-press was active: release the middle button.
+@@ -162,7 +170,7 @@ class TouchToMouseTranslator(
+             // Otherwise it was a drag / hold / etc — already streamed as hover.
+         }
+         // Touch itself just ended — final hover position with no buttons.
+-        onMouseEvent(synthesize(event, MotionEvent.ACTION_HOVER_MOVE, 0))
++        dispatchSynthetic(event, MotionEvent.ACTION_HOVER_MOVE, 0)
+         reset()
+         return true
+     }
+@@ -183,6 +191,7 @@ class TouchToMouseTranslator(
+     }
+ 
+     private fun reset() {
++        cancelLongPressCandidate()
+         downTime = 0L
+         downX = 0f
+         downY = 0f
+@@ -196,29 +205,49 @@ class TouchToMouseTranslator(
+ 
+     private fun pressMiddleButton(src: MotionEvent) {
+         middleButtonHeld = true
+-        onMouseEvent(
+-            synthesize(
+-                src,
+-                MotionEvent.ACTION_BUTTON_PRESS,
+-                MotionEvent.BUTTON_TERTIARY
+-            )
++        dispatchSynthetic(
++            src,
++            MotionEvent.ACTION_BUTTON_PRESS,
++            MotionEvent.BUTTON_TERTIARY
+         )
+     }
+ 
+     private fun releaseMiddleButton(src: MotionEvent) {
+         middleButtonHeld = false
+-        onMouseEvent(
+-            synthesize(
+-                src,
+-                MotionEvent.ACTION_BUTTON_RELEASE,
+-                0
+-            )
++        // For synthetic ACTION_BUTTON_RELEASE, keep the modified button in
++        // buttonState as an internal fallback. MotionEvent.actionButton cannot
++        // be set through the public Android API.
++        dispatchSynthetic(
++            src,
++            MotionEvent.ACTION_BUTTON_RELEASE,
++            MotionEvent.BUTTON_TERTIARY
+         )
+     }
+ 
+     private fun pressAndReleaseButton(src: MotionEvent, button: Int) {
+-        onMouseEvent(synthesize(src, MotionEvent.ACTION_BUTTON_PRESS, button))
+-        onMouseEvent(synthesize(src, MotionEvent.ACTION_BUTTON_RELEASE, 0))
++        dispatchSynthetic(src, MotionEvent.ACTION_BUTTON_PRESS, button)
++        dispatchSynthetic(src, MotionEvent.ACTION_BUTTON_RELEASE, button)
++    }
++
++    private fun scheduleLongPress(src: MotionEvent) {
++        cancelLongPressCandidate()
++        longPressEvent = MotionEvent.obtain(src)
++        mainHandler.postDelayed(longPressRunnable, longPressTimeoutMs)
++    }
++
++    private fun cancelLongPressCandidate() {
++        mainHandler.removeCallbacks(longPressRunnable)
++        longPressEvent?.recycle()
++        longPressEvent = null
++    }
++
++    private fun dispatchSynthetic(src: MotionEvent, action: Int, buttonState: Int): Boolean {
++        val event = synthesize(src, action, buttonState)
++        return try {
++            onMouseEvent(event)
++        } finally {
++            event.recycle()
++        }
+     }
+ 
+     /**

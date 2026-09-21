@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "mmorpg-standard",
+  "name": "MMORPG 标准",
+  "category": "mmorpg",
+  "description": "移动 + 数字技能栏 + 功能键的通用模板。",
+  "coordinateMode": "normalized",
+  "items": [
+    {"type":"WASD","x":0.04,"y":0.63,"scale":0.9,"centerX":0.1025,"centerY":0.6875,"wX":0.1025,"wY":0.6375,"aX":0.0575,"aY":0.6875,"sX":0.1025,"sY":0.7375,"dX":0.1475,"dY":0.6875},
+    {"type":"KEY","keyCode":"1","x":0.68,"y":0.60,"size":0.045},
+    {"type":"KEY","keyCode":"2","x":0.73,"y":0.60,"size":0.045},
+    {"type":"KEY","keyCode":"3","x":0.78,"y":0.60,"size":0.045},
+    {"type":"KEY","keyCode":"4","x":0.83,"y":0.60,"size":0.045},
+    {"type":"KEY","keyCode":"5","x":0.88,"y":0.60,"size":0.045},
+    {"type":"KEY","keyCode":"6","x":0.93,"y":0.60,"size":0.045},
+    {"type":"KEY","keyCode":"Q","x":0.76,"y":0.70,"size":0.05},
+    {"type":"KEY","keyCode":"E","x":0.82,"y":0.70,"size":0.05},
+    {"type":"KEY","keyCode":"SPACE","x":0.78,"y":0.82,"size":0.055}
+  ]
+}

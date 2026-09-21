@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "action-standard",
+  "name": "动作游戏标准",
+  "category": "action",
+  "description": "第三人称/动作游戏常见移动、跳跃、交互和技能键。",
+  "coordinateMode": "normalized",
+  "items": [
+    {"type":"WASD","x":0.04,"y":0.63,"scale":0.95,"centerX":0.1025,"centerY":0.6925,"wX":0.1025,"wY":0.6425,"aX":0.0525,"aY":0.6925,"sX":0.1025,"sY":0.7425,"dX":0.1525,"dY":0.6925},
+    {"type":"KEY","keyCode":"SPACE","x":0.74,"y":0.82,"size":0.055},
+    {"type":"KEY","keyCode":"SHIFT_LEFT","x":0.64,"y":0.79,"size":0.05},
+    {"type":"KEY","keyCode":"E","x":0.84,"y":0.61,"size":0.05},
+    {"type":"KEY","keyCode":"Q","x":0.78,"y":0.61,"size":0.05},
+    {"type":"KEY","keyCode":"F","x":0.84,"y":0.70,"size":0.05},
+    {"type":"KEY","keyCode":"R","x":0.90,"y":0.61,"size":0.05}
+  ]
+}

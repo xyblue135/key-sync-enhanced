@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "presets": [
+    {
+      "id": "universal-wasd",
+      "file": "universal/universal-wasd.json",
+      "category": "universal"
+    },
+    {
+      "id": "universal-keyboard",
+      "file": "universal/universal-keyboard.json",
+      "category": "universal"
+    },
+    {
+      "id": "fps-standard",
+      "file": "fps/fps-standard.json",
+      "category": "fps"
+    },
+    {
+      "id": "fps-battle-royale",
+      "file": "fps/fps-battle-royale.json",
+      "category": "fps"
+    },
+    {
+      "id": "moba-standard",
+      "file": "moba/moba-standard.json",
+      "category": "moba"
+    },
+    {
+      "id": "moba-skill-cast",
+      "file": "moba/moba-skill-cast.json",
+      "category": "moba"
+    },
+    {
+      "id": "mmorpg-standard",
+      "file": "mmorpg/mmorpg-standard.json",
+      "category": "mmorpg"
+    },
+    {
+      "id": "action-standard",
+      "file": "action/action-standard.json",
+      "category": "action"
+    },
+    {
+      "id": "racing-standard",
+      "file": "racing/racing-standard.json",
+      "category": "racing"
+    },
+    {
+      "id": "universal-wasd-plus",
+      "file": "universal/universal-wasd-plus.json",
+      "category": "universal"
+    },
+    {
+      "id": "universal-arrow",
+      "file": "universal/universal-arrow.json",
+      "category": "universal"
+    },
+    {
+      "id": "fps-minimal",
+      "file": "fps/fps-minimal.json",
+      "category": "fps"
+    },
+    {
+      "id": "fps-tactical",
+      "file": "fps/fps-tactical.json",
+      "category": "fps"
+    },
+    {
+      "id": "fps-ability",
+      "file": "fps/fps-ability.json",
+      "category": "fps"
+    },
+    {
+      "id": "moba-three-skill",
+      "file": "moba/moba-three-skill.json",
+      "category": "moba"
+    },
+    {
+      "id": "moba-four-skill-alt",
+      "file": "moba/moba-four-skill-alt.json",
+      "category": "moba"
+    },
+    {
+      "id": "mmorpg-hotbar-1-6",
+      "file": "mmorpg/mmorpg-hotbar-1-6.json",
+      "category": "mmorpg"
+    },
+    {
+      "id": "mmorpg-hotbar-7-0",
+      "file": "mmorpg/mmorpg-hotbar-7-0.json",
+      "category": "mmorpg"
+    },
+    {
+      "id": "action-combat",
+      "file": "action/action-combat.json",
+      "category": "action"
+    },
+    {
+      "id": "action-interaction",
+      "file": "action/action-interaction.json",
+      "category": "action"
+    },
+    {
+      "id": "racing-wasd",
+      "file": "racing/racing-wasd.json",
+      "category": "racing"
+    },
+    {
+      "id": "racing-arrows",
+      "file": "racing/racing-arrows.json",
+      "category": "racing"
+    }
+  ]
+}

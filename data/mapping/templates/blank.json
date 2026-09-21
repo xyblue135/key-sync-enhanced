@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "my-preset",
+  "name": "我的预设",
+  "category": "universal",
+  "description": "自定义 KeySync 键盘映射。",
+  "coordinateMode": "normalized",
+  "items": [
+    {"type":"KEY","keyCode":"SPACE","x":0.80,"y":0.82,"size":0.055}
+  ]
+}
