@@ -276,7 +276,10 @@ class FloatingBubbleService : Service() {
                 val keysVisible by stateManager.get().keysVisible.collectAsState()
                 val pendingBindId by stateManager.get().pendingVariableKeyBind.collectAsState()
                 val pressedKeys by stateManager.get().pressedKeys.collectAsState()
+                val walkEnabled by stateManager.get().walkEnabled.collectAsState()
                 val lastInput by stateManager.get().lastInputLabel.collectAsState()
+                val profiles by stateManager.get().profiles.collectAsState()
+                val activeId by stateManager.get().activeProfileId.collectAsState()
                 Box {
                     if (!isBubbleExpanded && !isShootingMode) {
                         Image(///mouse pointer
@@ -300,6 +303,9 @@ class FloatingBubbleService : Service() {
                             Modifier.alpha(if (isBubbleExpanded) 1f else itemsContainerOpacity),
                             appConfig = keysConfig,
                             editing = isBubbleExpanded,
+                            walkEnabled = walkEnabled,
+                            onCalibrateWalkOff = { stateManager.get().calibrateWalkOff() },
+                            onItemMeasured = { stateManager.get().updateMeasuredPosition(it) },
                             containerItems = draggableItems,
                             onRemove = onRemove,
                             onUpdateKeyCode = onUpdateKeyCode,
@@ -318,7 +324,8 @@ class FloatingBubbleService : Service() {
                             val mode = if (isShootingMode) "射击模式" else if (toggle == null)
                                 "光标模式 · 请添加视角按钮" else
                                 "光标模式 · 按 ${toggle.keyCode.keyCodeToString()} 开启射击"
-                            Text("$mode · $lastInput", color = Color.White, fontSize = 12.sp,
+                            val activeName = profiles.firstOrNull { it.id == activeId }?.name.orEmpty()
+                            Text("$activeName · $mode · $lastInput", color = Color.White, fontSize = 12.sp,
                                 modifier = Modifier.align(Alignment.TopCenter)
                                     .background(Color.Black.copy(alpha = 0.65f)))
                         }
@@ -568,7 +575,13 @@ class FloatingBubbleService : Service() {
                     val pointerSensitivity by stateManager.get().pointerSensitivity.collectAsState()
                     val overlayOpacity by stateManager.get().overlayOpacity.collectAsState()
                     val appConfig by stateManager.get().keysConfig.collectAsState()
+                    val profiles by stateManager.get().profiles.collectAsState()
+                    val activeId by stateManager.get().activeProfileId.collectAsState()
                     SettingsLayout(
+                        profiles = profiles,
+                        activeProfileId = activeId,
+                        onSwitchProfile = { stateManager.get().switchProfile(it) },
+                        onSetupTwoProfiles = { stateManager.get().setupTwoProfiles() },
                         buttonScale = appConfig.buttonScale,
                         onButtonScaleChange = { stateManager.get().saveAppConfig(appConfig.copy(buttonScale = it)) },
                         pointerSensitivity = pointerSensitivity,

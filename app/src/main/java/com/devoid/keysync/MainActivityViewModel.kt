@@ -116,6 +116,10 @@ class MainActivityViewModel @Inject constructor(
 
     /* ----------------- profile helpers ----------------- */
 
+    fun setupTwoProfiles() = stateManager.setupTwoProfiles()
+    fun setProfileActivationKey(id: String, keyCode: Int?) = stateManager.setProfileActivationKey(id, keyCode)
+    fun exportAllProfilesJson(): String = stateManager.exportAllProfilesJson()
+
     fun createProfile(name: String): String = stateManager.createProfile(name)
 
     fun switchProfile(id: String) {

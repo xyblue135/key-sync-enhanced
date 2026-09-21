@@ -91,6 +91,7 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import com.devoid.keysync.R
 import com.devoid.keysync.domain.KEYCODE_MMC
+import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.DraggableItemType
@@ -140,6 +141,9 @@ fun ItemsContainer(
     containerItems: List<DraggableItem>,
     appConfig: AppConfig = AppConfig.Default,
     editing: Boolean = true,
+    walkEnabled: Boolean = false,
+    onCalibrateWalkOff: () -> Unit = {},
+    onItemMeasured: (DraggableItem) -> Unit = {},
     onRemove: (Int) -> Unit,
     onUpdateKeyCode: (Int, Int, TouchMode?) -> Unit = { _, _, _ -> },
     onUpdateVariableKeyCode: (Int, Int, TouchMode?) -> Unit = { _, _, _ -> },
@@ -193,7 +197,7 @@ fun ItemsContainer(
                             scale = scale,
                             id = item.id,
                             offset = position,
-                            onScreenCenter = { item.touchCenter = it },
+                            onScreenCenter = { item.touchCenter = it; onItemMeasured(item) },
                             onOffsetChange = {
                                 item.position += it
                                 position += it
@@ -227,7 +231,7 @@ fun ItemsContainer(
                             scale = scale,
                             id = item.id,
                             offset = cancelableKeyPosition,
-                            onScreenCenter = { item.cancelTouchCenter = it },
+                            onScreenCenter = { item.cancelTouchCenter = it; onItemMeasured(item) },
                             onOffsetChange = {
                                 item.cancelPosition += it
                                 cancelableKeyPosition += it
@@ -244,7 +248,7 @@ fun ItemsContainer(
                     scale = scale,
                     id = item.id,
                     offset = position,
-                    onScreenCenter = { item.touchCenter = it },
+                    onScreenCenter = { item.touchCenter = it; onItemMeasured(item) },
                     onOffsetChange = {
                         item.position += it
                         position += it
@@ -297,14 +301,16 @@ fun ItemsContainer(
                             GenericFixedKey(
                                 modifier = Modifier.onSizeChanged { onSizeChangeListener(it) },
                                 editable = editing,
-                                label = item.keyCode.keyCodeToString(),
+                                label = if (item.type == DraggableItemType.WALK_TOGGLE)
+                                    (if (walkEnabled) "静步 开" else "静步 关") else item.keyCode.keyCodeToString(),
                                 iconRes = when (item.type) {
                                     DraggableItemType.SHOOTING_MODE -> R.drawable.move
                                     DraggableItemType.FIRE -> R.drawable.bullet
                                     DraggableItemType.SCOPE -> R.drawable.scope
                                     else -> null
                                 },
-                                pressed = pressedKeys.contains(item.keyCode),
+                                pressed = pressedKeys.contains(item.keyCode) ||
+                                    (item.type == DraggableItemType.WALK_TOGGLE && walkEnabled),
                                 onRemove = { onRemove(item.id) },
                                 onConfigure = { configuringFixedKey = item }
                             )
@@ -332,6 +338,8 @@ fun ItemsContainer(
                 )
             } else {
                 KeyCaptureDialog(
+                    walkCustomization = target.type == DraggableItemType.WALK_TOGGLE,
+                    onCalibrateWalkOff = onCalibrateWalkOff,
                     currentKeyCode = target.keyCode,
                     currentTouchMode = target.touchMode,
                     onConfirm = { newCode, touchMode ->
@@ -460,6 +468,8 @@ fun ShootingModeKeyDialog(
 
 @Composable
 fun KeyCaptureDialog(
+    walkCustomization: Boolean = false,
+    onCalibrateWalkOff: () -> Unit = {},
     currentKeyCode: Int,
     currentTouchMode: TouchMode?,
     onConfirm: (Int, TouchMode?) -> Unit,
@@ -535,6 +545,10 @@ fun KeyCaptureDialog(
                 }
             }
 
+            if (walkCustomization) {
+                Text("静步定制化：按一次开启，再按一次关闭；开启后按 Shift 自动取消。默认 Caps Lock。不能绑定 Shift 或 WASD。", style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = onCalibrateWalkOff) { Text("游戏已关闭静步：校准为关闭") }
+            } else {
             HorizontalDivider()
 
             Text(
@@ -576,6 +590,7 @@ fun KeyCaptureDialog(
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End
@@ -584,7 +599,10 @@ fun KeyCaptureDialog(
                     Text(stringResource(R.string.key_rebind_cancel))
                 }
                 TextButton(
-                    onClick = { onConfirm(captured ?: currentKeyCode, selectedMode) }
+                    enabled = !walkCustomization || (captured ?: currentKeyCode) !in setOf(
+                        KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT,
+                        KeyEvent.KEYCODE_W, KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_S, KeyEvent.KEYCODE_D),
+                    onClick = { onConfirm(captured ?: currentKeyCode, if (walkCustomization) TouchMode.TAP else selectedMode) }
                 ) {
                     Text(stringResource(R.string.key_rebind_confirm))
                 }
@@ -706,7 +724,7 @@ fun MenuItems(
                     MenuCell(itemModifier, wasd, stringResource(R.string.label_compass)) { onItemClick(DraggableItemType.WASD_KEY) }
                     // 通用「按钮」：新建后点齿轮绑定按键 + 选点击/按住模式。
                     MenuCell(itemModifier, symbol("KEY"), stringResource(R.string.label_key)) { onItemClick(DraggableItemType.KEY) }
-                    Spacer(modifier = Modifier.size(30.dp))
+                    MenuCell(itemModifier, symbol("静"), "静步定制化") { onItemClick(DraggableItemType.WALK_TOGGLE) }
                     Spacer(modifier = Modifier.size(30.dp))
                 }
             }
@@ -766,6 +784,10 @@ fun SettingsLayout(
     modifier: Modifier = Modifier,
     pointerSensitivity: Float = 0.5f,
     overlayOpacity: Float = 0.5f,
+    profiles: List<Profile> = emptyList(),
+    activeProfileId: String? = null,
+    onSwitchProfile: (String) -> Unit = {},
+    onSetupTwoProfiles: () -> Unit = {},
     buttonScale: Float = 1f,
     onButtonScaleChange: (Float) -> Unit = {},
     onAdvancedSettingsClick: () -> Unit,
@@ -781,6 +803,16 @@ fun SettingsLayout(
             .heightIn(max = 320.dp)
             .verticalScroll(rememberScrollState())
     ) {
+        Text("同一游戏 · 多套预设", style = MaterialTheme.typography.titleMedium)
+        profiles.forEach { profile ->
+            TextButton(onClick = { onSwitchProfile(profile.id) }) {
+                val shortcut = if (profile.activationHotkeyEnabled) profile.activationKeyCode?.keyCodeToString() else null
+                Text((if (profile.id == activeProfileId) "✓ " else "") + profile.name +
+                    (shortcut?.let { "  [$it]" } ?: ""))
+            }
+        }
+        if (profiles.size < 2) TextButton(onClick = onSetupTwoProfiles) { Text("复制当前布局，建立 X / 1 两套预设") }
+        HorizontalDivider()
         Text("按钮大小 ${(buttonScale * 100).roundToInt()}%",
             style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Slider(value = buttonScale.coerceIn(0.6f, 2f), onValueChange = onButtonScaleChange,

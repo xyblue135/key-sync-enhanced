@@ -23,6 +23,10 @@ import com.devoid.keysync.domain.KEYCODE_MMC
 import com.devoid.keysync.domain.KEYCODE_RMC
 import com.devoid.keysync.data.external.ShizukuSystemServerAPi
 import com.devoid.keysync.model.Profile
+import com.devoid.keysync.model.ProfileBundle
+import com.devoid.keysync.model.independentCopy
+import com.devoid.keysync.model.importProfileCopies
+import com.devoid.keysync.model.profileActivationRoutes
 import com.devoid.keysync.model.ProfileSwitchHotkey
 import com.devoid.keysync.model.TouchMode
 import com.devoid.keysync.model.defaultKeyCode
@@ -79,6 +83,7 @@ class FloatingWindowStateManager @Inject constructor(
     // Captured-pointer 事件里 rawX/rawY 不携带位移信息（真正的位移在相对轴，
     // 见 onMouseEvent）。少数 ROM 不填 AXIS_RELATIVE_X/Y，需要退回「相邻事件
     // raw 坐标差」兜底，这两个字段就用来记上一次的 raw 坐标。
+    private var overlayOrigin: Offset? = null
     private val mouseButtons = MouseButtonTracker()
     private val _lastInputLabel = MutableStateFlow("等待输入")
     val lastInputLabel = _lastInputLabel.asStateFlow()
@@ -107,6 +112,8 @@ class FloatingWindowStateManager @Inject constructor(
     var keyCaptureListener: ((Int) -> Unit)? = null
 
     val isShootingMode = eventHandler.shootingModeFlow
+    val walkEnabled = eventHandler.walkEnabled
+    fun calibrateWalkOff() = eventHandler.calibrateWalkOff()
 
     /* ----------------- profiles ----------------- */
 
@@ -311,6 +318,16 @@ class FloatingWindowStateManager @Inject constructor(
         // 灵敏度随预设切换。
         pointerSensitivity.value = active.appConfig.pointerSensitivity
         pushSwitchHotkeys()
+        overlayOrigin?.let { origin ->
+            active.items.forEach { item ->
+                val size = when (item) {
+                    is DraggableItem.FixedKey -> item.size
+                    is DraggableItem.VariableKey -> item.size
+                    else -> 0
+                }
+                if (size > 0) item.touchCenter = origin + item.position + Offset(size / 2f, size / 2f)
+            }
+        }
         eventHandler.updateKeyMapping(active.items)
     }
 
@@ -322,7 +339,8 @@ class FloatingWindowStateManager @Inject constructor(
     private fun pushSwitchHotkeys() {
         val active = activeProfile() ?: return
         eventHandler.setSwitchHotkeys(
-            if (_appConfig.value.profileSwitchEnabled) active.switchHotkeys else emptyList()
+            (if (_appConfig.value.profileSwitchEnabled) active.switchHotkeys else emptyList()) +
+                profileActivationRoutes(_profiles.value)
         )
     }
 
@@ -351,6 +369,12 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     fun addNewItem(itemType: DraggableItemType) {
+        if (itemType == DraggableItemType.WALK_TOGGLE && containerItems.value.any {
+                it is DraggableItem.FixedKey && it.type == DraggableItemType.WALK_TOGGLE
+            }) {
+            android.widget.Toast.makeText(context, "此预设已有静步按钮，请拖动或编辑现有按钮", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         // maxOfOrNull (not sumOf) so ids keep incrementing by one instead of
         // drifting upwards every time an item is removed and re-added.
         val itemID = (containerItems.value.maxOfOrNull { it.id } ?: 0) + 1
@@ -369,7 +393,7 @@ class FloatingWindowStateManager @Inject constructor(
                 DraggableItem.WASDGroup(itemID, offset)
 
             // 射击三件套仍是固定键：开火 / 开镜 / 射击模式切换，各自有专用语义。
-            DraggableItemType.FIRE, DraggableItemType.SCOPE, DraggableItemType.SHOOTING_MODE ->
+            DraggableItemType.WALK_TOGGLE, DraggableItemType.FIRE, DraggableItemType.SCOPE, DraggableItemType.SHOOTING_MODE ->
                 DraggableItem.FixedKey(
                     itemID,
                     offset,
@@ -423,6 +447,18 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     /** UI 弹出绑定框后调用，清除待绑定信号，避免下次重组又弹一次。 */
+    fun updateMeasuredPosition(item: DraggableItem) {
+        val size = when (item) {
+            is DraggableItem.FixedKey -> item.size
+            is DraggableItem.VariableKey -> item.size
+            else -> 0
+        }
+        if (size > 0) item.touchCenter?.let {
+            overlayOrigin = it - item.position - Offset(size / 2f, size / 2f)
+        }
+        eventHandler.updateMeasuredPosition(item)
+    }
+
     fun consumePendingVariableKeyBind() {
         _pendingVariableKeyBind.value = null
     }
@@ -533,7 +569,9 @@ class FloatingWindowStateManager @Inject constructor(
         // updateKeyMapping() lifts every contact, so remember what is still
         // physically held and press it again against the new mapping. Without
         // this a held W would go dead until the user let go and re-pressed it.
+        persistActiveProfile()
         val held = eventHandler.heldKeyCodes()
+        val heldMouse = eventHandler.heldMouseButtons()
         _activeProfileId.value = id
         scope.launch { dataStoreManager.saveActiveProfileId(id) }
         applyActiveProfile()
@@ -541,6 +579,7 @@ class FloatingWindowStateManager @Inject constructor(
         // Shooting mode is not a held key: it is a contact that stays down for
         // as long as the mode is on, and updateKeyMapping just lifted it.
         eventHandler.restoreShootingModeContact()
+        eventHandler.replayHeldMouseButtons(heldMouse)
     }
 
     /**
@@ -599,6 +638,7 @@ class FloatingWindowStateManager @Inject constructor(
         if (_activeProfileId.value == id) {
             switchProfile(remaining.first().id)
         }
+        pushSwitchHotkeys()
     }
 
     /* ----------------- profile copy / share ----------------- */
@@ -622,15 +662,17 @@ class FloatingWindowStateManager @Inject constructor(
      * fresh id.
      */
     fun duplicateProfile(id: String): String? {
+        persistActiveProfile()
         val source = _profiles.value.firstOrNull { it.id == id } ?: return null
         val newId = UUID.randomUUID().toString()
-        _profiles.value = _profiles.value + source.copy(id = newId, name = nextCopyName(source.name))
+        _profiles.value = _profiles.value + source.independentCopy(newId, nextCopyName(source.name))
         scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
         return newId
     }
 
     /** Serialises a profile for the clipboard; null when the id is unknown. */
     fun exportProfileJson(id: String): String? {
+        persistActiveProfile()
         val profile = _profiles.value.firstOrNull { it.id == id } ?: return null
         return runCatching { profileJson.encodeToString(profile) }.getOrNull()
     }
@@ -641,22 +683,50 @@ class FloatingWindowStateManager @Inject constructor(
      * @return null on success, otherwise a message describing why it failed.
      */
     fun importProfileJson(raw: String): String? {
-        val parsed = runCatching { profileJson.decodeFromString<Profile>(raw) }
-            .getOrElse { return "无法解析这段文本，请确认复制的是完整的预设 JSON" }
-        if (parsed.items.isEmpty()) return "预设里没有任何按键"
-        val known = _profiles.value.mapTo(HashSet()) { it.id }
-        val imported = parsed.copy(
-            // New id so importing never overwrites the profile it came from.
-            id = UUID.randomUUID().toString(),
-            name = nextCopyName(parsed.name),
-            // Targets from another device/backup cannot resolve here.
-            switchHotkeys = parsed.switchHotkeys.map {
-                it.copy(targetProfileId = it.targetProfileId?.takeIf { t -> t in known })
-            }
-        )
-        _profiles.value = _profiles.value + imported
+        val result = runCatching {
+            val sources = runCatching { profileJson.decodeFromString<ProfileBundle>(raw) }
+                .getOrNull()?.also { require(it.version == 1) { "不支持的预设版本" } }?.profiles
+                ?: listOf(profileJson.decodeFromString<Profile>(raw))
+            importProfileCopies(sources, _profiles.value) { UUID.randomUUID().toString() }
+        }.getOrElse { return "导入失败：${it.message ?: "请复制完整预设文本"}" }
+        _profiles.value = _profiles.value + result
         scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
+        pushSwitchHotkeys()
         return null
+    }
+
+    fun exportAllProfilesJson(): String {
+        persistActiveProfile()
+        return profileJson.encodeToString(ProfileBundle(profiles = _profiles.value))
+    }
+
+    fun setProfileActivationKey(profileId: String, keyCode: Int?) {
+        if (keyCode != null && keyCode <= KeyEvent.KEYCODE_UNKNOWN) return
+        _profiles.value = _profiles.value.map { profile ->
+            when {
+                profile.id == profileId -> profile.copy(activationKeyCode = keyCode, activationHotkeyEnabled = true)
+                keyCode != null && profile.activationKeyCode == keyCode -> profile.copy(activationHotkeyEnabled = false)
+                else -> profile
+            }
+        }
+        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
+        pushSwitchHotkeys()
+    }
+
+    /** First-run shortcut: keep the current layout and make one independent variant. */
+    fun setupTwoProfiles() {
+        persistActiveProfile()
+        val first = _profiles.value.firstOrNull { it.activationHotkeyEnabled && it.activationKeyCode == KeyEvent.KEYCODE_X }
+            ?: activeProfile() ?: return
+        // With two or more layouts, configure the first other layout; never append repeatedly.
+        val second = _profiles.value.firstOrNull { it.id != first.id && it.activationHotkeyEnabled && it.activationKeyCode == KeyEvent.KEYCODE_1 }
+            ?: _profiles.value.firstOrNull { it.id != first.id } ?: run {
+            val copied = first.independentCopy(UUID.randomUUID().toString(), "预设 2")
+            _profiles.value = _profiles.value + copied
+            copied
+        }
+        setProfileActivationKey(first.id, KeyEvent.KEYCODE_X)
+        setProfileActivationKey(second.id, KeyEvent.KEYCODE_1)
     }
 
     /* ----------------- profile switch hotkeys ----------------- */

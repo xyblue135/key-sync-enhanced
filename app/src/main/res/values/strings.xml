@@ -83,27 +83,27 @@
     <string name="profile_manager_hint">为不同游戏配置多套键鼠布局，手动切换</string>
     <string name="profile_new_name_hint">输入预设名称（留空使用默认名）</string>
     <string name="profile_cannot_delete_last">至少需要保留一个预设</string>
-    <string name="profile_manager_hint_hotkey">为不同游戏配置多套键鼠布局，可手动切换或用热键切换</string>
+    <string name="profile_manager_hint_hotkey">为同一个游戏保存多套键鼠布局，可手动切换或按各预设的切入键切换</string>
 
     <!-- Profile copy / share -->
     <string name="profile_duplicate">复制副本</string>
     <string name="profile_export">导出</string>
     <string name="profile_import">导入</string>
     <string name="profile_export_title">导出预设</string>
-    <string name="profile_export_hint">复制下面的内容即可分享或备份这套布局</string>
+    <string name="profile_export_hint">复制下面的内容即可分享或备份预设，包含布局、游戏键位和切换快捷键</string>
     <string name="profile_import_title">导入预设</string>
-    <string name="profile_import_hint">粘贴预设内容后导入，会作为新预设加入</string>
+    <string name="profile_import_hint">支持粘贴单套或整组预设，作为独立副本加入；快捷键冲突时新副本的切入键保留但停用</string>
     <string name="profile_copy_to_clipboard">复制</string>
     <string name="profile_paste_from_clipboard">粘贴</string>
     <string name="profile_copied">已复制到剪贴板</string>
 
     <!-- Profile switch hotkeys -->
     <string name="profile_switch_enable">启用预设切换热键</string>
-    <string name="profile_switch_enable_hint">关闭时已配置的热键会保留，但不会生效</string>
+    <string name="profile_switch_enable_hint">仅控制此处的高级定向规则；各预设的切入快捷键不受此开关影响</string>
     <string name="profile_hotkey_title">切换热键</string>
     <string name="profile_hotkey_add">添加热键</string>
     <string name="profile_hotkey_empty">还没有切换热键</string>
-    <string name="profile_hotkey_hint">按下时先触发本预设里该键的映射动作，抬手时才切换预设，两者互不冲突</string>
+    <string name="profile_hotkey_hint">按下时先触发本预设里该键的映射动作，抬手并完成短点击后切换预设，尽量保留原游戏动作</string>
     <string name="profile_hotkey_capture">请按下一个键</string>
     <string name="profile_hotkey_target_next">循环下一个</string>
     <string name="profile_hotkey_target_label">切换到</string>

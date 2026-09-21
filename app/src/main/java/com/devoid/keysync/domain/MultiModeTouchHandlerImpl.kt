@@ -92,7 +92,7 @@ class MixedModeTouchHandler(private val eventInjector: EventInjector) : MultiMod
         }
 
         if (keyEvent.action == MotionEvent.ACTION_UP) {
-            val downAt = lastKeyDownMap.remove(pointerId) ?: System.currentTimeMillis()
+            val downAt = lastKeyDownMap.remove(pointerId) ?: return false
             val held = System.currentTimeMillis() - downAt
             if (held < minDifference) {
                 // Very short tap: keep the contact alive for the minimum pulse

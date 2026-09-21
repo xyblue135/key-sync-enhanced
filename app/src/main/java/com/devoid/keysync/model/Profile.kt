@@ -4,7 +4,7 @@ import kotlinx.serialization.Serializable
 
 /**
  * A user-defined keymap preset. A user can maintain several of these
- * (e.g. one per game) and switch between them manually from the settings
+ * (e.g. infantry and vehicle layouts for the same game) and switch between them manually from the settings
  * screen. Each profile owns its own [items] (the on-screen button layout)
  * and its own [appConfig] (touch mode, theme, ...).
  */
@@ -20,4 +20,7 @@ data class Profile(
      * is expressible without a global key table.
      */
     val switchHotkeys: List<ProfileSwitchHotkey> = emptyList(),
+    /** Press/release this key from any layout to activate this profile. */
+    val activationKeyCode: Int? = null,
+    val activationHotkeyEnabled: Boolean = true,
 )
