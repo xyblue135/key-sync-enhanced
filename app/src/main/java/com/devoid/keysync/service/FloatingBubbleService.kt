@@ -9,6 +9,7 @@ import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.os.IBinder
 import android.util.Log
+import android.view.MotionEvent
 import android.view.InputDevice
 import android.view.Gravity
 import android.view.WindowManager
@@ -276,12 +277,14 @@ class FloatingBubbleService : Service() {
                 val keysVisible by stateManager.get().keysVisible.collectAsState()
                 val pendingBindId by stateManager.get().pendingVariableKeyBind.collectAsState()
                 val pressedKeys by stateManager.get().pressedKeys.collectAsState()
+                val wheelCursor by stateManager.get().wheelCursor.collectAsState()
                 val walkEnabled by stateManager.get().walkEnabled.collectAsState()
                 val lastInput by stateManager.get().lastInputLabel.collectAsState()
                 val profiles by stateManager.get().profiles.collectAsState()
                 val activeId by stateManager.get().activeProfileId.collectAsState()
                 Box {
-                    if (!isBubbleExpanded && !isShootingMode) {
+                    // Wheel selection consumes mouse deltas without exposing a cursor.
+                    if (!isBubbleExpanded && !isShootingMode && wheelCursor == null) {
                         Image(///mouse pointer
                             modifier = Modifier.offset {
                                 pointerOffset.let {
@@ -349,8 +352,23 @@ class FloatingBubbleService : Service() {
                 stateManager.get().onMouseEvent(event)
             } else false
         }
+        fun recoverPointerCapture() {
+            composeView.post {
+                if (composeView.isAttachedToWindow && composeView.hasWindowFocus() &&
+                    !stateManager.get().isBubbleExpanded.value && !composeView.hasPointerCapture()) {
+                    composeView.requestFocus()
+                    composeView.requestPointerCapture()
+                }
+            }
+        }
+        composeView.viewTreeObserver.addOnWindowFocusChangeListener { focused ->
+            if (focused) recoverPointerCapture()
+        }
         composeView.setOnKeyListener { _, _, event ->
-            stateManager.get().onKeyEvent(event)
+            val handled = stateManager.get().onKeyEvent(event)
+            if (event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0)
+                recoverPointerCapture()
+            handled
         }
         // Catch touch events injected by screen-mirror / keymapper apps
         // (e.g. 熊猫映射 / Scrcpy / GameKeyboard) so a PC mouse forwarded
@@ -359,7 +377,16 @@ class FloatingBubbleService : Service() {
         composeView.setOnTouchListener { _, motionEvent ->
             // Editing must receive the entire gesture, even when a drag leaves
             // the button hit area or screen-mirror compatibility is enabled.
-            if (stateManager.get().isBubbleExpanded.value) return@setOnTouchListener false
+            if (stateManager.get().isBubbleExpanded.value) {
+                val sm = stateManager.get()
+                if (sm.keyCaptureListener != null && motionEvent.isFromSource(InputDevice.SOURCE_MOUSE) &&
+                    motionEvent.actionMasked == MotionEvent.ACTION_DOWN &&
+                    motionEvent.buttonState and MotionEvent.BUTTON_TERTIARY != 0) {
+                    sm.keyCaptureListener?.invoke(com.devoid.keysync.domain.KEYCODE_MMC)
+                    return@setOnTouchListener true
+                }
+                return@setOnTouchListener false
+            }
             if (motionEvent.isFromSource(InputDevice.SOURCE_MOUSE) ||
                 motionEvent.isFromSource(InputDevice.SOURCE_MOUSE_RELATIVE)) {
                 return@setOnTouchListener stateManager.get().onMouseEvent(motionEvent)

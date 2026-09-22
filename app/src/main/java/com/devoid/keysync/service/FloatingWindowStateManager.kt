@@ -29,6 +29,7 @@ import com.devoid.keysync.model.importProfileCopies
 import com.devoid.keysync.model.profileActivationRoutes
 import com.devoid.keysync.model.ProfileSwitchHotkey
 import com.devoid.keysync.model.TouchMode
+import com.devoid.keysync.model.withMeasuredPositionFrom
 import com.devoid.keysync.model.defaultKeyCode
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -113,6 +114,9 @@ class FloatingWindowStateManager @Inject constructor(
 
     val isShootingMode = eventHandler.shootingModeFlow
     val walkEnabled = eventHandler.walkEnabled
+    val wheelCursor = eventHandler.wheelCursor
+    fun wheelCircle(): Pair<Offset, Float> = wheelCursorLocal(eventHandler.wheelCenterPosition) to eventHandler.wheelRadiusPx
+    fun wheelCursorLocal(position: Offset): Offset = position - (overlayOrigin ?: Offset.Zero)
     fun calibrateWalkOff() = eventHandler.calibrateWalkOff()
 
     /* ----------------- profiles ----------------- */
@@ -142,6 +146,11 @@ class FloatingWindowStateManager @Inject constructor(
         // Hotkeys are resolved on release, so the handler calls back into the
         // profile layer once the key's own mapping has been released.
         eventHandler.onProfileSwitch = { targetId -> handleProfileSwitch(targetId) }
+        eventHandler.onCursorRecenter = { screenCenter ->
+            _mousePointerOffset.value = screenCenter - (overlayOrigin ?: Offset.Zero)
+            lastMouseRawX = Float.NaN
+            lastMouseRawY = Float.NaN
+        }
         // 射击模式「边缘回中」需要屏幕尺寸来判定瞄准触点是否越界。
         eventHandler.screenSize = Offset(
             displayMetrics.widthPixels.toFloat(),
@@ -420,7 +429,7 @@ class FloatingWindowStateManager @Inject constructor(
     fun updateFixedKeyCode(itemId: Int, newKeyCode: Int, touchMode: TouchMode?) {
         val updated = _containerItems.value.map { item ->
             if (item is DraggableItem.FixedKey && item.id == itemId) {
-                item.copy(keyCode = newKeyCode, touchMode = touchMode)
+                item.copy(keyCode = newKeyCode, touchMode = touchMode).withMeasuredPositionFrom(item)
             } else item
         }
         _containerItems.value = updated
@@ -438,7 +447,7 @@ class FloatingWindowStateManager @Inject constructor(
     fun updateVariableKeyCode(itemId: Int, newKeyCode: Int, touchMode: TouchMode?) {
         val updated = _containerItems.value.map { item ->
             if (item is DraggableItem.VariableKey && item.id == itemId) {
-                item.copy(keyCode = newKeyCode, touchMode = touchMode)
+                item.copy(keyCode = newKeyCode, touchMode = touchMode).withMeasuredPositionFrom(item)
             } else item
         }
         _containerItems.value = updated
@@ -781,8 +790,10 @@ class FloatingWindowStateManager @Inject constructor(
             // 注意不清空 keyCaptureListener——它由对话框关闭时的 DisposableEffect
             // 卸载；保留它才能让用户第一次按错后重新按键改绑。
             val listener = keyCaptureListener
-            if (listener != null && keyEvent.action == MotionEvent.ACTION_DOWN) {
-                listener(keyEvent.keyCode)
+            if (listener != null) {
+                if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0)
+                    listener(keyEvent.keyCode)
+                // Consume UP too, otherwise Escape can close the window after capture.
                 return true
             }
             return false
@@ -798,9 +809,21 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     fun onMouseEvent(motionEvent: MotionEvent): Boolean {
-        if (isBubbleExpanded.value)
+        if (isBubbleExpanded.value) {
+            val listener = keyCaptureListener ?: return false
+            // Leave primary clicks to Compose so confirm/cancel remain clickable.
+            if (motionEvent.actionMasked == MotionEvent.ACTION_BUTTON_PRESS &&
+                motionEvent.actionButton == MotionEvent.BUTTON_TERTIARY) {
+                listener(KEYCODE_MMC)
+                return true
+            }
             return false
-        eventHandler.mousePointerPosition = pointerOffset.value
+        }
+        val screen = currentScreenSize()
+        eventHandler.screenSize = screen
+        eventHandler.mousePointerPosition = (pointerOffset.value + (overlayOrigin ?: Offset.Zero)).let {
+            Offset(it.x.coerceIn(0f, screen.x - 1f), it.y.coerceIn(0f, screen.y - 1f))
+        }
         mouseButtons.update(motionEvent.actionMasked, motionEvent.buttonState, motionEvent.actionButton)
             .forEach { (button, pressed) ->
                 mouseButtonToKeyCode(button)?.let { key ->
@@ -832,6 +855,7 @@ class FloatingWindowStateManager @Inject constructor(
                 }
 
                 val rawOffset = Offset(dx, dy)
+                if (eventHandler.isWheelActive) return eventHandler.handlePointerMove(rawOffset)
                 if (isShootingMode.value) {
                     // 射击模式：灵敏度作用在瞄准转视角上。
                     return eventHandler.handlePointerMove(rawOffset * sensitivity)
@@ -839,9 +863,10 @@ class FloatingWindowStateManager @Inject constructor(
                 // 非射击模式：鼠标指针 1:1 跟手移动（不乘灵敏度）。
                 val position = _mousePointerOffset.value + rawOffset
                 _mousePointerOffset.value = Offset(
-                    position.x.coerceIn(0f, displayMetrics.widthPixels.toFloat()),
-                    position.y.coerceIn(0f, displayMetrics.heightPixels.toFloat())
+                    position.x.coerceIn(0f, (screen.x - (overlayOrigin?.x ?: 0f) - 1f).coerceAtLeast(0f)),
+                    position.y.coerceIn(0f, (screen.y - (overlayOrigin?.y ?: 0f) - 1f).coerceAtLeast(0f))
                 )
+                eventHandler.mousePointerPosition = _mousePointerOffset.value + (overlayOrigin ?: Offset.Zero)
                 return eventHandler.handlePointerMove(rawOffset)
 
             }

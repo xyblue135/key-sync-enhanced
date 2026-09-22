@@ -155,6 +155,7 @@ fun ItemsContainer(
 ) {
     // When the user taps the gear icon on a key, this is set so we can
     // pop up a key-capture dialog bound to that specific item.
+    var configuringWasd by remember { mutableStateOf<DraggableItem.WASDGroup?>(null) }
     var configuringFixedKey by remember { mutableStateOf<DraggableItem.FixedKey?>(null) }
     var configuringVariableKey by remember { mutableStateOf<DraggableItem.VariableKey?>(null) }
 
@@ -289,7 +290,7 @@ fun ItemsContainer(
                                 val scaleAmount = scale + (dragAmount.y / 500)
                                 scale = max(min(scaleAmount, 1.4f), 0.6f)
                                 item.scale = scale
-                            }, pressedKeys = pressedKeys, editable = editing)
+                            }, onConfigure = { configuringWasd = item }, pressedKeys = pressedKeys, editable = editing)
                         }
 
                         is DraggableItem.FixedKey -> {
@@ -325,6 +326,28 @@ fun ItemsContainer(
             }
         }
 
+        configuringWasd?.let { target ->
+            var forward by remember(target.id) { mutableFloatStateOf(target.sprintForwardDistance ?: ((target.w - target.center).getDistance() * target.sprintScale).coerceIn(10f, 1000f)) }
+            var side by remember(target.id) { mutableFloatStateOf(target.sprintSideDistance ?: ((target.d - target.center).getDistance() * target.sprintScale).coerceIn(10f, 1000f)) }
+            InlineDialog(onDismiss = { configuringWasd = null }) {
+                Column(Modifier.padding(24.dp).widthIn(min = 240.dp).verticalScroll(rememberScrollState())) {
+                    Text("Shift 疾跑距离", style = MaterialTheme.typography.titleMedium)
+                    Text("W 前向：${forward.roundToInt()} px")
+                    Slider(value = forward.coerceIn(10f, 1000f), onValueChange = { forward = it }, valueRange = 10f..1000f)
+                    Text("A / D 横向（共用）：${side.roundToInt()} px")
+                    Slider(value = side.coerceIn(10f, 1000f), onValueChange = { side = it }, valueRange = 10f..1000f)
+                    Text("斜跑保留完整前向距离；只有 S 取消疾跑。保存后退出编辑生效。", style = MaterialTheme.typography.bodySmall)
+                    Row {
+                        TextButton(onClick = { configuringWasd = null }) { Text("取消") }
+                        TextButton(onClick = {
+                            target.sprintForwardDistance = forward
+                            target.sprintSideDistance = side
+                            configuringWasd = null
+                        }) { Text("保存") }
+                    }
+                }
+            }
+        }
         configuringFixedKey?.let { target ->
             if (target.type == DraggableItemType.SHOOTING_MODE) {
                 // 射击模式切换键只允许在 ` 与鼠标中键之间下拉二选一。
@@ -341,6 +364,8 @@ fun ItemsContainer(
                     walkCustomization = target.type == DraggableItemType.WALK_TOGGLE,
                     onCalibrateWalkOff = onCalibrateWalkOff,
                     currentKeyCode = target.keyCode,
+                    currentWheelRadius = target.wheelRadius,
+                    onWheelRadiusChange = { target.wheelRadius = it },
                     currentTouchMode = target.touchMode,
                     onConfirm = { newCode, touchMode ->
                         onUpdateKeyCode(target.id, newCode, touchMode)
@@ -356,6 +381,8 @@ fun ItemsContainer(
         configuringVariableKey?.let { target ->
             KeyCaptureDialog(
                 currentKeyCode = target.keyCode ?: KeyEvent.KEYCODE_UNKNOWN,
+                currentWheelRadius = target.wheelRadius,
+                onWheelRadiusChange = { target.wheelRadius = it },
                 currentTouchMode = target.touchMode,
                 onConfirm = { newCode, touchMode ->
                     onUpdateVariableKeyCode(target.id, newCode, touchMode)
@@ -468,6 +495,8 @@ fun ShootingModeKeyDialog(
 
 @Composable
 fun KeyCaptureDialog(
+    currentWheelRadius: Float = 50f,
+    onWheelRadiusChange: (Float) -> Unit = {},
     walkCustomization: Boolean = false,
     onCalibrateWalkOff: () -> Unit = {},
     currentKeyCode: Int,
@@ -479,6 +508,7 @@ fun KeyCaptureDialog(
 ) {
     var captured by remember { mutableStateOf<Int?>(null) }
     var selectedMode by remember { mutableStateOf(currentTouchMode) }
+    var radius by remember { mutableFloatStateOf(currentWheelRadius.coerceIn(10f, 500f)) }
     val borderColor = MaterialTheme.colorScheme.outline
 
     // 悬浮窗跑在 Service 里没有 Activity 焦点，Compose 的 onKeyEvent 收不到物理按键
@@ -489,9 +519,7 @@ fun KeyCaptureDialog(
     DisposableEffect(Unit) {
         onRequestFocus()
         onKeyCaptureChanged { keyCode ->
-            if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
-                onDismiss()
-            } else if (!(keyCode >= KeyEvent.KEYCODE_DPAD_UP && keyCode <= KeyEvent.KEYCODE_DPAD_CENTER)) {
+            if (!(keyCode >= KeyEvent.KEYCODE_DPAD_UP && keyCode <= KeyEvent.KEYCODE_DPAD_CENTER)) {
                 captured = keyCode
             }
         }
@@ -545,6 +573,11 @@ fun KeyCaptureDialog(
                 }
             }
 
+            if (selectedMode == TouchMode.WHEEL) {
+                Text("鼠标轮盘半径：${radius.roundToInt()} px")
+                Slider(value = radius, onValueChange = { radius = it }, valueRange = 10f..500f)
+                Text("按住此键打开轮盘，移动鼠标选择，松开确认。圆心为此轮盘按钮的位置，默认半径 50px。", style = MaterialTheme.typography.bodySmall)
+            }
             if (walkCustomization) {
                 Text("静步定制化：按一次开启，再按一次关闭；开启后按 Shift 自动取消。默认 Caps Lock。不能绑定 Shift 或 WASD。", style = MaterialTheme.typography.bodySmall)
                 TextButton(onClick = onCalibrateWalkOff) { Text("游戏已关闭静步：校准为关闭") }
@@ -602,7 +635,7 @@ fun KeyCaptureDialog(
                     enabled = !walkCustomization || (captured ?: currentKeyCode) !in setOf(
                         KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT,
                         KeyEvent.KEYCODE_W, KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_S, KeyEvent.KEYCODE_D),
-                    onClick = { onConfirm(captured ?: currentKeyCode, if (walkCustomization) TouchMode.TAP else selectedMode) }
+                    onClick = { onWheelRadiusChange(radius); onConfirm(captured ?: currentKeyCode, if (walkCustomization) TouchMode.TAP else selectedMode) }
                 ) {
                     Text(stringResource(R.string.key_rebind_confirm))
                 }

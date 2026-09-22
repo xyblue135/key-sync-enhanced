@@ -269,6 +269,7 @@ fun WASDKeysGroup(
     onRemove: () -> Unit,
     onPanIconDrag: (Offset) -> Unit,
     pressedKeys: Set<Int> = emptySet(),
+    onConfigure: () -> Unit = {},
     editable: Boolean = true
 ) {
     fun wasdBorder(keyCode: Int, fallback: Color): Color =
@@ -301,6 +302,10 @@ fun WASDKeysGroup(
 
         }
         if (editable) {
+        IconButton(onClick = onConfigure, modifier = Modifier.align(Alignment.Center)
+            .offset((-56).dp, (-56).dp).size(32.dp)) {
+            Icon(Icons.Rounded.Settings, contentDescription = "疾跑距离设置")
+        }
         RemoveButton(
             modifier = Modifier
                 .align(Alignment.Center)

@@ -32,9 +32,10 @@ data class VariableKey(
     var size: Int,
     // 每键独立触摸模式；null 表示跟随全局 normalBtnTouchMode。
     var touchMode: TouchMode? = null,
+    var wheelRadius: Float = 50f,
 ) : DraggableItem(){
     override fun copy(id: Int, position: Offset): DraggableItem =
-        VariableKey(id, position, keyCode, size, touchMode)
+        VariableKey(id, position, keyCode, size, touchMode, wheelRadius)
 
 }
 
@@ -50,9 +51,11 @@ data class VariableKey(
         var a: Offset = Offset.Zero,
         var s: Offset = Offset.Zero,
         var d: Offset = Offset.Zero,
+        var sprintForwardDistance: Float? = null,
+        var sprintSideDistance: Float? = null,
     ) : DraggableItem() {
         override fun copy(id: Int, position: Offset): DraggableItem =
-            WASDGroup(id, position, scale, sprintScale, center, w, a, s, d)
+            WASDGroup(id, position, scale, sprintScale, center, w, a, s, d, sprintForwardDistance, sprintSideDistance)
     }
 
     @Serializable
@@ -65,9 +68,10 @@ data class VariableKey(
         var size: Int,
         // 每键独立触摸模式；null 表示跟随全局 normalBtnTouchMode。
         var touchMode: TouchMode? = null,
+    var wheelRadius: Float = 50f,
     ) : DraggableItem(){
         override fun copy(id: Int, position: Offset): DraggableItem =
-            FixedKey(id, position, type, keyCode, size, touchMode)
+            FixedKey(id, position, type, keyCode, size, touchMode, wheelRadius)
     }
     @Serializable
     data class CancelableKey(
@@ -80,9 +84,10 @@ data class VariableKey(
         var size: Int,
         // 每键独立触摸模式；null 表示跟随全局 cancellableTouchMode。
         var touchMode: TouchMode? = null,
+    var wheelRadius: Float = 50f,
     ) : DraggableItem(){
         override fun copy(id: Int, position: Offset): DraggableItem =
-            CancelableKey(id, position,cancelPosition, type, keyCode, size, touchMode)
+            CancelableKey(id, position,cancelPosition, type, keyCode, size, touchMode, wheelRadius)
     }
 }
 
@@ -164,4 +169,10 @@ fun DraggableItemType.defaultKeyCode(): Int = when (this) {
     DraggableItemType.HOLD_KEY,
     DraggableItemType.WASD_KEY,
     DraggableItemType.BAG_MAP -> KeyEvent.KEYCODE_UNKNOWN
+}
+
+/** Data-class copy deliberately excludes transient base fields; preserve them for a rebind. */
+fun <T : DraggableItem> T.withMeasuredPositionFrom(source: DraggableItem): T = apply {
+    touchCenter = source.touchCenter
+    cancelTouchCenter = source.cancelTouchCenter
 }

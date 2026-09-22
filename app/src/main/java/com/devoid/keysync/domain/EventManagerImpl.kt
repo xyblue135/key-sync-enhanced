@@ -30,6 +30,8 @@ class EventManagerImpl : EventManager {
     private val maxPointers = 16 // practical multi-touch ceiling; avoids rejecting common key combinations
     private val pointerIndexMap = SparseIntArray(maxPointers)
     private var activePointerCount = 0
+    private val logicalIds = IntArray(maxPointers)
+    private val physicalIds = PointerSlots(maxPointers)
 
     /** downTime shared by every event of the current gesture. 0 == no gesture. */
     private var gestureDownTime = 0L
@@ -45,8 +47,6 @@ class EventManagerImpl : EventManager {
     }
 
     override suspend fun addPointer(id: Int, x: Float, y: Float): Int {
-        if (id < 0 || id > MAX_POINTER_ID) return -1
-        if (activePointerCount >= maxPointers) return -1
         var index = pointerIndexMap[id, -1]
         if (index != -1) {//existing event
             coordsArray[index].also { coords ->
@@ -55,7 +55,9 @@ class EventManagerImpl : EventManager {
             }
             return -2
         }
+        val physicalId = physicalIds.acquire(id) ?: return -1
         index = activePointerCount
+        logicalIds[index] = id
         pointerIndexMap.put(id, index)
 
         // The first pointer of a gesture fixes the downTime for everything that
@@ -65,7 +67,7 @@ class EventManagerImpl : EventManager {
 
         // Initialize
         propsArray[index].also { props ->
-            props.id = id
+            props.id = physicalId
             props.toolType = MotionEvent.TOOL_TYPE_FINGER
         }
 
@@ -104,10 +106,12 @@ class EventManagerImpl : EventManager {
             propsArray[i].copyFrom(propsArray[i + 1])
             coordsArray[i].copyFrom(coordsArray[i + 1])
 
-            val nextId = propsArray[i + 1].id
+            logicalIds[i] = logicalIds[i + 1]
+            val nextId = logicalIds[i]
             pointerIndexMap.put(nextId, i)
         }
         pointerIndexMap.delete(id)
+        physicalIds.release(id)
         activePointerCount--
         if (activePointerCount == 0)
             gestureDownTime = 0L
@@ -194,6 +198,7 @@ class EventManagerImpl : EventManager {
         if (pointerIndexMap.size() == 0)
             return false
         pointerIndexMap.clear()
+        physicalIds.clear()
         activePointerCount = 0
         gestureDownTime = 0L
         return true

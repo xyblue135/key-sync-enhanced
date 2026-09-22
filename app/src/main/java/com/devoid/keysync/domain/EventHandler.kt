@@ -71,7 +71,9 @@ class EventHandler(
     // Do not assume Android key codes fit a fixed array. External keyboards and
     // vendor-specific keys can legally use values outside the old 338-entry range.
     private val pressedKeyCodes = HashSet<Int>(64)
+    private val shootingPress = TogglePress()
     private val heldMouseButtons = mutableSetOf<Int>()
+    private var mouseHoldKeys: Set<Int> = emptySet()
     private val releaseSwitch = ReleaseSwitch(
         now = { SystemClock.uptimeMillis() },
         schedule = { delay, action -> mainHandler.postDelayed({ action() }, delay) },
@@ -100,8 +102,14 @@ class EventHandler(
     private val cancelToggle = HashMap<Int, Boolean>(32)
     private val pointerIds = HashMap<Int, Int>(64)
 
+    private val sprintGate = SprintGate()
     private var wasdMask = 0
-    private var lastWasdMask = 0
+    private val joystickMotion = JoystickMotion(
+        MASK_SPRINT,
+        release = { eventInjector.releaseGesture(it) },
+        start = { id, center, target -> eventInjector.injectGesture(id, center, target) },
+        move = { id, target -> eventInjector.transFormGesture(id, target) },
+    )
 
     private val keyIdMap = HashMap<Int, Int>(64)
     private var nextKeyId = 0
@@ -145,6 +153,7 @@ class EventHandler(
     private val recenterMinIntervalMs = 50L
     private var lastRecenterTime = 0L
 
+    var onCursorRecenter: ((Offset) -> Unit)? = null
     var mousePointerPosition = Offset.Zero
     var appConfig = AppConfig.Default
 
@@ -167,7 +176,15 @@ class EventHandler(
     private var wheelCenter = Offset.Zero
     private var wheelAngleDeg = 0f
     // 轮盘触点绕中心旋转的半径（px）。滚轮每格转动 wheelStepDeg 度。
-    private val wheelRadius = 150f
+    private var wheelRadius = 50f
+    private var wheelControlPointerId = -1
+    private var wheelOffset = Offset.Zero
+    private val wheelRadii = mutableMapOf<Int, Float>()
+    private val _wheelCursor = MutableStateFlow<Offset?>(null)
+    val wheelCursor = _wheelCursor.asStateFlow()
+    val isWheelActive: Boolean get() = wheelActive
+    val wheelCenterPosition: Offset get() = wheelCenter
+    val wheelRadiusPx: Float get() = wheelRadius
     private val wheelStepDeg = 30f
 
     private fun keyId(keyCode: Int): Int =
@@ -350,13 +367,15 @@ class EventHandler(
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     if (!pressedKeyCodes.add(event.keyCode)) return true
+                    sprintGate.shiftPressed()
                     wasdMask = wasdMask or sprintBit
                     handleWasd(wasdPointerId)
                 }
 
                 MotionEvent.ACTION_UP -> {
                     pressedKeyCodes.remove(event.keyCode)
-                    wasdMask = wasdMask and sprintBit.inv()
+                    if (pressedKeyCodes.none { keyToSprintMask(it) != 0 })
+                        wasdMask = wasdMask and sprintBit.inv()
                     handleWasd(wasdPointerId)
                 }
             }
@@ -369,7 +388,10 @@ class EventHandler(
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
                 // Auto-repeat: only the first DOWN of a hold counts.
-                if (!pressedKeyCodes.add(event.keyCode)) return true
+                if (event.keyCode == shootingModeKeyCode) {
+                    if (!shootingPress.down(event.downTime, event.repeatCount)) return true
+                    pressedKeyCodes.add(event.keyCode)
+                } else if (!pressedKeyCodes.add(event.keyCode)) return true
                 if (isSwitchKey) releaseSwitch.down(event.keyCode)
 
                 // The press edge belongs to the mapping. A switch hotkey that
@@ -377,6 +399,7 @@ class EventHandler(
                 // added latency.
                 if (pointerId != null) {
                     if (handlesAsWasd) {
+                        sprintGate.directionPressed(wasdBit == MASK_S)
                         wasdMask = wasdMask or wasdBit
                         handleWasd(pointerId)
                     } else {
@@ -411,7 +434,16 @@ class EventHandler(
                         else -> 0L
                     }
                     releaseSwitch.release(event.keyCode, minimum) {
-                        walkToggle.whenIdle { onProfileSwitch?.invoke(target) }
+                        val hadAction = keyMap.containsKey(event.keyCode) || handlesAsWasd
+                        walkToggle.whenIdle(releaseSwitch.guard {
+                            onProfileSwitch?.invoke(target)
+                            // If the shared action exists only in the destination, serve it there.
+                            // A source action already sent must never be fired a second time.
+                            if (!hadAction) pointerIds[event.keyCode]?.let { destinationPointer ->
+                                handleKeyDown(event.keyCode, destinationPointer)
+                                handleKeyUp(event.keyCode, destinationPointer)
+                            }
+                        })
                     }
                 }
                 return true
@@ -439,28 +471,17 @@ class EventHandler(
         }
         val directionMask = vertical or horizontal
         if (directionMask == 0) {
-            eventInjector.releaseGesture(pointerId)
-            lastWasdMask = 0
+            joystickMotion.update(pointerId, 0, Offset.Zero, Offset.Zero)
             return
         }
 
-        val requestedMask = directionMask or (wasdMask and MASK_SPRINT)
+        val sprintAllowed = sprintGate.allowed(wasdMask and MASK_S != 0)
+        val requestedMask = directionMask or (if (sprintAllowed) wasdMask and MASK_SPRINT else 0)
         // Profiles with sprintScale <= 1 do not create sprint entries. Shift
         // should not freeze movement in that case; fall back to normal speed.
         val effectiveMask = if (wasdMap.containsKey(requestedMask)) requestedMask else directionMask
         wasdMap[effectiveMask]?.let {
-            val wasActive = lastWasdMask != 0
-//            val isCombo = wasdMask.countOneBits() > 1
-
-            if (wasActive) {
-                // gesture already exists → transform
-                eventInjector.transFormGesture(pointerId, it.position)
-            } else {
-                // first key press → inject
-                eventInjector.injectGesture(pointerId, it.center!!, it.position)
-            }
-
-            lastWasdMask = effectiveMask
+            joystickMotion.update(pointerId, effectiveMask, it.center!!, it.position)
         }
     }
 
@@ -489,13 +510,19 @@ class EventHandler(
             } else {
                 val mode = keyTouchMode[keyCode] ?: normalTouchMode
                 if (mode == TouchMode.WHEEL) {
-                    // 轮盘：按住时在按键位置注入一个触点，等待滚轮旋转。
+                    // 轮盘：按住按钮后移动同一触点选择，松开确认。
+                    if (wheelActive) return
                     wheelActive = true
                     wheelPointerId = pointerId
+                    wheelRadius = (wheelRadii[keyCode] ?: 50f).coerceIn(10f, 500f)
                     wheelCenter = it.position
+                    wheelOffset = Offset.Zero
                     wheelAngleDeg = 0f
+                    // Drag the same finger that opened the wheel, around this button.
+                    wheelControlPointerId = pointerId
                     mappingPressed[keyId(keyCode)] = true
                     eventInjector.injectPointer(pointerId, it.position)
+                    _wheelCursor.value = wheelCenter
                 } else {
                     val handler = normalHandler(mode)
                     val id = keyId(keyCode)
@@ -512,7 +539,8 @@ class EventHandler(
     }
 
     private fun handleKeyUp(keyCode: Int, pointerId: Int) {
-        if (keyCode == walkKeyCode) return
+        // The toggle owns a persistent aim contact; normal UP handlers must not lift it.
+        if (keyCode == walkKeyCode || keyCode == shootingModeKeyCode) return
         val id = keyId(keyCode)
         keyMap[keyCode]?.let {
             if (it.type == KeymapType.CANCELABLE){
@@ -531,9 +559,7 @@ class EventHandler(
             if (mode == TouchMode.WHEEL) {
                 // 松开轮盘键：释放触点，确认当前角度指向的选择。
                 if (wheelActive && wheelPointerId == pointerId) {
-                    wheelActive = false
-                    wheelPointerId = -1
-                    eventInjector.releasePointer(pointerId)
+                    stopWheel()
                 }
                 mappingPressed[id] = false
             } else {
@@ -574,6 +600,10 @@ class EventHandler(
             return true
         }
 
+        if (keyCode !in mouseHoldKeys || keyTouchMode[keyCode] == TouchMode.WHEEL) {
+            if (pressed) handleKeyDown(keyCode, pointerId) else handleKeyUp(keyCode, pointerId)
+            return true
+        }
         keyMap[keyCode]?.let {
             if (pressed)
                 eventInjector.injectPointer(pointerId, it.position, it.end!!)
@@ -583,7 +613,25 @@ class EventHandler(
         return true
     }
 
+    private fun stopWheel() {
+        if (!wheelActive) return
+        eventInjector.releasePointer(wheelPointerId)
+        wheelActive = false
+        _wheelCursor.value = null
+        wheelPointerId = -1
+        wheelControlPointerId = -1
+    }
+
     fun handlePointerMove(position: Offset): Boolean {
+        if (wheelActive) {
+            val previous = _wheelCursor.value ?: wheelCenter
+            wheelOffset = withinWheel(wheelOffset + position, wheelRadius)
+            val target = clampAimToBounds(wheelCenter + wheelOffset)
+            // Use coalesced deltas, as aiming does, to avoid a high-polling mouse backlog.
+            if (target != previous) eventInjector.updatePointerPosition(wheelControlPointerId, target - previous)
+            _wheelCursor.value = target
+            return true
+        }
         if (shootingMode) {
             val pointerId = pointerIds[shootingModeKeyCode] ?: return false
             if (!position.x.isFinite() || !position.y.isFinite()) return true
@@ -609,6 +657,9 @@ class EventHandler(
         // 的 _mousePointerOffset 跟踪），不拖动 LMC 触点。旧实现无条件调用
         // updatePointerPosition(LMC)，一旦用户按住左键（点击后未及时松开）再滑鼠标，
         // LMC 触点就被拖出屏幕 → 游戏收到越界多指事件 → 重置所有触点（WASD 断触）。
+        if (MotionEvent.BUTTON_PRIMARY in heldMouseButtons) {
+            pointerIds[KEYCODE_LMC]?.let { eventInjector.transFormGesture(it, mousePointerPosition) }
+        }
         return true
     }
 
@@ -639,14 +690,23 @@ class EventHandler(
         // 轮盘触点要绕中心旋转到「绝对位置 (x, y)」，必须用 transFormGesture（内部
         // updatePointer 绝对定位）。不能用 updatePointerPosition——那是 offsetPointer
         // 累加偏移，会把绝对坐标当成增量无限漂移，转几下触点就飞出屏幕。
-        eventInjector.transFormGesture(wheelPointerId, Offset(x, y))
+        wheelOffset = Offset(x, y) - wheelCenter
+        val target = clampAimToBounds(Offset(x, y))
+        eventInjector.transFormGesture(wheelControlPointerId, target)
+        _wheelCursor.value = target
         return true
     }
 
     /* ---------- shooting mode ---------- */
 
     private fun toggleShootingMode() {
+        stopWheel()
         val newState = !shootingMode
+        if (!newState) {
+            val center = clampAimToBounds(keyMap[shootingModeKeyCode]?.position ?: aimCenter)
+            mousePointerPosition = center
+            onCursorRecenter?.invoke(center)
+        }
         setShootingMode(newState)
 
         val key = shootingModeKeyCode
@@ -671,15 +731,26 @@ class EventHandler(
     }
 
 
+    private val cursorDownAt = mutableMapOf<Int, Long>()
+    private val cursorGeneration = mutableMapOf<Int, Int>()
+
     private fun simulateNativeClick(
         pointerId: Int,
         position: Offset = mousePointerPosition,
         pressed: Boolean
     ) {
-        if (pressed)
+        if (pressed) {
+            cursorGeneration[pointerId] = (cursorGeneration[pointerId] ?: 0) + 1
+            cursorDownAt[pointerId] = SystemClock.uptimeMillis()
             eventInjector.injectPointer(pointerId, position)
-        else
-            eventInjector.releasePointer(pointerId)
+        } else {
+            val start = cursorDownAt.remove(pointerId) ?: return
+            val token = cursorGeneration[pointerId]
+            val delay = (60L - (SystemClock.uptimeMillis() - start)).coerceAtLeast(0)
+            mainHandler.postDelayed({
+                if (cursorGeneration[pointerId] == token) eventInjector.releasePointer(pointerId)
+            }, delay)
+        }
     }
 
     /* ---------- mapping ---------- */
@@ -702,6 +773,8 @@ class EventHandler(
 
     fun updateKeyMapping(items: List<DraggableItem>) {
         releaseSwitch.reset()
+        cursorDownAt.clear()
+        cursorGeneration.keys.toList().forEach { cursorGeneration[it] = cursorGeneration.getValue(it) + 1 }
         walkToggle.interrupt()
         MappingConflictDetector.detect(items).forEach {
             Log.w("EventHandler", "Mapping conflict: ${it.message}")
@@ -725,18 +798,21 @@ class EventHandler(
         mappingPressed.clear()
         cancelToggle.clear()
         keyTouchMode.clear()
+        wheelRadii.clear()
         nextKeyId = 0
         // eventInjector.clear() above lifted the joystick contact, so the
-        // WASD state has to start from zero again: leaving lastWasdMask set
-        // would make the next press take the "transform existing gesture"
-        // branch and transform a gesture that no longer exists.
+        // Reset the joystick transition tracker after cancelling its contact.
         wasdMask = 0
-        lastWasdMask = 0
+        joystickMotion.reset()
         wheelActive = false
+        _wheelCursor.value = null
         wheelPointerId = -1
         walkKeyCode = items.filterIsInstance<DraggableItem.FixedKey>()
             .firstOrNull { it.type == DraggableItemType.WALK_TOGGLE }
             ?.keyCode?.takeUnless { keyToSprintMask(it) != 0 || keyToWasdMask(it) != 0 }
+        mouseHoldKeys = items.filterIsInstance<DraggableItem.FixedKey>()
+            .filter { it.type == DraggableItemType.FIRE || it.type == DraggableItemType.SCOPE }
+            .map { it.keyCode }.toSet()
         var nextPointer = 0
 
         // Resolve the current shooting-mode toggle key from the items. If no
@@ -781,21 +857,16 @@ class EventHandler(
                     wasdMap[MASK_S or MASK_A] = KeyMap(position = sa, center = item.center)
                     wasdMap[MASK_S or MASK_D] = KeyMap(position = sd, center = item.center)
 
-                    // 疾跑档：把每个方向沿 center 方向延长 sprintScale 倍。这样
-                    // W+Shift 向前疾跑、W+A+Shift 向左前疾跑、W+D+Shift 向右前疾跑。
-                    if (item.sprintScale > 1f) {
-                        fun sprinted(pos: Offset): Offset = Offset(
-                            x = item.center.x + (pos.x - item.center.x) * item.sprintScale,
-                            y = item.center.y + (pos.y - item.center.y) * item.sprintScale
-                        )
-                        wasdMap[MASK_W or MASK_SPRINT] = KeyMap(position = sprinted(item.w), center = item.center)
-                        wasdMap[MASK_A or MASK_SPRINT] = KeyMap(position = sprinted(item.a), center = item.center)
-                        wasdMap[MASK_S or MASK_SPRINT] = KeyMap(position = sprinted(item.s), center = item.center)
-                        wasdMap[MASK_D or MASK_SPRINT] = KeyMap(position = sprinted(item.d), center = item.center)
-                        wasdMap[MASK_W or MASK_A or MASK_SPRINT] = KeyMap(position = sprinted(wa), center = item.center)
-                        wasdMap[MASK_W or MASK_D or MASK_SPRINT] = KeyMap(position = sprinted(wd), center = item.center)
-                        wasdMap[MASK_S or MASK_A or MASK_SPRINT] = KeyMap(position = sprinted(sa), center = item.center)
-                        wasdMap[MASK_S or MASK_D or MASK_SPRINT] = KeyMap(position = sprinted(sd), center = item.center)
+                    val forwardDistance = item.sprintForwardDistance
+                        ?: ((item.w - item.center).getDistance() * item.sprintScale)
+                    val sideDistance = item.sprintSideDistance
+                        ?: ((item.d - item.center).getDistance() * item.sprintScale)
+                    listOf(MASK_W, MASK_A, MASK_D, MASK_W or MASK_A, MASK_W or MASK_D).forEach { mask ->
+                        val forward = if (mask and MASK_W != 0) 1 else 0
+                        val side = if (mask and MASK_A != 0) -1 else if (mask and MASK_D != 0) 1 else 0
+                        val target = item.center + sprintOffset(forward, side,
+                            forwardDistance.coerceIn(10f, 1000f), sideDistance.coerceIn(10f, 1000f))
+                        wasdMap[mask or MASK_SPRINT] = KeyMap(position = target, center = item.center)
                     }
 
                     alloc(KEYCODE_WASD)
@@ -806,6 +877,7 @@ class EventHandler(
                     val center = item.touchCenter ?: item.position + Offset(item.size / 2f, item.size / 2f)
                     keyMap[k] = KeyMap(position = center, end = center)
                     item.touchMode?.let { keyTouchMode[k] = it }
+                    wheelRadii[k] = item.wheelRadius
                     alloc(k)
                 }
 
@@ -814,6 +886,7 @@ class EventHandler(
                     val center = item.touchCenter ?: item.position + Offset(item.size / 2f, item.size / 2f)
                     keyMap[k] = KeyMap(position = center, end = center)
                     item.touchMode?.let { keyTouchMode[k] = it }
+                    wheelRadii[k] = item.wheelRadius
                     alloc(k)
                 }
 
@@ -824,6 +897,7 @@ class EventHandler(
                     keyMap[k] = KeyMap(type = KeymapType.CANCELABLE, position = center, end = center)
                     cancelKeyMap[k] = KeyMap(type = KeymapType.CANCELABLE, position = cancel, end = cancel)
                     item.touchMode?.let { keyTouchMode[k] = it }
+                    wheelRadii[k] = item.wheelRadius
                     alloc(k)
                 }
             }
@@ -835,6 +909,8 @@ class EventHandler(
 
     fun clear() {
         releaseSwitch.reset()
+        cursorDownAt.clear()
+        cursorGeneration.keys.toList().forEach { cursorGeneration[it] = cursorGeneration.getValue(it) + 1 }
         walkToggle.interrupt()
         heldMouseButtons.clear()
         normalHandlers.values.filterIsInstance<TapModeTouchHandler>()
@@ -843,11 +919,13 @@ class EventHandler(
             .forEach { it.resetPendingActions() }
         eventInjector.clear()
         pressedKeyCodes.clear()
+        shootingPress.reset()
         mappingPressed.clear()
         cancelToggle.clear()
         wasdMask = 0
-        lastWasdMask = 0
+        joystickMotion.reset()
         wheelActive = false
+        _wheelCursor.value = null
         wheelPointerId = -1
         shootingMode = false
         _shootingModeFlow.value = false

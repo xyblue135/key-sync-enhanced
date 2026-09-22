@@ -7,7 +7,11 @@ internal class ReleaseSwitch(
 ) {
     private val downs = mutableMapOf<Int, Long>()
     private var generation = 0
-    fun down(key: Int) { downs[key] = now() }
+    fun down(key: Int) { generation++; downs[key] = now() }
+    fun guard(action: () -> Unit): () -> Unit {
+        val token = generation
+        return { if (token == generation) action() }
+    }
     fun release(key: Int, minimumPulseMs: Long, switch: () -> Unit) {
         val started = downs.remove(key) ?: return
         val token = ++generation

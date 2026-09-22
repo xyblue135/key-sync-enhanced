@@ -67,7 +67,7 @@
     <string name="key_touch_mode_tap">点击（按一下触发一次）</string>
     <string name="key_touch_mode_hold">按住（按下持续，松开结束，适合探头）</string>
     <string name="key_touch_mode_mixed">混合（短按/长按）</string>
-    <string name="key_touch_mode_wheel">轮盘（按住 + 滚轮 360° 选择）</string>
+    <string name="key_touch_mode_wheel">轮盘（按住 + 鼠标移动 360° 选择）</string>
     <string name="key_touch_mode_global">跟随全局设置</string>
     <string name="shooting_mode_key_title">射击模式切换键</string>
     <string name="shooting_mode_key_grave">` 键（反引号）</string>

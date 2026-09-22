@@ -4,6 +4,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ReleaseSwitchTest {
+    @Test fun newerPressCancelsSwitchWaitingForWalkPulse() {
+        var count = 0
+        val gate = ReleaseSwitch({ 0L }) { _, _ -> }
+        gate.down(52)
+        val pending = gate.guard { count++ }
+        gate.down(8)
+        pending()
+        assertEquals(0, count)
+    }
+
     @Test fun fastSharedKeyWaitsForGameTapAndSwitchesOnlyOnce() {
         var clock = 0L
         val callbacks = mutableListOf<() -> Unit>()
