@@ -70,7 +70,9 @@ import androidx.compose.ui.unit.dp
 import androidx.constraintlayout.compose.ConstraintLayout
 import com.devoid.keysync.R
 import com.devoid.keysync.model.AppConfig
+import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.Profile
+import com.devoid.keysync.model.SwapPair
 import com.devoid.keysync.model.ThemePreference
 import com.devoid.keysync.model.TouchMode
 import com.devoid.keysync.util.capitalizeFirst
@@ -87,8 +89,6 @@ fun SettingsScreen(
     activeProfileId: String? = null,
     onSave: (AppConfig) -> Unit = {},
     onCreateProfile: (String) -> Unit = {},
-    onSetupTwoProfiles: () -> Unit = {},
-    onSetActivationKey: (String, Int?) -> Unit = { _, _ -> },
     onExportAllProfiles: () -> String = { "" },
     onSwitchProfile: (String) -> Unit = {},
     onRenameProfile: (String, String) -> Unit = { _, _ -> },
@@ -96,8 +96,7 @@ fun SettingsScreen(
     onDuplicateProfile: (String) -> Unit = {},
     onExportProfile: (String) -> String? = { null },
     onImportProfile: (String) -> String? = { null },
-    onSetProfileHotkey: (profileId: String, keyCode: Int, targetProfileId: String?) -> Unit = { _, _, _ -> },
-    onRemoveProfileHotkey: (profileId: String, keyCode: Int) -> Unit = { _, _ -> },
+    onSetProfileSwapPairs: (profileId: String, pairs: List<SwapPair>) -> Unit = { _, _ -> },
     onNavigateBack: () -> Unit = {},
     onNavigateAbout: () -> Unit = {}
 ) {
@@ -196,10 +195,7 @@ fun SettingsScreen(
                 ProfileManagerCard(
                     profiles = profiles,
                     activeProfileId = activeProfileId,
-                    profileSwitchEnabled = newConfig.profileSwitchEnabled,
                     onCreate = onCreateProfile,
-                    onSetupTwoProfiles = onSetupTwoProfiles,
-                    onSetActivationKey = onSetActivationKey,
                     onExportAllProfiles = onExportAllProfiles,
                     onSwitch = onSwitchProfile,
                     onRename = onRenameProfile,
@@ -207,13 +203,7 @@ fun SettingsScreen(
                     onDuplicate = onDuplicateProfile,
                     onExport = onExportProfile,
                     onImport = onImportProfile,
-                    onSetHotkey = onSetProfileHotkey,
-                    onRemoveHotkey = onRemoveProfileHotkey,
-                    onToggleSwitchEnabled = { enabled ->
-                        // Staged like every other setting instead of saving
-                        // immediately, so it cannot wipe sibling edits.
-                        newConfig = newConfig.copy(profileSwitchEnabled = enabled)
-                    },
+                    onSetSwapPairs = onSetProfileSwapPairs,
                 )
                 Card {
                     Column(
@@ -576,10 +566,7 @@ fun KeyConfigTextField(
 fun ProfileManagerCard(
     profiles: List<Profile>,
     activeProfileId: String?,
-    profileSwitchEnabled: Boolean,
     onCreate: (String) -> Unit,
-    onSetupTwoProfiles: () -> Unit,
-    onSetActivationKey: (String, Int?) -> Unit,
     onExportAllProfiles: () -> String,
     onSwitch: (String) -> Unit,
     onRename: (String, String) -> Unit,
@@ -587,9 +574,7 @@ fun ProfileManagerCard(
     onDuplicate: (String) -> Unit,
     onExport: (String) -> String?,
     onImport: (String) -> String?,
-    onSetHotkey: (String, Int, String?) -> Unit,
-    onRemoveHotkey: (String, Int) -> Unit,
-    onToggleSwitchEnabled: (Boolean) -> Unit,
+    onSetSwapPairs: (String, List<SwapPair>) -> Unit,
 ) {
     var showNewDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
@@ -599,9 +584,7 @@ fun ProfileManagerCard(
     var deleteTarget by remember { mutableStateOf<Profile?>(null) }
     var menuProfile by remember { mutableStateOf<Profile?>(null) }
     var exportText by remember { mutableStateOf<String?>(null) }
-    var hotkeyCaptureTarget by remember { mutableStateOf<Profile?>(null) }
-    var activationTarget by remember { mutableStateOf<Profile?>(null) }
-    var showLegacyHotkeys by remember { mutableStateOf(false) }
+    var swapTarget by remember { mutableStateOf<Profile?>(null) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -630,14 +613,9 @@ fun ProfileManagerCard(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Text("同一游戏可保存多套布局。切入键随预设保存；按下先执行当前布局的游戏动作，松开后切换。",
-                style = MaterialTheme.typography.bodySmall)
             Row {
-                TextButton(onClick = onSetupTwoProfiles) { Text("配置两套：X / 数字 1") }
                 TextButton(onClick = { exportText = onExportAllProfiles() }) { Text("复制全部预设") }
             }
-            Text("复制或粘贴不会覆盖原布局；重复的切入键会在新副本中停用，可重新设置。",
-                style = MaterialTheme.typography.labelSmall)
             HorizontalDivider()
             // LazyColumn, not Column: with a plain Column the rows overflowed
             // the 320dp cap and profiles past the cut-off were neither visible
@@ -662,44 +640,16 @@ fun ProfileManagerCard(
                         },
                         onDuplicate = { onDuplicate(profile.id) },
                         onExport = { exportText = onExport(profile.id) },
-                        onSetHotkey = {
-                            // Hotkeys belong to the profile they switch away
-                            // from, so make it active before capturing.
-                            onSwitch(profile.id)
-                            hotkeyCaptureTarget = profile
-                        },
+                        onSetSwap = { swapTarget = profile },
                         onDelete = { deleteTarget = profile }
                     )
-                    TextButton(onClick = { activationTarget = profile }) {
-                        val binding = profile.activationKeyCode?.keyCodeToString() ?: "未设置"
-                        val disabled = if (profile.activationKeyCode != null && !profile.activationHotkeyEnabled) "（副本/冲突已停用）" else ""
-                        Text("切入此预设：$binding$disabled")
-                    }
                 }
             }
 
             HorizontalDivider()
-            TextButton(onClick = { showLegacyHotkeys = !showLegacyHotkeys }) {
-                Text("高级：旧版定向切换规则")
-            }
-            if (showLegacyHotkeys) {
-            SwitchHotkeySection(
-                profiles = profiles,
-                activeProfileId = activeProfileId,
-                enabled = profileSwitchEnabled,
-                onToggleEnabled = onToggleSwitchEnabled,
-                onRemoveHotkey = onRemoveHotkey,
-                onAddHotkey = { hotkeyCaptureTarget = it }
-            )
-            }
         }
     }
 
-    activationTarget?.let { target ->
-        ProfileActivationDialog(target, profiles,
-            onDismiss = { activationTarget = null },
-            onSave = { code -> onSetActivationKey(target.id, code); activationTarget = null })
-    }
 
     if (showNewDialog) {
         val trimmedName = newName.trim()
@@ -822,15 +772,12 @@ fun ProfileManagerCard(
         ProfileExportDialog(json = json, onDismiss = { exportText = null })
     }
 
-    hotkeyCaptureTarget?.let { target ->
-        ProfileHotkeyCaptureDialog(
+
+    swapTarget?.let { target ->
+        SwapPairsDialog(
             profile = target,
-            profiles = profiles,
-            onDismiss = { hotkeyCaptureTarget = null },
-            onSetHotkey = { keyCode, targetId ->
-                onSetHotkey(target.id, keyCode, targetId)
-                hotkeyCaptureTarget = null
-            }
+            onDismiss = { swapTarget = null },
+            onSave = { pairs -> onSetSwapPairs(target.id, pairs) }
         )
     }
 }
@@ -853,7 +800,7 @@ private fun ProfileRow(
     onRename: () -> Unit,
     onDuplicate: () -> Unit,
     onExport: () -> Unit,
-    onSetHotkey: () -> Unit,
+    onSetSwap: () -> Unit,
     onDelete: () -> Unit
 ) {
     Row(
@@ -867,13 +814,23 @@ private fun ProfileRow(
             selected = isActive,
             onClick = { onSwitch(profile.id) }
         )
-        Text(
-            text = profile.name,
+        Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(start = 4.dp),
-            style = MaterialTheme.typography.titleMedium
-        )
+                .padding(start = 4.dp)
+        ) {
+            Text(
+                text = profile.name,
+                style = MaterialTheme.typography.titleMedium
+            )
+            if (profile.layoutScreenWidth > 0 && profile.layoutScreenHeight > 0) {
+                Text(
+                    text = "${profile.layoutScreenWidth} x ${profile.layoutScreenHeight}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
         if (isActive) {
             Text(
                 text = stringResource(R.string.profile_manager_active),
@@ -915,10 +872,10 @@ private fun ProfileRow(
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text(stringResource(R.string.profile_hotkey_title)) },
+                    text = { Text("交换对（换位键）") },
                     onClick = {
                         onMenuDismiss()
-                        onSetHotkey()
+                        onSetSwap()
                     }
                 )
                 DropdownMenuItem(
@@ -934,181 +891,11 @@ private fun ProfileRow(
     }
 }
 
-/**
- * Master switch plus the switch hotkeys of the active profile.
- *
- * Hotkeys belong to the profile they switch *away* from, so only the active
- * profile's bindings are listed here.
- */
-@Composable
-fun SwitchHotkeySection(
-    profiles: List<Profile>,
-    activeProfileId: String?,
-    enabled: Boolean,
-    onToggleEnabled: (Boolean) -> Unit,
-    onRemoveHotkey: (String, Int) -> Unit,
-    onAddHotkey: (Profile) -> Unit,
-) {
-    val active = profiles.firstOrNull { it.id == activeProfileId }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = stringResource(R.string.profile_switch_enable),
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium
-            )
-            Switch(checked = enabled, onCheckedChange = onToggleEnabled)
-        }
-        Text(
-            text = stringResource(R.string.profile_switch_enable_hint),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        if (enabled && active != null) {
-            HorizontalDivider()
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = stringResource(R.string.profile_hotkey_title) + " · " + active.name,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium
-                )
-                TextButton(onClick = { onAddHotkey(active) }) {
-                    Text(stringResource(R.string.profile_hotkey_add))
-                }
-            }
-            if (active.switchHotkeys.isEmpty()) {
-                Text(
-                    text = stringResource(R.string.profile_hotkey_empty),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                active.switchHotkeys.forEach { hotkey ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = hotkey.keyCode.keyCodeToString(),
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Spacer(Modifier.widthIn(8.dp))
-                        Text(
-                            text = stringResource(R.string.profile_hotkey_arrow),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.widthIn(8.dp))
-                        Text(
-                            text = profiles.firstOrNull { it.id == hotkey.targetProfileId }?.name
-                                ?: stringResource(R.string.profile_hotkey_target_next),
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        IconButton(onClick = { onRemoveHotkey(active.id, hotkey.keyCode) }) {
-                            Icon(
-                                Icons.Rounded.Delete,
-                                contentDescription = stringResource(R.string.profile_manager_delete)
-                            )
-                        }
-                    }
-                }
-            }
-            Text(
-                text = stringResource(R.string.profile_hotkey_hint),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
 
-/**
- * Captures one physical key and binds it as a switch hotkey on [profile].
- * The target is picked straight after the key is captured.
- */
-@Composable
-fun ProfileHotkeyCaptureDialog(
-    profile: Profile,
-    profiles: List<Profile>,
-    onDismiss: () -> Unit,
-    onSetHotkey: (Int, String?) -> Unit,
-) {
-    var captured by remember { mutableStateOf<Int?>(null) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.profile_hotkey_title)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = stringResource(R.string.profile_hotkey_hint),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = profile.name,
-                    style = MaterialTheme.typography.titleMedium
-                )
-                KeyConfigTextField(
-                    title = stringResource(R.string.profile_hotkey_capture),
-                    value = captured?.keyCodeToString().orEmpty(),
-                    onKeyEvent = { event ->
-                        if (event.nativeKeyEvent.action == NativeKeyEvent.ACTION_DOWN) {
-                            val code = event.nativeKeyEvent.keyCode
-                            if (code != NativeKeyEvent.KEYCODE_UNKNOWN) captured = code
-                        }
-                        true
-                    }
-                )
-                captured?.let { code ->
-                    HotkeyTargetPicker(
-                        profiles = profiles.filter { it.id != profile.id },
-                        onPick = { onSetHotkey(code, it) }
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.key_rebind_cancel)) }
-        }
-    )
-}
 
-/** Opens immediately: picking a target commits the binding and closes the flow. */
-@Composable
-private fun HotkeyTargetPicker(
-    profiles: List<Profile>,
-    onPick: (String?) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(true) }
-    Box {
-        TextButton(onClick = { expanded = true }) {
-            Text(stringResource(R.string.profile_hotkey_target_label))
-            Spacer(Modifier.widthIn(4.dp))
-            Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null)
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.profile_hotkey_target_next)) },
-                onClick = {
-                    expanded = false
-                    onPick(null)
-                }
-            )
-            profiles.forEach { profile ->
-                DropdownMenuItem(
-                    text = { Text(profile.name) },
-                    onClick = {
-                        expanded = false
-                        onPick(profile.id)
-                    }
-                )
-            }
-        }
-    }
-}
+
+
+
 
 /** Shows a profile as JSON so it can be copied out and shared or backed up. */
 @Composable
@@ -1203,39 +990,138 @@ fun ProfileImportDialog(
         }
     )
 }
+
+
+/** 双键交换对：为该预设维护 SwapPair 列表（A/B 两按钮 + 换位键 + 还原键）。 */
 @Composable
-private fun ProfileActivationDialog(
+private fun SwapPairsDialog(
     profile: Profile,
-    profiles: List<Profile>,
     onDismiss: () -> Unit,
-    onSave: (Int?) -> Unit,
+    onSave: (List<SwapPair>) -> Unit,
 ) {
-    var captured by remember { mutableStateOf(profile.activationKeyCode) }
-    val conflicts = profiles.filter { it.id != profile.id && it.activationHotkeyEnabled &&
-        captured != null && it.activationKeyCode == captured }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("切入 ${profile.name}") },
+    var pairs by remember(profile) { mutableStateOf(profile.swapPairs) }
+    var aItemId by remember { mutableStateOf<Int?>(null) }
+    var bItemId by remember { mutableStateOf<Int?>(null) }
+    var swapOn by remember { mutableStateOf<Int?>(null) }
+    var swapOff by remember { mutableStateOf<Int?>(null) }
+
+    fun itemLabel(id: Int): String {
+        val item = profile.items.firstOrNull { it.id == id } ?: return "按钮#$id(不存在)"
+        val code = when (item) {
+            is DraggableItem.FixedKey -> item.keyCode
+            is DraggableItem.VariableKey -> item.keyCode
+            is DraggableItem.CancelableKey -> item.keyCode
+            is DraggableItem.WASDGroup -> null
+        }
+        return code?.keyCodeToString()?.removePrefix("KEYCODE_") ?: "按钮#$id"
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("双键交换对") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("从任意预设按此键，松开后切入本预设；当前预设里同键的游戏动作会先执行。")
-                KeyConfigTextField(title = "点击后按键盘快捷键", value = captured?.keyCodeToString().orEmpty(),
+                Text(
+                    "按下「换位键」时，A / B 两按钮的布局位置互换；按「还原键」各自回到默认位置。只改位置，不动键位绑定。",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (pairs.isEmpty()) {
+                    Text("（本预设暂无交换对）", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    pairs.forEach { pair ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "${itemLabel(pair.aItemId)} ↔ ${itemLabel(pair.bItemId)}　换${pair.swapOnKeyCode.keyCodeToString()} / 回${pair.swapOffKeyCode.keyCodeToString()}",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            TextButton(onClick = { pairs = pairs - pair }) {
+                                Icon(Icons.Rounded.Delete, contentDescription = "删除")
+                            }
+                        }
+                    }
+                }
+                HorizontalDivider()
+                Text("添加交换对", style = MaterialTheme.typography.titleSmall)
+                ItemIdPicker(label = "A 按钮", items = profile.items, selected = aItemId,
+                    onPick = { aItemId = it })
+                ItemIdPicker(label = "B 按钮", items = profile.items, selected = bItemId,
+                    onPick = { bItemId = it })
+                KeyConfigTextField(
+                    title = "换位键（按此键交换）",
+                    value = swapOn?.keyCodeToString().orEmpty(),
                     onKeyEvent = { event ->
-                        if (event.nativeKeyEvent.action == NativeKeyEvent.ACTION_DOWN &&
-                            event.nativeKeyEvent.keyCode > NativeKeyEvent.KEYCODE_UNKNOWN) {
-                            captured = event.nativeKeyEvent.keyCode
+                        if (event.nativeKeyEvent.action == NativeKeyEvent.ACTION_DOWN) {
+                            val code = event.nativeKeyEvent.keyCode
+                            if (code > NativeKeyEvent.KEYCODE_UNKNOWN) swapOn = code
                         }
                         true
-                    })
-                Row {
-                    TextButton(onClick = { captured = NativeKeyEvent.KEYCODE_X }) { Text("X") }
-                    TextButton(onClick = { captured = NativeKeyEvent.KEYCODE_1 }) { Text("数字 1") }
-                    TextButton(onClick = { captured = null }) { Text("清除") }
-                }
-                if (conflicts.isNotEmpty()) Text("保存后将停用 ${conflicts.joinToString { it.name }} 的同名切入键。",
-                    color = MaterialTheme.colorScheme.error)
-                Text("若要同时触发游戏动作，请在当前预设中为此键配置对应游戏按钮。",
-                    style = MaterialTheme.typography.labelSmall)
+                    }
+                )
+                KeyConfigTextField(
+                    title = "还原键（按此键还原）",
+                    value = swapOff?.keyCodeToString().orEmpty(),
+                    onKeyEvent = { event ->
+                        if (event.nativeKeyEvent.action == NativeKeyEvent.ACTION_DOWN) {
+                            val code = event.nativeKeyEvent.keyCode
+                            if (code > NativeKeyEvent.KEYCODE_UNKNOWN) swapOff = code
+                        }
+                        true
+                    }
+                )
+                TextButton(
+                    enabled = aItemId != null && bItemId != null && swapOn != null && swapOff != null,
+                    onClick = {
+                        pairs = pairs + SwapPair(aItemId = aItemId!!, bItemId = bItemId!!,
+                            swapOnKeyCode = swapOn!!, swapOffKeyCode = swapOff!!)
+                        aItemId = null; bItemId = null; swapOn = null; swapOff = null
+                    }
+                ) { Text("添加") }
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(captured) }) { Text("保存") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
+        confirmButton = { TextButton(onClick = { onSave(pairs); onDismiss() }) { Text("保存") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
+
+/** 从预设的按钮列表里选一个成员（A 或 B）。 */
+@Composable
+private fun ItemIdPicker(
+    label: String,
+    items: List<DraggableItem>,
+    selected: Int?,
+    onPick: (Int) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(text = label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Box {
+            Button(onClick = { expanded = true }) {
+                Text(SwapItemLabel.of(items, selected))
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                items.forEach { item ->
+                    DropdownMenuItem(
+                        text = { Text(SwapItemLabel.of(items, item.id)) },
+                        onClick = { expanded = false; onPick(item.id) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+private object SwapItemLabel {
+    fun of(items: List<DraggableItem>, id: Int?): String {
+        val item = id?.let { i -> items.firstOrNull { it.id == i } } ?: return "选择按钮"
+        val code = when (item) {
+            is DraggableItem.FixedKey -> item.keyCode
+            is DraggableItem.VariableKey -> item.keyCode
+            is DraggableItem.CancelableKey -> item.keyCode
+            is DraggableItem.WASDGroup -> null
+        }
+        return code?.keyCodeToString()?.removePrefix("KEYCODE_") ?: "按钮#${item.id}"
+    }
 }

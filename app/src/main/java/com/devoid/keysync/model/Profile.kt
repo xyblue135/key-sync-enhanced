@@ -14,13 +14,9 @@ data class Profile(
     val name: String,
     val items: List<DraggableItem> = emptyList(),
     val appConfig: AppConfig = AppConfig.Default,
-    /**
-     * Keys that switch away from *this* profile when released. Kept on the
-     * source profile so "pressing X while preset 1 is active goes to preset 2"
-     * is expressible without a global key table.
-     */
-    val switchHotkeys: List<ProfileSwitchHotkey> = emptyList(),
-    /** Press/release this key from any layout to activate this profile. */
-    val activationKeyCode: Int? = null,
-    val activationHotkeyEnabled: Boolean = true,
+    /** Swap pairs: A/B button layout positions swap on swapOn, restore on swapOff. Moves position only. */
+    val swapPairs: List<SwapPair> = emptyList(),
+    /** Layout 保存时的屏幕分辨率（px）。加载时若与当前屏幕不同则把坐标/尺寸等比还原；0 = 未记录。 */
+    val layoutScreenWidth: Int = 0,
+    val layoutScreenHeight: Int = 0,
 )

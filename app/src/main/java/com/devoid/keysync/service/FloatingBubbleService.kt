@@ -608,7 +608,6 @@ class FloatingBubbleService : Service() {
                         profiles = profiles,
                         activeProfileId = activeId,
                         onSwitchProfile = { stateManager.get().switchProfile(it) },
-                        onSetupTwoProfiles = { stateManager.get().setupTwoProfiles() },
                         buttonScale = appConfig.buttonScale,
                         onButtonScaleChange = { stateManager.get().saveAppConfig(appConfig.copy(buttonScale = it)) },
                         pointerSensitivity = pointerSensitivity,

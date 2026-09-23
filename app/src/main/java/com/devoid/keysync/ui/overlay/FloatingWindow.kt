@@ -202,6 +202,7 @@ fun ItemsContainer(
                             onOffsetChange = {
                                 item.position += it
                                 position += it
+                                item.anchorPosition = item.position
                             }
                         ) {
                             BagMapKey(
@@ -253,6 +254,7 @@ fun ItemsContainer(
                     onOffsetChange = {
                         item.position += it
                         position += it
+                        item.anchorPosition = item.position
                     }
                 ) {
                     when (item) {
@@ -820,7 +822,6 @@ fun SettingsLayout(
     profiles: List<Profile> = emptyList(),
     activeProfileId: String? = null,
     onSwitchProfile: (String) -> Unit = {},
-    onSetupTwoProfiles: () -> Unit = {},
     buttonScale: Float = 1f,
     onButtonScaleChange: (Float) -> Unit = {},
     onAdvancedSettingsClick: () -> Unit,
@@ -839,12 +840,10 @@ fun SettingsLayout(
         Text("同一游戏 · 多套预设", style = MaterialTheme.typography.titleMedium)
         profiles.forEach { profile ->
             TextButton(onClick = { onSwitchProfile(profile.id) }) {
-                val shortcut = if (profile.activationHotkeyEnabled) profile.activationKeyCode?.keyCodeToString() else null
-                Text((if (profile.id == activeProfileId) "✓ " else "") + profile.name +
-                    (shortcut?.let { "  [$it]" } ?: ""))
+                Text((if (profile.id == activeProfileId) "✓ " else "") + profile.name)
             }
         }
-        if (profiles.size < 2) TextButton(onClick = onSetupTwoProfiles) { Text("复制当前布局，建立 X / 1 两套预设") }
+
         HorizontalDivider()
         Text("按钮大小 ${(buttonScale * 100).roundToInt()}%",
             style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)

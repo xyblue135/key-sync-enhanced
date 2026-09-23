@@ -14,7 +14,6 @@ import com.devoid.keysync.model.EventInjector
 import com.devoid.keysync.model.KeyMap
 import com.devoid.keysync.model.KeymapType
 import com.devoid.keysync.model.MultiModeTouchHandler
-import com.devoid.keysync.model.ProfileSwitchHotkey
 import com.devoid.keysync.data.mapping.MappingConflictDetector
 import com.devoid.keysync.model.TouchMode
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -230,29 +229,6 @@ class EventHandler(
     }
 
 
-    /* ---------- profile switch hotkeys ---------- */
-
-    /**
-     * Keys that leave the profile owning them when released, mapped to the
-     * profile they activate (null = cycle to the next one). Wired by
-     * [com.devoid.keysync.service.FloatingWindowStateManager] together with
-     * [onProfileSwitch]; both stay empty while the feature is switched off.
-     */
-    private var switchHotkeys: Map<Int, String?> = emptyMap()
-
-    /**
-     * Invoked on the *release* of a switch hotkey, once the key's own mapping
-     * has already been released. The mapping therefore always wins the press
-     * edge and the switch never steals a key from it.
-     */
-    var onProfileSwitch: ((targetProfileId: String?) -> Unit)? = null
-
-    fun setSwitchHotkeys(hotkeys: List<ProfileSwitchHotkey>) {
-        // A null target means "cycle", so presence has to be tested with
-        // containsKey rather than by looking the value up.
-        switchHotkeys = hotkeys.associate { it.keyCode to it.targetProfileId }
-    }
-
     /** Snapshot of the key codes that are physically held down right now. */
     fun heldKeyCodes(): Set<Int> = pressedKeyCodes.toSet()
 
@@ -274,8 +250,7 @@ class EventHandler(
                 // Explicit Shift mapping wins over the optional WASD sprint
                 // modifier. Several bundled presets intentionally bind Shift
                 // to an on-screen button while also containing a WASD group.
-                sprintBit != 0 && hasWasd && !keyMap.containsKey(keyCode) &&
-                    !switchHotkeys.containsKey(keyCode) -> {
+                sprintBit != 0 && hasWasd && !keyMap.containsKey(keyCode) -> {
                     wasdMask = wasdMask or sprintBit
                     handleWasd(pointerIds[KEYCODE_WASD]!!)
                 }
@@ -353,7 +328,6 @@ class EventHandler(
         val handlesAsWasd = wasdBit != 0 && hasWasd
         val pointerIdKey = if (handlesAsWasd) KEYCODE_WASD else event.keyCode
         val pointerId = pointerIds[pointerIdKey]
-        val isSwitchKey = switchHotkeys.containsKey(event.keyCode)
 
         if (sprintBit != 0 && event.action == KeyEvent.ACTION_DOWN &&
             event.repeatCount == 0 && !pressedKeyCodes.contains(event.keyCode)) {
@@ -362,7 +336,7 @@ class EventHandler(
 
         // Shift 作为 WASD 疾跑修饰键（当存在 WASD 摇杆时）。按下时把疾跑位并入
         // wasdMask，让摇杆沿中心方向延长到疾跑档，而不是触发独立的 SPRINT 按钮。
-        if (sprintBit != 0 && hasWasd && !keyMap.containsKey(event.keyCode) && !isSwitchKey) {
+        if (sprintBit != 0 && hasWasd && !keyMap.containsKey(event.keyCode)) {
             val wasdPointerId = pointerIds[KEYCODE_WASD]!!
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
@@ -382,8 +356,8 @@ class EventHandler(
             return true
         }
 
-        // Nothing mapped and not a switch key: hand the event back to the game.
-        if (pointerId == null && !isSwitchKey) return false
+        // Nothing mapped: hand the event back to the game.
+        if (pointerId == null) return false
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
@@ -392,9 +366,7 @@ class EventHandler(
                     if (!shootingPress.down(event.downTime, event.repeatCount)) return true
                     pressedKeyCodes.add(event.keyCode)
                 } else if (!pressedKeyCodes.add(event.keyCode)) return true
-                if (isSwitchKey) releaseSwitch.down(event.keyCode)
-
-                // The press edge belongs to the mapping. A switch hotkey that
+                // The press edge belongs to the mapping.
                 // is also mapped still triggers its action here, with no
                 // added latency.
                 if (pointerId != null) {
@@ -423,29 +395,6 @@ class EventHandler(
                     }
                 }
 
-                // Only now that the mapping has been served does the profile
-                // switch run.
-                if (isSwitchKey) {
-                    val target = switchHotkeys[event.keyCode]
-                    val mode = keyTouchMode[event.keyCode] ?: normalTouchMode
-                    val minimum = if (pointerId == null || handlesAsWasd) 0L else when (mode) {
-                        TouchMode.TAP -> 60L
-                        TouchMode.MIXED -> 210L
-                        else -> 0L
-                    }
-                    releaseSwitch.release(event.keyCode, minimum) {
-                        val hadAction = keyMap.containsKey(event.keyCode) || handlesAsWasd
-                        walkToggle.whenIdle(releaseSwitch.guard {
-                            onProfileSwitch?.invoke(target)
-                            // If the shared action exists only in the destination, serve it there.
-                            // A source action already sent must never be fired a second time.
-                            if (!hadAction) pointerIds[event.keyCode]?.let { destinationPointer ->
-                                handleKeyDown(event.keyCode, destinationPointer)
-                                handleKeyUp(event.keyCode, destinationPointer)
-                            }
-                        })
-                    }
-                }
                 return true
             }
         }

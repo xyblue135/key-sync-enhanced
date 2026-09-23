@@ -20,6 +20,7 @@ import com.devoid.keysync.data.mapping.MappingPreset
 import com.devoid.keysync.data.mapping.MappingPresetRepository
 import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.Profile
+import com.devoid.keysync.model.SwapPair
 import com.devoid.keysync.service.FloatingBubbleService
 import com.devoid.keysync.service.FloatingWindowStateManager
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -116,8 +117,6 @@ class MainActivityViewModel @Inject constructor(
 
     /* ----------------- profile helpers ----------------- */
 
-    fun setupTwoProfiles() = stateManager.setupTwoProfiles()
-    fun setProfileActivationKey(id: String, keyCode: Int?) = stateManager.setProfileActivationKey(id, keyCode)
     fun exportAllProfilesJson(): String = stateManager.exportAllProfilesJson()
 
     fun createProfile(name: String): String = stateManager.createProfile(name)
@@ -145,12 +144,8 @@ class MainActivityViewModel @Inject constructor(
     /** @return null on success, otherwise a user-facing error message. */
     fun importProfileJson(raw: String): String? = stateManager.importProfileJson(raw)
 
-    fun setProfileSwitchHotkey(profileId: String, keyCode: Int, targetProfileId: String?) {
-        stateManager.setProfileSwitchHotkey(profileId, keyCode, targetProfileId)
-    }
-
-    fun removeProfileSwitchHotkey(profileId: String, keyCode: Int) {
-        stateManager.removeProfileSwitchHotkey(profileId, keyCode)
+    fun setSwapPairs(profileId: String, pairs: List<SwapPair>) {
+        stateManager.setSwapPairs(profileId, pairs)
     }
 
     /**

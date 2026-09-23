@@ -23,11 +23,10 @@ import com.devoid.keysync.domain.KEYCODE_MMC
 import com.devoid.keysync.domain.KEYCODE_RMC
 import com.devoid.keysync.data.external.ShizukuSystemServerAPi
 import com.devoid.keysync.model.Profile
+import com.devoid.keysync.model.SwapPair
 import com.devoid.keysync.model.ProfileBundle
 import com.devoid.keysync.model.independentCopy
 import com.devoid.keysync.model.importProfileCopies
-import com.devoid.keysync.model.profileActivationRoutes
-import com.devoid.keysync.model.ProfileSwitchHotkey
 import com.devoid.keysync.model.TouchMode
 import com.devoid.keysync.model.withMeasuredPositionFrom
 import com.devoid.keysync.model.defaultKeyCode
@@ -143,9 +142,6 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     init {
-        // Hotkeys are resolved on release, so the handler calls back into the
-        // profile layer once the key's own mapping has been released.
-        eventHandler.onProfileSwitch = { targetId -> handleProfileSwitch(targetId) }
         eventHandler.onCursorRecenter = { screenCenter ->
             _mousePointerOffset.value = screenCenter - (overlayOrigin ?: Offset.Zero)
             lastMouseRawX = Float.NaN
@@ -193,6 +189,15 @@ class FloatingWindowStateManager @Inject constructor(
         // now uses a negative private namespace. Migrate only the semantic
         // fixed buttons that historically owned those values.
         migrateLegacyVirtualMouseCodes(stored).let { migrated ->
+            if (migrated != null) {
+                stored = migrated
+                dataStoreManager.saveProfiles(stored)
+            }
+        }
+
+        // 分辨率基准迁移：旧数据未记录分辨率，统一假定 legacy 基准，
+        // 实际换算会在 applyActiveProfile 时按当前屏幕滚动完成。
+        migrateLegacyLayoutScreen(stored).let { migrated ->
             if (migrated != null) {
                 stored = migrated
                 dataStoreManager.saveProfiles(stored)
@@ -261,6 +266,65 @@ class FloatingWindowStateManager @Inject constructor(
         }
     }
 
+    // 现存的历史布局是基于 legacyLayoutScreenWidth x legacyLayoutScreenHeight 的屏幕配置的。
+    // 这些值也作为「未记录分辨率」旧数据的默认基准；实际换算在 applyActiveProfile 中按当前屏幕完成。
+    private companion object {
+        const val legacyLayoutScreenWidth = 2608
+        const val legacyLayoutScreenHeight = 1200
+    }
+
+    /** 把 layout 的像素坐标/尺寸从基准分辨率还原到当前分辨率（等比）。 */
+    private fun conformItemsToScreen(
+        items: List<DraggableItem>,
+        baseW: Int,
+        baseH: Int,
+        currentW: Int,
+        currentH: Int,
+    ): List<DraggableItem> {
+        val sx = currentW.toFloat() / baseW
+        val sy = currentH.toFloat() / baseH
+        val sSize = if (sx < sy) sx else sy
+        fun point(o: Offset): Offset = Offset(o.x * sSize, o.y * sSize)
+        return items.map { item ->
+            when (item) {
+                is DraggableItem.VariableKey ->
+                    item.copy(position = point(item.position), size = (item.size * sSize).toInt(), anchorPosition = item.anchorPosition?.let { point(it) })
+                is DraggableItem.FixedKey ->
+                    item.copy(position = point(item.position), size = (item.size * sSize).toInt(), anchorPosition = item.anchorPosition?.let { point(it) })
+                is DraggableItem.CancelableKey ->
+                    item.copy(
+                        position = point(item.position),
+                        cancelPosition = point(item.cancelPosition),
+                        size = (item.size * sSize).toInt(),
+                        anchorPosition = item.anchorPosition?.let { point(it) },
+                    )
+                is DraggableItem.WASDGroup ->
+                    item.copy(
+                        position = point(item.position),
+                        sprintForwardDistance = item.sprintForwardDistance?.let { it * sSize },
+                        sprintSideDistance = item.sprintSideDistance?.let { it * sSize },
+                        anchorPosition = item.anchorPosition?.let { point(it) },
+                    )
+            }
+        }
+    }
+
+    /** 旧数据未记录分辨率时，统一假定为 legacy 基准，便于 applyActiveProfile 迁移。 */
+    private fun migrateLegacyLayoutScreen(stored: List<Profile>): List<Profile>? {
+        var changed = false
+        val migrated = stored.map { p ->
+            if (p.layoutScreenWidth > 0 && p.layoutScreenHeight > 0) p
+            else {
+                changed = true
+                p.copy(
+                    layoutScreenWidth = displayMetrics.widthPixels,
+                    layoutScreenHeight = displayMetrics.heightPixels,
+                )
+            }
+        }
+        return migrated.takeIf { changed }
+    }
+
     private suspend fun migrateLegacy(): Profile {
         // Best-effort migration: read any buttons_config_<pkg> raw JSON, pick
         // the first non-empty one, and apply the legacy KEYS_CONFIG
@@ -318,17 +382,39 @@ class FloatingWindowStateManager @Inject constructor(
     )
 
     private fun applyActiveProfile() {
-        val active = activeProfile() ?: return
-        _containerItems.value = active.items
+        val id = _activeProfileId.value ?: return
+        val active = _profiles.value.firstOrNull { it.id == id } ?: return
+        val currentW = displayMetrics.widthPixels
+        val currentH = displayMetrics.heightPixels
+        val baseW = if (active.layoutScreenWidth > 0) active.layoutScreenWidth else legacyLayoutScreenWidth
+        val baseH = if (active.layoutScreenHeight > 0) active.layoutScreenHeight else legacyLayoutScreenHeight
+        val needsScale = baseW > 0 && baseH > 0 && (currentW != baseW || currentH != baseH)
+        // Mismatched orientation means the recorded baseline is unreliable (e.g.
+        // polluted with a portrait baseline on a landscape game) or the device
+        // changed. Trust the stored absolute coords and re-baseline this layout
+        // to the current screen so it renders exactly where the author placed it.
+        val orientationMismatch = needsScale && (baseW > baseH) != (currentW > currentH)
+        val items = when {
+            !needsScale -> active.items
+            orientationMismatch -> active.items
+            else -> conformItemsToScreen(active.items, baseW, baseH, currentW, currentH)
+        }
+        if (orientationMismatch) {
+            _profiles.value = _profiles.value.map {
+                if (it.id == id) it.copy(layoutScreenWidth = currentW, layoutScreenHeight = currentH) else it
+            }
+            scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
+        }
+        _containerItems.value = items
         _appConfig.value = active.appConfig
         eventHandler.appConfig = active.appConfig
         eventHandler.setCancelableTouchMode(active.appConfig.cancellableTouchMode)
         eventHandler.setNormalBtnTouchMode(active.appConfig.normalBtnTouchMode)
         // 灵敏度随预设切换。
         pointerSensitivity.value = active.appConfig.pointerSensitivity
-        pushSwitchHotkeys()
+        android.util.Log.i("KeySyncLayout", "apply id=${id} origin=${overlayOrigin?.let { it.x to it.y }} screen=${currentW}x$currentH base=${baseW}x$baseH scaled=$needsScale items=${items.size}")
         overlayOrigin?.let { origin ->
-            active.items.forEach { item ->
+            items.forEach { item ->
                 val size = when (item) {
                     is DraggableItem.FixedKey -> item.size
                     is DraggableItem.VariableKey -> item.size
@@ -337,20 +423,7 @@ class FloatingWindowStateManager @Inject constructor(
                 if (size > 0) item.touchCenter = origin + item.position + Offset(size / 2f, size / 2f)
             }
         }
-        eventHandler.updateKeyMapping(active.items)
-    }
-
-    /**
-     * Publishes the active profile's switch hotkeys to the handler. The master
-     * switch lives on [AppConfig], so turning it off leaves the bindings
-     * configured but dormant instead of deleting them.
-     */
-    private fun pushSwitchHotkeys() {
-        val active = activeProfile() ?: return
-        eventHandler.setSwitchHotkeys(
-            (if (_appConfig.value.profileSwitchEnabled) active.switchHotkeys else emptyList()) +
-                profileActivationRoutes(_profiles.value)
-        )
+        eventHandler.updateKeyMapping(items)
     }
 
     private fun activeProfile(): Profile? {
@@ -363,11 +436,74 @@ class FloatingWindowStateManager @Inject constructor(
         val id = _activeProfileId.value ?: return
         val updated = _profiles.value.map { profile ->
             if (profile.id == id) {
-                profile.copy(items = _containerItems.value, appConfig = _appConfig.value)
+                profile.copy(
+                    items = _containerItems.value,
+                    appConfig = _appConfig.value,
+                    layoutScreenWidth = displayMetrics.widthPixels,
+                    layoutScreenHeight = displayMetrics.heightPixels,
+                )
             } else profile
         }
         _profiles.value = updated
+        android.util.Log.i("KeySyncLayout", "persist id=${id} origin=${overlayOrigin?.let { it.x to it.y }} screen=${displayMetrics.widthPixels}x${displayMetrics.heightPixels} items=${_containerItems.value.size}")
         scope.launch { dataStoreManager.saveProfiles(updated) }
+    }
+
+    /* ----------------- swap pairs (swapOn / swapOff) ----------------- */
+
+    /** Persist the profile's swap-pair list (called from the settings UI). */
+    fun setSwapPairs(profileId: String, pairs: List<SwapPair>) {
+        _profiles.value = _profiles.value.map {
+            if (it.id == profileId) it.copy(swapPairs = pairs) else it
+        }
+        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
+    }
+
+    /**
+     * Runs the active profile's swap pair bound to [keyCode].
+     *
+     * Only the two buttons' **layout position** is swapped (or restored);
+     * key bindings / names are untouched. [DraggableItem.anchorPosition] holds
+     * each button's normal home position and advances on a normal drag, so
+     * swapOff can always return the pair to their configured spots.
+     *
+     * @return true if a pair matched and was applied.
+     */
+    private fun applySwap(keyCode: Int): Boolean {
+        val id = _activeProfileId.value ?: return false
+        val pair = _profiles.value.firstOrNull { it.id == id }?.swapPairs
+            ?.firstOrNull { it.swapOnKeyCode == keyCode || it.swapOffKeyCode == keyCode } ?: return false
+        val items = _containerItems.value
+        val a = items.firstOrNull { it.id == pair.aItemId } ?: return false
+        val b = items.firstOrNull { it.id == pair.bItemId } ?: return false
+        if (a === b) return true
+        a.anchorPosition = a.anchorPosition ?: a.position
+        b.anchorPosition = b.anchorPosition ?: b.position
+        if (pair.swapOnKeyCode == keyCode) {
+            a.position = b.anchorPosition!!
+            b.position = a.anchorPosition!!
+        } else {
+            a.position = a.anchorPosition!!
+            b.position = b.anchorPosition!!
+        }
+        refreshItemTouchCenters(items)
+        eventHandler.updateKeyMapping(items)
+        persistActiveProfile()
+        android.util.Log.i("KeySyncLayout", "swapPair ${pair.aItemId}<->${pair.bItemId} on=${pair.swapOnKeyCode == keyCode}")
+        return true
+    }
+
+    /** After a swap, move each button's live touch center to follow its new position. */
+    private fun refreshItemTouchCenters(items: List<DraggableItem>) {
+        val origin = overlayOrigin ?: return
+        items.forEach { item ->
+            val size = when (item) {
+                is DraggableItem.FixedKey -> item.size
+                is DraggableItem.VariableKey -> item.size
+                else -> 0
+            }
+            if (size > 0) item.touchCenter = origin + item.position + Offset(size / 2f, size / 2f)
+        }
     }
 
     fun loadButtonsConfig(packageName: String) {
@@ -557,7 +693,6 @@ class FloatingWindowStateManager @Inject constructor(
         eventHandler.setCancelableTouchMode(newConfig.cancellableTouchMode)
         eventHandler.setNormalBtnTouchMode(newConfig.normalBtnTouchMode)
         pointerSensitivity.value = newConfig.pointerSensitivity
-        pushSwitchHotkeys()
         persistActiveProfile()
     }
 
@@ -591,23 +726,6 @@ class FloatingWindowStateManager @Inject constructor(
         eventHandler.replayHeldMouseButtons(heldMouse)
     }
 
-    /**
-     * Resolves a switch-hotkey request. Called from the key handler on the
-     * *release* edge, after the key's own mapping has already been released,
-     * which is what lets one key both trigger an action and change profile.
-     */
-    private fun handleProfileSwitch(targetProfileId: String?) {
-        val currentId = _activeProfileId.value ?: return
-        val profiles = _profiles.value
-        val nextId = if (targetProfileId != null) {
-            targetProfileId.takeIf { id -> profiles.any { it.id == id } }
-        } else {
-            val index = profiles.indexOfFirst { it.id == currentId }
-            profiles.getOrNull((index + 1) % profiles.size)?.id
-        } ?: return
-        switchProfile(nextId)
-    }
-
     fun createProfile(name: String): String {
         val id = UUID.randomUUID().toString()
         val newProfile = Profile(
@@ -633,21 +751,12 @@ class FloatingWindowStateManager @Inject constructor(
 
     fun deleteProfile(id: String) {
         if (_profiles.value.size <= 1) return // keep at least one profile
-        val remaining = _profiles.value
-            .filterNot { it.id == id }
-            .map { profile ->
-                // A hotkey pointing at the profile being deleted would
-                // silently do nothing, so drop it rather than leave it dangling.
-                val cleaned = profile.switchHotkeys.filterNot { it.targetProfileId == id }
-                if (cleaned.size == profile.switchHotkeys.size) profile
-                else profile.copy(switchHotkeys = cleaned)
-            }
+        val remaining = _profiles.value.filterNot { it.id == id }
         _profiles.value = remaining
         scope.launch { dataStoreManager.saveProfiles(remaining) }
         if (_activeProfileId.value == id) {
             switchProfile(remaining.first().id)
         }
-        pushSwitchHotkeys()
     }
 
     /* ----------------- profile copy / share ----------------- */
@@ -700,66 +809,12 @@ class FloatingWindowStateManager @Inject constructor(
         }.getOrElse { return "导入失败：${it.message ?: "请复制完整预设文本"}" }
         _profiles.value = _profiles.value + result
         scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
-        pushSwitchHotkeys()
         return null
     }
 
     fun exportAllProfilesJson(): String {
         persistActiveProfile()
         return profileJson.encodeToString(ProfileBundle(profiles = _profiles.value))
-    }
-
-    fun setProfileActivationKey(profileId: String, keyCode: Int?) {
-        if (keyCode != null && keyCode <= KeyEvent.KEYCODE_UNKNOWN) return
-        _profiles.value = _profiles.value.map { profile ->
-            when {
-                profile.id == profileId -> profile.copy(activationKeyCode = keyCode, activationHotkeyEnabled = true)
-                keyCode != null && profile.activationKeyCode == keyCode -> profile.copy(activationHotkeyEnabled = false)
-                else -> profile
-            }
-        }
-        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
-        pushSwitchHotkeys()
-    }
-
-    /** First-run shortcut: keep the current layout and make one independent variant. */
-    fun setupTwoProfiles() {
-        persistActiveProfile()
-        val first = _profiles.value.firstOrNull { it.activationHotkeyEnabled && it.activationKeyCode == KeyEvent.KEYCODE_X }
-            ?: activeProfile() ?: return
-        // With two or more layouts, configure the first other layout; never append repeatedly.
-        val second = _profiles.value.firstOrNull { it.id != first.id && it.activationHotkeyEnabled && it.activationKeyCode == KeyEvent.KEYCODE_1 }
-            ?: _profiles.value.firstOrNull { it.id != first.id } ?: run {
-            val copied = first.independentCopy(UUID.randomUUID().toString(), "预设 2")
-            _profiles.value = _profiles.value + copied
-            copied
-        }
-        setProfileActivationKey(first.id, KeyEvent.KEYCODE_X)
-        setProfileActivationKey(second.id, KeyEvent.KEYCODE_1)
-    }
-
-    /* ----------------- profile switch hotkeys ----------------- */
-
-    /** Binds (or re-binds) [keyCode] on [profileId] to [targetProfileId]. */
-    fun setProfileSwitchHotkey(profileId: String, keyCode: Int, targetProfileId: String?) {
-        _profiles.value = _profiles.value.map { profile ->
-            if (profile.id != profileId) profile
-            else profile.copy(
-                switchHotkeys = profile.switchHotkeys.filterNot { it.keyCode == keyCode } +
-                    ProfileSwitchHotkey(keyCode, targetProfileId)
-            )
-        }
-        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
-        if (_activeProfileId.value == profileId) pushSwitchHotkeys()
-    }
-
-    fun removeProfileSwitchHotkey(profileId: String, keyCode: Int) {
-        _profiles.value = _profiles.value.map { profile ->
-            if (profile.id != profileId) profile
-            else profile.copy(switchHotkeys = profile.switchHotkeys.filterNot { it.keyCode == keyCode })
-        }
-        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
-        if (_activeProfileId.value == profileId) pushSwitchHotkeys()
     }
 
     fun onFloatingBubbleClick() {
@@ -804,6 +859,11 @@ class FloatingWindowStateManager @Inject constructor(
         when (keyEvent.action) {
             KeyEvent.ACTION_DOWN -> _pressedKeys.value = _pressedKeys.value + keyEvent.keyCode
             KeyEvent.ACTION_UP -> _pressedKeys.value = _pressedKeys.value - keyEvent.keyCode
+        }
+        // Swap pair: on key press, swap the pair's layout positions; the same
+        // key still flows to the game mapping untouched.
+        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0) {
+            applySwap(keyEvent.keyCode)
         }
         return eventHandler.handleKeyEvent(keyEvent)
     }

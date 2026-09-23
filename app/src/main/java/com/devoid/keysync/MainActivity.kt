@@ -164,8 +164,6 @@ class MainActivity : ComponentActivity() {
                             onNavigateBack = navController::popBackStack,
                             onNavigateAbout = { navController.navigate(route = AboutScreen) },
                             onCreateProfile = { viewModel.createProfile(it) },
-                            onSetupTwoProfiles = { viewModel.setupTwoProfiles() },
-                            onSetActivationKey = { id, code -> viewModel.setProfileActivationKey(id, code) },
                             onExportAllProfiles = { viewModel.exportAllProfilesJson() },
                             onSwitchProfile = { viewModel.switchProfile(it) },
                             onRenameProfile = { id, name -> viewModel.renameProfile(id, name) },
@@ -173,11 +171,8 @@ class MainActivity : ComponentActivity() {
                             onDuplicateProfile = { viewModel.duplicateProfile(it) },
                             onExportProfile = { viewModel.exportProfileJson(it) },
                             onImportProfile = { viewModel.importProfileJson(it) },
-                            onSetProfileHotkey = { profileId, keyCode, targetId ->
-                                viewModel.setProfileSwitchHotkey(profileId, keyCode, targetId)
-                            },
-                            onRemoveProfileHotkey = { profileId, keyCode ->
-                                viewModel.removeProfileSwitchHotkey(profileId, keyCode)
+                            onSetProfileSwapPairs = { profileId, pairs ->
+                                viewModel.setSwapPairs(profileId, pairs)
                             },
                             onSave = {
                                 viewModel.saveKeyConfig(it)

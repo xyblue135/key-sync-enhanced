@@ -23,6 +23,8 @@ sealed class DraggableItem {
 
     abstract val id: Int
     abstract var position: Offset
+    /** Base home position; follows position on normal drag. Swap moves only position, never this. */
+    abstract var anchorPosition: Offset?
     abstract fun copy(id: Int=this.id,position: Offset=this.position) :DraggableItem
 @Serializable
 data class VariableKey(
@@ -33,9 +35,10 @@ data class VariableKey(
     // 每键独立触摸模式；null 表示跟随全局 normalBtnTouchMode。
     var touchMode: TouchMode? = null,
     var wheelRadius: Float = 50f,
+    override var anchorPosition: Offset? = null,
 ) : DraggableItem(){
     override fun copy(id: Int, position: Offset): DraggableItem =
-        VariableKey(id, position, keyCode, size, touchMode, wheelRadius)
+        VariableKey(id, position, keyCode, size, touchMode, wheelRadius, anchorPosition)
 
 }
 
@@ -53,9 +56,10 @@ data class VariableKey(
         var d: Offset = Offset.Zero,
         var sprintForwardDistance: Float? = null,
         var sprintSideDistance: Float? = null,
+        override var anchorPosition: Offset? = null,
     ) : DraggableItem() {
         override fun copy(id: Int, position: Offset): DraggableItem =
-            WASDGroup(id, position, scale, sprintScale, center, w, a, s, d, sprintForwardDistance, sprintSideDistance)
+            WASDGroup(id, position, scale, sprintScale, center, w, a, s, d, sprintForwardDistance, sprintSideDistance, anchorPosition)
     }
 
     @Serializable
@@ -69,9 +73,10 @@ data class VariableKey(
         // 每键独立触摸模式；null 表示跟随全局 normalBtnTouchMode。
         var touchMode: TouchMode? = null,
     var wheelRadius: Float = 50f,
+    override var anchorPosition: Offset? = null,
     ) : DraggableItem(){
         override fun copy(id: Int, position: Offset): DraggableItem =
-            FixedKey(id, position, type, keyCode, size, touchMode, wheelRadius)
+            FixedKey(id, position, type, keyCode, size, touchMode, wheelRadius, anchorPosition)
     }
     @Serializable
     data class CancelableKey(
@@ -85,9 +90,10 @@ data class VariableKey(
         // 每键独立触摸模式；null 表示跟随全局 cancellableTouchMode。
         var touchMode: TouchMode? = null,
     var wheelRadius: Float = 50f,
+    override var anchorPosition: Offset? = null,
     ) : DraggableItem(){
         override fun copy(id: Int, position: Offset): DraggableItem =
-            CancelableKey(id, position,cancelPosition, type, keyCode, size, touchMode, wheelRadius)
+            CancelableKey(id, position,cancelPosition, type, keyCode, size, touchMode, wheelRadius, anchorPosition)
     }
 }
 
