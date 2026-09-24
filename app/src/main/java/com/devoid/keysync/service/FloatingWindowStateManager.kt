@@ -60,6 +60,11 @@ class FloatingWindowStateManager @Inject constructor(
     val pointerSensitivity = MutableStateFlow(0.5f)
     val overlayOpacity = MutableStateFlow(0.5f)
 
+    // 按键拟人化（随机偏移）：全局生效、对所有预设统一，不随预设存储。
+    val wasdHumanization = MutableStateFlow(false)
+    val keyHumanization = MutableStateFlow(false)
+    val humanizationStrength = MutableStateFlow(0f)
+
     // 悬浮窗按键的显示/隐藏开关（一键切换，不影响功能）。
     private val _keysVisible = MutableStateFlow(true)
     val keysVisible = _keysVisible.asStateFlow()
@@ -73,8 +78,10 @@ class FloatingWindowStateManager @Inject constructor(
     // 键鼠映射工具（熊猫映射等）的「鼠标灵敏度」也是指瞄准灵敏度，默认约 1.2–1.5x。
     val sensitivity: Float get() = 3f * pointerSensitivity.value
 
-    private val _isBubbleExpanded = MutableStateFlow(false)
-    val isBubbleExpanded = _isBubbleExpanded.asStateFlow()
+    // 编辑态：入口是通知栏的「编辑布局」action，屏幕上不再有常驻气泡。
+    // true 时悬浮窗可触摸/可聚焦，允许拖动与绑定按键。
+    private val _isEditMode = MutableStateFlow(false)
+    val isEditMode = _isEditMode.asStateFlow()
 
     private val _mousePointerOffset =
         MutableStateFlow(Offset(displayMetrics.widthPixels / 2f, displayMetrics.heightPixels / 2f))
@@ -160,6 +167,14 @@ class FloatingWindowStateManager @Inject constructor(
             dataStoreManager.getFloat(DataStoreManager.POINTER_SENSITIVITY).first()?.let {
                 pointerSensitivity.value = it
             }
+            // 读取全局按键拟人化设置并立即应用到事件处理器。
+            wasdHumanization.value =
+                dataStoreManager.getBoolean(DataStoreManager.WASD_HUMANIZATION).first() ?: false
+            keyHumanization.value =
+                dataStoreManager.getBoolean(DataStoreManager.KEY_HUMANIZATION).first() ?: false
+            humanizationStrength.value =
+                dataStoreManager.getFloat(DataStoreManager.HUMANIZATION_STRENGTH).first() ?: 0f
+            syncHumanization()
         }
         // Load profiles + active id. Run migration if this is the first run.
         scope.launch {
@@ -705,6 +720,40 @@ class FloatingWindowStateManager @Inject constructor(
         persistActiveProfile()
     }
 
+    /** 悬浮窗透明度：全局设置，立即持久化（旧代码只改 StateFlow，重启即丢）。 */
+    fun saveOverlayOpacity(value: Float) {
+        overlayOpacity.value = value
+        scope.launch { dataStoreManager.save(DataStoreManager.OVERLAY_OPACITY, value) }
+    }
+
+    /* ----------------- 按键拟人化（全局设置） ----------------- */
+
+    private fun syncHumanization() {
+        eventHandler.setHumanization(
+            wasdHumanization.value,
+            keyHumanization.value,
+            humanizationStrength.value
+        )
+    }
+
+    fun setWasdHumanization(enabled: Boolean) {
+        wasdHumanization.value = enabled
+        syncHumanization()
+        scope.launch { dataStoreManager.save(DataStoreManager.WASD_HUMANIZATION, enabled) }
+    }
+
+    fun setKeyHumanization(enabled: Boolean) {
+        keyHumanization.value = enabled
+        syncHumanization()
+        scope.launch { dataStoreManager.save(DataStoreManager.KEY_HUMANIZATION, enabled) }
+    }
+
+    fun setHumanizationStrength(value: Float) {
+        humanizationStrength.value = value
+        syncHumanization()
+        scope.launch { dataStoreManager.save(DataStoreManager.HUMANIZATION_STRENGTH, value) }
+    }
+
     /* ----------------- profile CRUD ----------------- */
 
     fun switchProfile(id: String) {
@@ -817,16 +866,16 @@ class FloatingWindowStateManager @Inject constructor(
         return profileJson.encodeToString(ProfileBundle(profiles = _profiles.value))
     }
 
-    fun onFloatingBubbleClick() {
+    fun toggleEditMode() {
         eventHandler.screenSize = currentScreenSize()
         mouseButtons.reset()
         lastMouseRawX = Float.NaN
         lastMouseRawY = Float.NaN
-        _isBubbleExpanded.value = !_isBubbleExpanded.value
+        _isEditMode.value = !_isEditMode.value
         // 进/出编辑态都清空按下状态：编辑态下不维护 pressedKeys，避免切换回来时
         // 残留上一个状态的「按下」高亮。
         _pressedKeys.value = emptySet()
-        if (!_isBubbleExpanded.value) {
+        if (!_isEditMode.value) {
             eventHandler.updateKeyMapping(containerItems.value)
             // Position/size edits currently mutate DraggableItem in place, so
             // closing edit mode is the natural commit point for persistence.
@@ -840,7 +889,7 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     fun onKeyEvent(keyEvent: KeyEvent): Boolean {
-        if (_isBubbleExpanded.value) {
+        if (_isEditMode.value) {
             // 气泡展开（编辑态）：优先把按键交给正在打开的绑定对话框。
             // 注意不清空 keyCaptureListener——它由对话框关闭时的 DisposableEffect
             // 卸载；保留它才能让用户第一次按错后重新按键改绑。
@@ -869,7 +918,7 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     fun onMouseEvent(motionEvent: MotionEvent): Boolean {
-        if (isBubbleExpanded.value) {
+        if (isEditMode.value) {
             val listener = keyCaptureListener ?: return false
             // Leave primary clicks to Compose so confirm/cancel remain clickable.
             if (motionEvent.actionMasked == MotionEvent.ACTION_BUTTON_PRESS &&
@@ -964,7 +1013,7 @@ class FloatingWindowStateManager @Inject constructor(
         event.actionButton.takeIf { it != 0 } ?: event.buttonState
 
     fun onDestroy() {
-        _isBubbleExpanded.value = false
+        _isEditMode.value = false
         // Drag operations mutate the runtime item objects directly. Persist
         // once more before the overlay disappears so a service stop does not
         // lose the last positioning edit.

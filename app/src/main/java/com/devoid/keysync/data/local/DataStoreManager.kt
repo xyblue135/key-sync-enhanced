@@ -3,6 +3,7 @@ package com.devoid.keysync.data.local
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -33,6 +34,10 @@ class DataStoreManager @Inject constructor(private val context: Context) {
         val ADDED_PACKAGES = stringPreferencesKey("added_packages")
         val POINTER_SENSITIVITY = floatPreferencesKey("pointer_sensitivity")
         val OVERLAY_OPACITY = floatPreferencesKey("overlay_opacity")
+        // 按键拟人化（随机偏移）开关与强度：全局键，对所有预设统一生效。
+        val WASD_HUMANIZATION = booleanPreferencesKey("wasd_humanization")
+        val KEY_HUMANIZATION = booleanPreferencesKey("key_humanization")
+        val HUMANIZATION_STRENGTH = floatPreferencesKey("humanization_strength")
         val KEYS_CONFIG = stringPreferencesKey("keys_config")
 
         /** All user-defined keymap presets. */
@@ -154,6 +159,18 @@ class DataStoreManager @Inject constructor(private val context: Context) {
     }
 
     fun getFloat(key: Preferences.Key<Float>): Flow<Float?> {
+        return context.datastore.data.map { pref ->
+            pref[key]
+        }
+    }
+
+    suspend fun save(key: Preferences.Key<Boolean>, value: Boolean) {
+        context.datastore.edit { pref ->
+            pref[key] = value
+        }
+    }
+
+    fun getBoolean(key: Preferences.Key<Boolean>): Flow<Boolean?> {
         return context.datastore.data.map { pref ->
             pref[key]
         }

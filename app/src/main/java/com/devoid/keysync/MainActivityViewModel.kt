@@ -70,6 +70,13 @@ class MainActivityViewModel @Inject constructor(
     val profiles: StateFlow<List<Profile>> = stateManager.profiles
     val activeProfileId: StateFlow<String?> = stateManager.activeProfileId
 
+    /** 按键拟人化（随机偏移）全局设置，供设置页收集。 */
+    val wasdHumanization: StateFlow<Boolean> = stateManager.wasdHumanization
+    val keyHumanization: StateFlow<Boolean> = stateManager.keyHumanization
+    val humanizationStrength: StateFlow<Float> = stateManager.humanizationStrength
+    /** 悬浮窗透明度（全局设置），设置页用；改动立即持久化。 */
+    val overlayOpacity: StateFlow<Float> = stateManager.overlayOpacity
+
     /** Resolve an app label once per package; the sheet re-renders on every
      *  keystroke of its search field and PackageManager lookups are not free. */
     private val labelCache = ConcurrentHashMap<String, String>()
@@ -147,6 +154,11 @@ class MainActivityViewModel @Inject constructor(
     fun setSwapPairs(profileId: String, pairs: List<SwapPair>) {
         stateManager.setSwapPairs(profileId, pairs)
     }
+
+    fun setWasdHumanization(enabled: Boolean) = stateManager.setWasdHumanization(enabled)
+    fun setKeyHumanization(enabled: Boolean) = stateManager.setKeyHumanization(enabled)
+    fun setHumanizationStrength(value: Float) = stateManager.setHumanizationStrength(value)
+    fun setOverlayOpacity(value: Float) = stateManager.saveOverlayOpacity(value)
 
     /**
      * Removes games by package name.

@@ -31,6 +31,22 @@ internal class JoystickMotion(
         lastTarget = target
     }
 
+    /**
+     * Re-issues a MOVE with a fresh [target] for the already-running contact.
+     *
+     * Used by the humanization jitter loop. Unlike [update] it never re-anchors:
+     * while the sprint bit is present [update] treats *every* call as a sprint
+     * transition and lifts + re-presses the contact, so a periodic caller makes
+     * the game see the stick let go and restart from neutral on each tick — that
+     * is the "跑步时向后顿一下" stutter. Jitter must only drag the live contact.
+     */
+    fun jitter(pointer: Int, mask: Int, target: Offset) {
+        if (lastMask == 0 || lastMask != mask || lastPointer != pointer) return
+        if (lastTarget == target) return
+        move(pointer, target)
+        lastTarget = target
+    }
+
     // The caller already cancelled contacts when replacing mappings or entering the editor.
     fun reset() { lastMask = 0; lastPointer = -1 }
 }

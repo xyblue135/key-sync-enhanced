@@ -199,4 +199,19 @@
     <string name="cd_add_item">添加按键</string>
     <string name="cd_overlay_settings">悬浮窗设置</string>
     <string name="overlay_loading_apps">正在读取应用列表…</string>
+
+    <!-- 通知栏：唯一的常驻控制面 -->
+    <string name="notification_channel_overlay">按键悬浮窗</string>
+    <string name="notification_channel_overlay_desc">显示 KeySync 运行状态与控制入口</string>
+    <string name="notification_text_overlay_running">控制面板已就绪 · 点此进入设置</string>
+    <string name="notification_action_edit">编辑布局</string>
+    <string name="notification_action_exit_edit">退出编辑</string>
+    <string name="notification_action_hide_keys">隐藏按键</string>
+    <string name="notification_action_show_keys">显示按键</string>
+    <string name="notification_action_stop">关闭</string>
+
+    <!-- 编辑态操作条 -->
+    <string name="overlay_hide_keys">隐藏</string>
+    <string name="overlay_show_keys">显示</string>
+    <string name="overlay_done">完成</string>
 </resources>

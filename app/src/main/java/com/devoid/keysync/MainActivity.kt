@@ -1,14 +1,18 @@
 package com.devoid.keysync
 
+import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
@@ -27,6 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -73,6 +78,31 @@ class MainActivity : ComponentActivity() {
             val appConfig by viewModel.appConfig.collectAsStateWithLifecycle()
             val snackbarHostState = remember { SnackbarHostState() }
             val navController = rememberNavController()
+            // The overlay is a foreground service; on Android 13+ its
+            // notification (the only remaining control surface) stays hidden
+            // until POST_NOTIFICATIONS is granted, so ask before starting it.
+            var pendingLaunch by remember { mutableStateOf<(() -> Unit)?>(null) }
+            val notificationPermissionLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) {
+                pendingLaunch?.invoke()
+                pendingLaunch = null
+            }
+            val startPackage: (String) -> Unit = { packageName ->
+                val started = viewModel.launchPackage(packageName, packageManager, isServiceRunning)
+                // getLaunchIntentForPackage() returns null for a disabled /
+                // uninstalled app, which used to fail silently with no feedback.
+                if (!started) {
+                    viewModel.viewModelScope.launch {
+                        snackbarHostState.showSnackbar(
+                            getString(
+                                R.string.main_launch_failed,
+                                viewModel.getPackageLabel(packageName)
+                            )
+                        )
+                    }
+                }
+            }
             KeySyncTheme(
                 darkTheme = when (appConfig.themePreference) {
                     ThemePreference.LIGHT -> false
@@ -119,23 +149,19 @@ class MainActivity : ComponentActivity() {
                                         snackbarHostState
                                     )
                                 ) {
-                                    val started = viewModel.launchPackage(
-                                        packageName,
-                                        packageManager,
-                                        isServiceRunning
-                                    )
-                                    // getLaunchIntentForPackage() returns null
-                                    // for a disabled / uninstalled app, which
-                                    // used to fail silently with no feedback.
-                                    if (!started) {
-                                        viewModel.viewModelScope.launch {
-                                            snackbarHostState.showSnackbar(
-                                                getString(
-                                                    R.string.main_launch_failed,
-                                                    viewModel.getPackageLabel(packageName)
-                                                )
-                                            )
-                                        }
+                                    val needsNotificationPermission =
+                                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                            ContextCompat.checkSelfPermission(
+                                                this@MainActivity,
+                                                Manifest.permission.POST_NOTIFICATIONS
+                                            ) != PackageManager.PERMISSION_GRANTED
+                                    if (needsNotificationPermission) {
+                                        pendingLaunch = { startPackage(packageName) }
+                                        notificationPermissionLauncher.launch(
+                                            Manifest.permission.POST_NOTIFICATIONS
+                                        )
+                                    } else {
+                                        startPackage(packageName)
                                     }
                                 }
                             },
@@ -153,6 +179,10 @@ class MainActivity : ComponentActivity() {
                         popEnterTransition = { EnterTransition.None }) {
                         val profiles by viewModel.profiles.collectAsStateWithLifecycle()
                         val activeProfileId by viewModel.activeProfileId.collectAsStateWithLifecycle()
+                        val wasdHumanization by viewModel.wasdHumanization.collectAsStateWithLifecycle()
+                        val keyHumanization by viewModel.keyHumanization.collectAsStateWithLifecycle()
+                        val humanizationStrength by viewModel.humanizationStrength.collectAsStateWithLifecycle()
+                        val overlayOpacity by viewModel.overlayOpacity.collectAsStateWithLifecycle()
                         // Collected so a change applied outside the save button
                         // (the profile-switch master switch) is reflected
                         // instead of being overwritten by a stale newConfig.
@@ -173,6 +203,22 @@ class MainActivity : ComponentActivity() {
                             onImportProfile = { viewModel.importProfileJson(it) },
                             onSetProfileSwapPairs = { profileId, pairs ->
                                 viewModel.setSwapPairs(profileId, pairs)
+                            },
+                            wasdHumanization = wasdHumanization,
+                            keyHumanization = keyHumanization,
+                            humanizationStrength = humanizationStrength,
+                            onSetWasdHumanization = viewModel::setWasdHumanization,
+                            onSetKeyHumanization = viewModel::setKeyHumanization,
+                            onSetHumanizationStrength = viewModel::setHumanizationStrength,
+                            overlayOpacity = overlayOpacity,
+                            onSetOverlayOpacity = viewModel::setOverlayOpacity,
+                            onStopOverlay = {
+                                stopService(
+                                    Intent(
+                                        this@MainActivity,
+                                        FloatingBubbleService::class.java
+                                    )
+                                )
                             },
                             onSave = {
                                 viewModel.saveKeyConfig(it)

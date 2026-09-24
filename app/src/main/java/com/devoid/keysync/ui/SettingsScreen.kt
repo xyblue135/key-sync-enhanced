@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ExitToApp
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Delete
@@ -97,6 +98,15 @@ fun SettingsScreen(
     onExportProfile: (String) -> String? = { null },
     onImportProfile: (String) -> String? = { null },
     onSetProfileSwapPairs: (profileId: String, pairs: List<SwapPair>) -> Unit = { _, _ -> },
+    overlayOpacity: Float = 0.5f,
+    onSetOverlayOpacity: (Float) -> Unit = {},
+    onStopOverlay: () -> Unit = {},
+    wasdHumanization: Boolean = false,
+    keyHumanization: Boolean = false,
+    humanizationStrength: Float = 0f,
+    onSetWasdHumanization: (Boolean) -> Unit = {},
+    onSetKeyHumanization: (Boolean) -> Unit = {},
+    onSetHumanizationStrength: (Float) -> Unit = {},
     onNavigateBack: () -> Unit = {},
     onNavigateAbout: () -> Unit = {}
 ) {
@@ -230,6 +240,25 @@ fun SettingsScreen(
                             steps = 14,
                             onValueChange = {
                                 newConfig = newConfig.copy(buttonScale = it)
+                            })
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = stringResource(R.string.slider_pointer_sensitivity),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text("${(newConfig.pointerSensitivity * 100).roundToInt()} %")
+                        }
+                        Slider(
+                            value = newConfig.pointerSensitivity,
+                            valueRange = 0.1f..1f,
+                            steps = 8,
+                            onValueChange = {
+                                newConfig = newConfig.copy(pointerSensitivity = it)
                             })
                     }
                 }
@@ -480,6 +509,92 @@ fun SettingsScreen(
                             onCheckedChange = {
                                 newConfig = newConfig.copy(screenMirrorCompatMode = it)
                             }
+                        )
+                    }
+                }
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = stringResource(R.string.slider_overlay_opacity),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text("${(overlayOpacity * 100).roundToInt()} %")
+                        }
+                        Slider(
+                            value = overlayOpacity,
+                            valueRange = 0f..1f,
+                            steps = 9,
+                            onValueChange = onSetOverlayOpacity
+                        )
+                        Text(
+                            "0% 时按键完全不显示；改动立即生效，无需点保存。",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "按键拟人化",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            "给注入的触控位置加随机抖动，避免被识别成机械死板的操作。全局生效，强度为 0 时关闭。",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("WASD 拟人化", style = MaterialTheme.typography.titleMedium)
+                            }
+                            Switch(checked = wasdHumanization, onCheckedChange = onSetWasdHumanization)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("其他按键拟人化（开火 / 自定义等）", style = MaterialTheme.typography.titleMedium)
+                            }
+                            Switch(checked = keyHumanization, onCheckedChange = onSetKeyHumanization)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("强度", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                            Text("${(humanizationStrength * 100).roundToInt()}")
+                        }
+                        Slider(
+                            value = humanizationStrength,
+                            valueRange = 0f..1f,
+                            steps = 9,
+                            onValueChange = onSetHumanizationStrength
+                        )
+                    }
+                }
+                FilledTonalButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onStopOverlay
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Start
+                    ) {
+                        Icon(Icons.AutoMirrored.Rounded.ExitToApp, contentDescription = null)
+                        Text(
+                            modifier = Modifier.padding(start = 16.dp),
+                            text = stringResource(R.string.overlay_close_overlay),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
                         )
                     }
                 }

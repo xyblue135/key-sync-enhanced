@@ -33,10 +33,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ExitToApp
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Done
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.RadioButton
@@ -101,38 +103,6 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-
-@Composable
-fun FloatingBubble(
-    expanded: Boolean = false,
-    modifier: Modifier = Modifier.size(50.dp),
-    onClick: () -> Unit = {}
-) {
-    Column(modifier = modifier
-        .clip(CircleShape)
-        .clickable {
-            onClick()
-        }) {
-        if (expanded) {
-            Image(
-                imageVector = Icons.Rounded.Done,
-                contentDescription = "",
-                modifier = modifier
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer, CircleShape)
-                    .padding(8.dp)
-            )
-        } else {
-            Image(
-                painter = painterResource(R.drawable.logo_raw),
-                contentDescription = "",
-                modifier = modifier
-                    .clip(CircleShape)
-                    .background(Color.Black)
-            )
-        }
-    }
-}
 
 @SuppressLint("UnrememberedMutableState")
 @Composable
@@ -691,6 +661,55 @@ fun DraggableItem(
     }
 }
 
+/**
+ * 编辑态操作条：只在编辑态渲染。非编辑态屏幕上不出现任何常驻控件，
+ * 编辑 / 按键显隐 / 退出编辑统一由通知栏 action 驱动。
+ */
+@Composable
+fun EditToolbar(
+    modifier: Modifier = Modifier,
+    keysVisible: Boolean,
+    onToggleKeysVisible: () -> Unit,
+    onToggleEditMode: () -> Unit,
+    onAddItem: (DraggableItemType) -> Unit,
+) {
+    var itemsMenuVisible by remember { mutableStateOf(false) }
+    Box(modifier) {
+        Row(
+            modifier = Modifier
+                .clip(CircleShape.copy(CornerSize(10)))
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = { itemsMenuVisible = !itemsMenuVisible }) {
+                Icon(
+                    Icons.Rounded.Add,
+                    contentDescription = stringResource(R.string.cd_add_item),
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            TextButton(onClick = onToggleKeysVisible) {
+                Text(
+                    if (keysVisible) stringResource(R.string.overlay_hide_keys)
+                    else stringResource(R.string.overlay_show_keys)
+                )
+            }
+            TextButton(onClick = onToggleEditMode) {
+                Text(stringResource(R.string.overlay_done))
+            }
+        }
+        if (itemsMenuVisible) {
+            Box(modifier = Modifier.align(Alignment.TopEnd).offset(y = 48.dp)) {
+                MenuItems(onItemClick = {
+                    onAddItem(it)
+                    itemsMenuVisible = false
+                })
+            }
+        }
+    }
+}
+
 @Composable
 fun MenuItems(
     modifier: Modifier = Modifier,
@@ -814,129 +833,10 @@ private fun MenuCell(
 }
 
 
-@Composable
-fun SettingsLayout(
-    modifier: Modifier = Modifier,
-    pointerSensitivity: Float = 0.5f,
-    overlayOpacity: Float = 0.5f,
-    profiles: List<Profile> = emptyList(),
-    activeProfileId: String? = null,
-    onSwitchProfile: (String) -> Unit = {},
-    buttonScale: Float = 1f,
-    onButtonScaleChange: (Float) -> Unit = {},
-    onAdvancedSettingsClick: () -> Unit,
-    onCloseOverlayClick: () -> Unit,
-    onPointerSensChange: (Float) -> Unit,
-    onOpacityChange: (Float) -> Unit
-) {
-    Column(
-        modifier
-            .clip(CircleShape.copy(CornerSize(10)))
-            .background(color = MaterialTheme.colorScheme.surface)
-            .padding(8.dp)
-            .heightIn(max = 320.dp)
-            .verticalScroll(rememberScrollState())
-    ) {
-        Text("同一游戏 · 多套预设", style = MaterialTheme.typography.titleMedium)
-        profiles.forEach { profile ->
-            TextButton(onClick = { onSwitchProfile(profile.id) }) {
-                Text((if (profile.id == activeProfileId) "✓ " else "") + profile.name)
-            }
-        }
-
-        HorizontalDivider()
-        Text("按钮大小 ${(buttonScale * 100).roundToInt()}%",
-            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Slider(value = buttonScale.coerceIn(0.6f, 2f), onValueChange = onButtonScaleChange,
-            valueRange = 0.6f..2f, steps = 13)
-        Text("调整普通按钮显示大小；WASD 用右下角手柄缩放", style = MaterialTheme.typography.labelSmall)
-        Row {
-            Text(
-                text = stringResource(R.string.slider_pointer_sensitivity),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)
-            )
-            Text(
-                "${(pointerSensitivity * 100).roundToInt()} %",
-                modifier = Modifier
-                    .padding(start = 16.dp)
-                    .align(Alignment.CenterVertically),
-                style = TextStyle(color = MaterialTheme.colorScheme.tertiary)
-            )
-        }
-
-        Slider(
-            value = pointerSensitivity,
-            onValueChange = onPointerSensChange,
-            valueRange = 0.1f..1.0f,
-            steps = 8
-        )
-        Row {
-            Text(
-                text = stringResource(R.string.slider_overlay_opacity),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)
-            )
-            Text(
-                "${(overlayOpacity * 100).roundToInt()} %",
-                modifier = Modifier
-                    .padding(start = 16.dp)
-                    .align(Alignment.CenterVertically),
-                style = TextStyle(color = MaterialTheme.colorScheme.tertiary)
-            )
-        }
-        Slider(
-            value = overlayOpacity,
-            onValueChange = onOpacityChange,
-            valueRange = 0.0f..1.0f,
-            steps = 9
-        )
-        HorizontalDivider()
-        TextButton(onClick = onAdvancedSettingsClick) {
-            Icon(Icons.Rounded.Settings, contentDescription = stringResource(R.string.cd_advanced_settings))
-            Text(
-                "Advanced Settings",
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-            )
-        }
-        TextButton(onClick = onCloseOverlayClick) {
-            Icon(
-                Icons.AutoMirrored.Rounded.ExitToApp,
-                contentDescription = stringResource(R.string.cd_close),
-                tint = MaterialTheme.colorScheme.tertiary
-            )
-            Text(
-                "Close Overlay",
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.tertiary,
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-            )
-        }
-    }
-}
-
-
 @Preview
 @Composable
 private fun PreviewMenuItems() {
     MenuItems(onItemClick = {})
-}
-
-@Preview()
-@Composable
-private fun PreviewSettingsLayout() {
-    SettingsLayout(
-        Modifier.clip(
-            CircleShape.copy(CornerSize(10))
-        ),
-        onAdvancedSettingsClick = { },
-        onPointerSensChange = { },
-        onOpacityChange = { },
-        onCloseOverlayClick = {}
-    )
 }
 
 internal class ServiceLifecycleOwner : SavedStateRegistryOwner {

@@ -16,8 +16,16 @@ import com.devoid.keysync.model.KeymapType
 import com.devoid.keysync.model.MultiModeTouchHandler
 import com.devoid.keysync.data.mapping.MappingConflictDetector
 import com.devoid.keysync.model.TouchMode
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlin.random.Random
 
 
 private const val MASK_W = 1 shl 0
@@ -112,6 +120,61 @@ class EventHandler(
 
     private val keyIdMap = HashMap<Int, Int>(64)
     private var nextKeyId = 0
+
+
+    /* ---------- 按键拟人化（随机偏移） ---------- */
+    // 全局生效、不按预设存储。仅对注入位置加随机抖动，绝不加延迟、不阻塞，
+    // 用于对抗把「死板的 8 向摇杆 / 机械重复点按」识别成脚本的风控。
+    @Volatile
+    var wasdHumanization = false
+    @Volatile
+    var keyHumanization = false
+    @Volatile
+    var humanizationStrength = 0f
+
+    fun setHumanization(wasd: Boolean, keys: Boolean, strength: Float) {
+        wasdHumanization = wasd
+        keyHumanization = keys
+        humanizationStrength = strength.coerceIn(0f, 1f)
+    }
+
+    // 持键期间低频率重掷抖动（约 140ms），在完全静止的方向上也产生自然的轨迹扰动。
+    private val humanizeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var wasdJitterJob: Job? = null
+
+    /** 拟人化抖动偏移（px）。强度 0 时返回零偏移。 */
+    private fun jitterOffset(): Offset {
+        val max = humanizationStrength * 40f
+        if (max <= 0f) return Offset.Zero
+        return Offset(
+            (Random.nextFloat() * 2f - 1f) * max,
+            (Random.nextFloat() * 2f - 1f) * max,
+        )
+    }
+
+    private fun stopWasdJitter() {
+        wasdJitterJob?.cancel()
+        wasdJitterJob = null
+    }
+
+    private fun restartWasdJitter(pointerId: Int, mask: Int, map: KeyMap) {
+        wasdJitterJob?.cancel()
+        wasdJitterJob = humanizeScope.launch {
+            while (isActive && wasdHumanization) {
+                delay(140L)
+                if (!wasdHumanization) break
+                // 只拖 current 触点，绝不 reanchor（见 JoystickMotion.jitter）。
+                joystickMotion.jitter(pointerId, mask, map.position + jitterOffset())
+            }
+        }
+    }
+
+    /** 普通按键的触点位置加随机抖动（仅当「其他按键拟人化」开启时）。 */
+    private fun humanizedMap(map: KeyMap): KeyMap {
+        if (!keyHumanization || humanizationStrength <= 0f) return map
+        val j = jitterOffset()
+        return map.copy(position = map.position + j, end = map.end?.plus(j))
+    }
 
 
     @Volatile
@@ -420,6 +483,7 @@ class EventHandler(
         }
         val directionMask = vertical or horizontal
         if (directionMask == 0) {
+            stopWasdJitter()
             joystickMotion.update(pointerId, 0, Offset.Zero, Offset.Zero)
             return
         }
@@ -429,9 +493,14 @@ class EventHandler(
         // Profiles with sprintScale <= 1 do not create sprint entries. Shift
         // should not freeze movement in that case; fall back to normal speed.
         val effectiveMask = if (wasdMap.containsKey(requestedMask)) requestedMask else directionMask
-        wasdMap[effectiveMask]?.let {
-            joystickMotion.update(pointerId, effectiveMask, it.center!!, it.position)
+        val entry = wasdMap[effectiveMask]
+        if (entry == null) {
+            stopWasdJitter()
+            return
         }
+        val target = if (wasdHumanization) entry.position + jitterOffset() else entry.position
+        joystickMotion.update(pointerId, effectiveMask, entry.center!!, target)
+        if (wasdHumanization) restartWasdJitter(pointerId, effectiveMask, entry) else stopWasdJitter()
     }
 
 
@@ -454,7 +523,7 @@ class EventHandler(
                         handler.handleTouchEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode), wasPressed, pointerId, cancelMap)
                     } ?: false
                 } else {
-                    handler.handleTouchEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode), wasPressed, pointerId, it)
+                    handler.handleTouchEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode), wasPressed, pointerId, humanizedMap(it))
                 }
             } else {
                 val mode = keyTouchMode[keyCode] ?: normalTouchMode
@@ -480,7 +549,7 @@ class EventHandler(
                         KeyEvent(KeyEvent.ACTION_DOWN, keyCode),
                         wasPressed,
                         pointerId,
-                        it
+                        humanizedMap(it)
                     )
                 }
             }
@@ -554,8 +623,9 @@ class EventHandler(
             return true
         }
         keyMap[keyCode]?.let {
+            val m = humanizedMap(it)
             if (pressed)
-                eventInjector.injectPointer(pointerId, it.position, it.end!!)
+                eventInjector.injectPointer(pointerId, m.position, m.end!!)
             else
                 eventInjector.releasePointer(pointerId)
         }
@@ -753,6 +823,7 @@ class EventHandler(
         // Reset the joystick transition tracker after cancelling its contact.
         wasdMask = 0
         joystickMotion.reset()
+        stopWasdJitter()
         wheelActive = false
         _wheelCursor.value = null
         wheelPointerId = -1
@@ -873,6 +944,7 @@ class EventHandler(
         cancelToggle.clear()
         wasdMask = 0
         joystickMotion.reset()
+        stopWasdJitter()
         wheelActive = false
         _wheelCursor.value = null
         wheelPointerId = -1

@@ -1,8 +1,10 @@
 package com.devoid.keysync.service
 
 import android.annotation.SuppressLint
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -56,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import androidx.constraintlayout.compose.ConstraintLayout
 import androidx.constraintlayout.compose.Dimension
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.setViewTreeLifecycleOwner
@@ -66,11 +69,9 @@ import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.util.keyCodeToString
 import com.devoid.keysync.model.DraggableItemType
 import com.devoid.keysync.model.TouchMode
-import com.devoid.keysync.ui.overlay.FloatingBubble
+import com.devoid.keysync.ui.overlay.EditToolbar
 import com.devoid.keysync.ui.overlay.ItemsContainer
-import com.devoid.keysync.ui.overlay.MenuItems
 import com.devoid.keysync.ui.overlay.ServiceLifecycleOwner
-import com.devoid.keysync.ui.overlay.SettingsLayout
 import com.devoid.keysync.ui.theme.KeySyncTheme
 import com.devoid.keysync.util.TouchToMouseTranslator
 import dagger.Lazy
@@ -80,6 +81,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlin.math.roundToInt
@@ -88,13 +90,22 @@ import kotlin.math.roundToInt
 @AndroidEntryPoint
 class FloatingBubbleService : Service() {
     private val TAG = "FloatingBubbleService"
-    private lateinit var floatingBubbleLP: WindowManager.LayoutParams
 
     @Inject
     lateinit var stateManager: Lazy<FloatingWindowStateManager>
 
     companion object {
         val INTENT_EXTRA_PACAKAGE = "launchedPackageName"
+
+        /** 前台通知 id 与频道。频道沿用旧的 "channel1"，只更新对外显示名。 */
+        private const val NOTIFICATION_ID = 1
+        private const val CHANNEL_ID = "channel1"
+
+        /** 通知栏 action：全部回投到本 Service，由 onStartCommand 分发。 */
+        private const val ACTION_TOGGLE_EDIT = "com.devoid.keysync.action.TOGGLE_EDIT"
+        private const val ACTION_TOGGLE_KEYS = "com.devoid.keysync.action.TOGGLE_KEYS"
+        private const val ACTION_STOP = "com.devoid.keysync.action.STOP"
+
         private val _isRunning = MutableStateFlow(false)
         val isRunning = _isRunning.asStateFlow()
     }
@@ -103,40 +114,39 @@ class FloatingBubbleService : Service() {
 
     private val scope = CoroutineScope(Dispatchers.Main)
     private var containerView: ComposeView? = null
-    private var floatingBubbleView: ComposeView? = null
     private var overlayInitialized = false
+    // 通知刷新监听只允许挂一次：每个通知 action 都会重入 onStartCommand。
+    private var notificationObserverStarted = false
 
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 关闭必须最先处理：放在 startForeground 之前，避免为一次「关闭」白建通知。
+        if (intent?.action == ACTION_STOP) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        // 屏幕上的气泡已删除，编辑态 / 按键显隐改由通知栏 action 驱动。
+        // 先落状态再建通知，让这一次 startForeground 就带上正确的 action 标签。
+        when (intent?.action) {
+            ACTION_TOGGLE_EDIT -> stateManager.get().toggleEditMode()
+            ACTION_TOGGLE_KEYS -> stateManager.get().toggleKeysVisible()
+        }
+
         _isRunning.value = true
-        val channel = NotificationChannel(
-            "channel1",
-            "KeySync Overlay Service",
-            NotificationManager.IMPORTANCE_LOW
-        )
         val launchedPackageName = intent?.getStringExtra(INTENT_EXTRA_PACAKAGE)
         launchedPackageName?.let {
             stateManager.get().loadButtonsConfig(it)
         }
         val notificationManager = getSystemService(NotificationManager::class.java)
-        notificationManager.createNotificationChannel(channel)
-        val notification = NotificationCompat.Builder(this, "channel1").apply {
-            setSmallIcon(R.drawable.ic_launcher_foreground)
-            setContentTitle(ContextCompat.getString(baseContext, R.string.app_name))
-            setContentText(
-                "${
-                    ContextCompat.getString(
-                        baseContext,
-                        R.string.app_name
-                    )
-                } Overlay service is running"
-            )
-        }.build()
+        notificationManager.createNotificationChannel(notificationChannel())
         startForeground(
-            1,
-            notification,
+            NOTIFICATION_ID,
+            buildNotification(),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         )
+        observeNotificationState()
 
         if (lifecycleOwner.lifecycle.currentState == Lifecycle.State.INITIALIZED) {
             lifecycleOwner.performRestore(null)
@@ -149,19 +159,108 @@ class FloatingBubbleService : Service() {
         return START_NOT_STICKY
     }
 
+    /* ---------- 通知栏（唯一的常驻控制面） ---------- */
+
+    private fun notificationChannel() = NotificationChannel(
+        CHANNEL_ID,
+        getString(R.string.notification_channel_overlay),
+        NotificationManager.IMPORTANCE_LOW
+    ).apply {
+        description = getString(R.string.notification_channel_overlay_desc)
+        setShowBadge(false)
+    }
+
+    private fun buildNotification(): Notification {
+        val sm = stateManager.get()
+        val editLabel = getString(
+            if (sm.isEditMode.value) R.string.notification_action_exit_edit
+            else R.string.notification_action_edit
+        )
+        val keysLabel = getString(
+            if (sm.keysVisible.value) R.string.notification_action_hide_keys
+            else R.string.notification_action_show_keys
+        )
+        return NotificationCompat.Builder(this, CHANNEL_ID).apply {
+            setSmallIcon(R.drawable.ic_launcher_foreground)
+            setContentTitle(getString(R.string.app_name))
+            setContentText(getString(R.string.notification_text_overlay_running))
+            setContentIntent(settingsPendingIntent())
+            setOngoing(true)
+            setSilent(true)
+            setOnlyAlertOnce(true)
+            setPriority(NotificationCompat.PRIORITY_LOW)
+            addAction(0, editLabel, servicePendingIntent(ACTION_TOGGLE_EDIT, 101))
+            addAction(0, keysLabel, servicePendingIntent(ACTION_TOGGLE_KEYS, 102))
+            addAction(0, getString(R.string.notification_action_stop), servicePendingIntent(ACTION_STOP, 103))
+        }.build()
+    }
+
+    /**
+     * 点击通知正文 → App 设置页。
+     *
+     * 必须用 getActivity：Android 12+ 的 notification trampoline 限制禁止
+     * contentIntent 先跳 Service/Receiver 再 startActivity，那样点击不会拉起界面。
+     */
+    private fun settingsPendingIntent(): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            action = MainActivity.INTENT_ACTION_SETTINGS
+        }
+        return PendingIntent.getActivity(
+            this,
+            100,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
+
+    /**
+     * 用 getService（startService 语义）而非 getForegroundService：前者不引入
+     * 「5 秒内必须 startForeground」的义务，避免被系统判定超时崩溃。
+     */
+    private fun servicePendingIntent(action: String, requestCode: Int): PendingIntent {
+        val intent = Intent(this, FloatingBubbleService::class.java).apply { this.action = action }
+        return PendingIntent.getService(
+            this,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
+
+    /** 编辑态 / 按键显隐变化时刷新通知，让 action 标签与实际状态保持一致。 */
+    private fun observeNotificationState() {
+        if (notificationObserverStarted) return
+        notificationObserverStarted = true
+        scope.launch {
+            combine(
+                stateManager.get().isEditMode,
+                stateManager.get().keysVisible
+            ) { _, _ -> Unit }.collect {
+                // startForeground 跑过之后才投递，避免「先 notify 后 startForeground」。
+                if (!overlayInitialized) return@collect
+                runCatching {
+                    NotificationManagerCompat.from(this@FloatingBubbleService)
+                        .notify(NOTIFICATION_ID, buildNotification())
+                }
+            }
+        }
+    }
+
     private fun init() {
 
-        floatingBubbleLP = WindowManager.LayoutParams(
+        // 屏幕上只保留按键容器这一个窗口（气泡已删除，控制入口收进通知栏）。
+        val baseLP = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         )
-        floatingBubbleLP.gravity = Gravity.START or Gravity.TOP
+        baseLP.gravity = Gravity.START or Gravity.TOP
 
         val itemsContainerLP = WindowManager.LayoutParams()
-        itemsContainerLP.copyFrom(floatingBubbleLP)
+        itemsContainerLP.copyFrom(baseLP)
 
         val sm = stateManager.get()
         val touchTranslator = TouchToMouseTranslator(
@@ -183,17 +282,8 @@ class FloatingBubbleService : Service() {
                 touchTranslator = touchTranslator,
             )
 
-        floatingBubbleView = getFloatingBubbleView(
-            onCLick = {
-                stateManager.get().onFloatingBubbleClick()
-            },
-            onAddItem = { itemType ->
-                Log.i(TAG, "init: $itemType")
-                stateManager.get().addNewItem(itemType)
-            }
-        )
         scope.launch {
-            stateManager.get().isBubbleExpanded.collect { expanded ->
+            stateManager.get().isEditMode.collect { expanded ->
                 itemsContainerLP.apply {
                     width = WindowManager.LayoutParams.MATCH_PARENT
                     height = WindowManager.LayoutParams.MATCH_PARENT
@@ -214,6 +304,8 @@ class FloatingBubbleService : Service() {
                     stateManager.get().clearActivePointers()
                     containerView?.post { containerView?.requestFocus() }
                     containerView?.postDelayed({ containerView?.requestFocus() }, 150)
+                    // 从通知栏进编辑态时通知栏正在收起，可能还要再抢一次焦点。
+                    containerView?.postDelayed({ containerView?.requestFocus() }, 500)
                 } else {
                     itemsContainerLP.flags =
                         WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
@@ -227,32 +319,14 @@ class FloatingBubbleService : Service() {
             }
         }
         stateManager.get().windowManager.addView(containerView, itemsContainerLP)
-        floatingBubbleLP.y = 200
-        stateManager.get().windowManager.addView(floatingBubbleView, floatingBubbleLP)
         containerView?.postDelayed({
             containerView?.requestFocus()
-            if (!stateManager.get().isBubbleExpanded.value) {
+            if (!stateManager.get().isEditMode.value) {
                 containerView?.requestPointerCapture()
             }
         }, 1000)
     }
 
-
-    private fun getFloatingBubbleView(
-        onCLick: () -> Unit,
-        onAddItem: (DraggableItemType) -> Unit
-    ): ComposeView {
-        val composeView = ComposeView(this)
-        composeView.setContent {
-            FloatingBubbleLayout(
-                onAddItem = onAddItem,
-                onBubbleClick = onCLick
-            )
-        }
-        composeView.setViewTreeLifecycleOwner(lifecycleOwner)
-        composeView.setViewTreeSavedStateRegistryOwner(lifecycleOwner)
-        return composeView
-    }
 
     @SuppressLint("ClickableViewAccessibility")
     private fun getItemsContainerView(
@@ -270,7 +344,7 @@ class FloatingBubbleService : Service() {
             KeySyncTheme {
                 val draggableItems by stateManager.get().containerItems.collectAsState()
                 val itemsContainerOpacity by stateManager.get().overlayOpacity.collectAsState()
-                val isBubbleExpanded by stateManager.get().isBubbleExpanded.collectAsState()
+                val isEditMode by stateManager.get().isEditMode.collectAsState()
                 val isShootingMode by stateManager.get().isShootingMode.collectAsState()
                 val pointerOffset by stateManager.get().pointerOffset.collectAsState()
                 val keysConfig by stateManager.get().keysConfig.collectAsState()
@@ -284,7 +358,7 @@ class FloatingBubbleService : Service() {
                 val activeId by stateManager.get().activeProfileId.collectAsState()
                 Box {
                     // Wheel selection consumes mouse deltas without exposing a cursor.
-                    if (!isBubbleExpanded && !isShootingMode && wheelCursor == null) {
+                    if (!isEditMode && !isShootingMode && wheelCursor == null) {
                         Image(///mouse pointer
                             modifier = Modifier.offset {
                                 pointerOffset.let {
@@ -298,14 +372,14 @@ class FloatingBubbleService : Service() {
                             contentDescription = "mouse pointer"
                         )
                     }
-                    if (!isBubbleExpanded && itemsContainerOpacity == 0f)
+                    if (!isEditMode && itemsContainerOpacity == 0f)
                         return@Box//do not compose if user set overlay opacity to 0
                     // 一键隐藏按键：keysVisible 为 false 时不渲染按键容器。
                     if (keysVisible) {
                         ItemsContainer(
-                            Modifier.alpha(if (isBubbleExpanded) 1f else itemsContainerOpacity),
+                            Modifier.alpha(if (isEditMode) 1f else itemsContainerOpacity),
                             appConfig = keysConfig,
-                            editing = isBubbleExpanded,
+                            editing = isEditMode,
                             walkEnabled = walkEnabled,
                             onCalibrateWalkOff = { stateManager.get().calibrateWalkOff() },
                             onItemMeasured = { stateManager.get().updateMeasuredPosition(it) },
@@ -321,7 +395,7 @@ class FloatingBubbleService : Service() {
                             pressedKeys = pressedKeys,
                             onRequestFocus = { composeView.post { composeView.requestFocus() } },
                         )
-                        if (!isBubbleExpanded) {
+                        if (!isEditMode) {
                             val toggle = draggableItems.filterIsInstance<DraggableItem.FixedKey>()
                                 .firstOrNull { it.type == DraggableItemType.SHOOTING_MODE }
                             val mode = if (isShootingMode) "射击模式" else if (toggle == null)
@@ -332,6 +406,18 @@ class FloatingBubbleService : Service() {
                                 modifier = Modifier.align(Alignment.TopCenter)
                                     .background(Color.Black.copy(alpha = 0.65f)))
                         }
+                    }
+                    // 编辑态操作条。非编辑态完全不渲染 —— 游戏时屏幕上不会有任何常驻控件。
+                    if (isEditMode) {
+                        EditToolbar(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(8.dp),
+                            keysVisible = keysVisible,
+                            onToggleKeysVisible = { stateManager.get().toggleKeysVisible() },
+                            onToggleEditMode = { stateManager.get().toggleEditMode() },
+                            onAddItem = { stateManager.get().addNewItem(it) },
+                        )
                     }
                 }
             }
@@ -355,14 +441,25 @@ class FloatingBubbleService : Service() {
         fun recoverPointerCapture() {
             composeView.post {
                 if (composeView.isAttachedToWindow && composeView.hasWindowFocus() &&
-                    !stateManager.get().isBubbleExpanded.value && !composeView.hasPointerCapture()) {
+                    !stateManager.get().isEditMode.value && !composeView.hasPointerCapture()) {
                     composeView.requestFocus()
                     composeView.requestPointerCapture()
                 }
             }
         }
         composeView.viewTreeObserver.addOnWindowFocusChangeListener { focused ->
-            if (focused) recoverPointerCapture()
+            if (focused) {
+                if (stateManager.get().isEditMode.value) {
+                    // 从通知栏进编辑态时，通知栏收起的过程中可能抢走焦点。编辑态
+                    // 一旦丢焦点，View 层 setOnKeyListener 就收不到按键（按钮一直显示
+                    // ＋）；而 recoverPointerCapture 只在非编辑态恢复，所以这里补一次。
+                    composeView.requestFocus()
+                    composeView.releasePointerCapture()
+                    stateManager.get().clearActivePointers()
+                } else {
+                    recoverPointerCapture()
+                }
+            }
         }
         composeView.setOnKeyListener { _, _, event ->
             val handled = stateManager.get().onKeyEvent(event)
@@ -377,7 +474,7 @@ class FloatingBubbleService : Service() {
         composeView.setOnTouchListener { _, motionEvent ->
             // Editing must receive the entire gesture, even when a drag leaves
             // the button hit area or screen-mirror compatibility is enabled.
-            if (stateManager.get().isBubbleExpanded.value) {
+            if (stateManager.get().isEditMode.value) {
                 val sm = stateManager.get()
                 if (sm.keyCaptureListener != null && motionEvent.isFromSource(InputDevice.SOURCE_MOUSE) &&
                     motionEvent.actionMasked == MotionEvent.ACTION_DOWN &&
@@ -454,268 +551,6 @@ class FloatingBubbleService : Service() {
         containerView?.let {
             stateManager.get().windowManager.removeViewImmediate(it)
         }
-        floatingBubbleView?.let {
-            stateManager.get().windowManager.removeViewImmediate(it)
-        }
     }
 
-    @Composable
-    private fun FloatingBubbleLayout(
-        modifier: Modifier = Modifier,
-        onAddItem: (DraggableItemType) -> Unit,
-        onBubbleClick: () -> Unit
-    ) {
-        var opacity by remember { mutableFloatStateOf(0.5f) }
-        val isExpanded by stateManager.get().isBubbleExpanded.collectAsState()
-        val keysVisible by stateManager.get().keysVisible.collectAsState()
-        var itemsMenuVisible by remember { mutableStateOf(false) }
-        var settingsLayoutVisible by remember { mutableStateOf(false) }
-        LaunchedEffect(isExpanded) {
-            opacity = if (isExpanded) 1f else 0.5f
-            itemsMenuVisible = isExpanded && itemsMenuVisible
-            settingsLayoutVisible = isExpanded && settingsLayoutVisible
-        }
-        Box(
-            modifier = modifier
-                .alpha(opacity)
-                .pointerInput(Unit) {
-                    detectDragGestures(
-                        onDragStart = {
-                            opacity = 1.0f
-                        }, onDragEnd = {
-                            if (!isExpanded) opacity = 0.5f
-                            if (floatingBubbleLP.x < baseContext.resources.displayMetrics.widthPixels / 2) {
-                                floatingBubbleLP.x = 0
-                                stateManager.get().windowManager.updateViewLayout(
-                                    floatingBubbleView,
-                                    floatingBubbleLP
-                                )
-                            } else {
-                                floatingBubbleLP.x =
-                                    baseContext.resources.displayMetrics.widthPixels - (floatingBubbleView?.width
-                                        ?: 0)
-                                stateManager.get().windowManager.updateViewLayout(
-                                    floatingBubbleView,
-                                    floatingBubbleLP
-                                )
-                            }
-                        }
-                    ) { change, dragAmount ->
-                        change.consume()
-                        floatingBubbleLP.x += dragAmount.x.roundToInt()
-                        floatingBubbleLP.y += dragAmount.y.roundToInt()
-                        stateManager.get().windowManager.updateViewLayout(
-                            floatingBubbleView,
-                            floatingBubbleLP
-                        )
-                    }
-                }
-        ) {
-            ConstraintLayout {
-                val (background, bubbleLayout, otherLayout, bubble) = createRefs()
-                Box(
-                    modifier = Modifier
-                        .constrainAs(background) {
-                            start.linkTo(bubble.start)
-                            top.linkTo(bubble.top)
-                            end.linkTo(bubble.end)
-                            bottom.linkTo(bubbleLayout.bottom)
-                            height = Dimension.fillToConstraints
-                            width = Dimension.fillToConstraints
-                        }
-                        .background(color = MaterialTheme.colorScheme.surface, CircleShape)
-                )
-                FloatingBubble(
-                    modifier = Modifier
-                        .size(50.dp)
-                        .constrainAs(bubble) { },
-                    expanded = isExpanded, onClick = onBubbleClick
-                )
-                AnimatedVisibility(
-                    visible = isExpanded,
-                    Modifier.constrainAs(bubbleLayout) {
-                        top.linkTo(bubble.bottom)
-                        end.linkTo(bubble.end)
-                    }) {
-                    Column {
-                        IconButton(onClick = {
-                            itemsMenuVisible = !itemsMenuVisible
-                            settingsLayoutVisible = false
-                        }) {
-                            Icon(
-                                imageVector = Icons.Rounded.Add,
-                                contentDescription = "Add Item"
-                            )
-                        }
-
-                        IconButton(onClick = {
-                            settingsLayoutVisible = !settingsLayoutVisible
-                            itemsMenuVisible = false
-                        }) {
-                            Icon(
-                                imageVector = Icons.Rounded.Settings,
-                                contentDescription = "Settings",
-                                tint = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-
-                        IconButton(onClick = {
-                            stateManager.get().toggleKeysVisible()
-                        }) {
-                            Text(
-                                text = if (keysVisible) "隐" else "显",
-                                color = MaterialTheme.colorScheme.onSurface,
-                                fontSize = 14.sp
-                            )
-                        }
-                    }
-                }
-                AnimatedVisibility(
-                    visible = (itemsMenuVisible),
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier
-                        .padding(start = 4.dp)
-                        .constrainAs(otherLayout) {
-                            start.linkTo(bubble.end)
-                            top.linkTo(parent.top)
-                            bottom.linkTo(parent.bottom)
-                        }) {
-                    MenuItems(onItemClick = {
-                        onAddItem(it)
-                        itemsMenuVisible = false
-                    })
-                }
-                AnimatedVisibility(
-                    visible = (settingsLayoutVisible),
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier
-                        .padding(start = 4.dp)
-                        .constrainAs(otherLayout) {
-                            start.linkTo(bubble.end)
-                            top.linkTo(parent.top)
-                            bottom.linkTo(parent.bottom)
-                            end.linkTo(parent.end)
-                            width = Dimension.preferredWrapContent
-                        }) {
-                    val pointerSensitivity by stateManager.get().pointerSensitivity.collectAsState()
-                    val overlayOpacity by stateManager.get().overlayOpacity.collectAsState()
-                    val appConfig by stateManager.get().keysConfig.collectAsState()
-                    val profiles by stateManager.get().profiles.collectAsState()
-                    val activeId by stateManager.get().activeProfileId.collectAsState()
-                    SettingsLayout(
-                        profiles = profiles,
-                        activeProfileId = activeId,
-                        onSwitchProfile = { stateManager.get().switchProfile(it) },
-                        buttonScale = appConfig.buttonScale,
-                        onButtonScaleChange = { stateManager.get().saveAppConfig(appConfig.copy(buttonScale = it)) },
-                        pointerSensitivity = pointerSensitivity,
-                        overlayOpacity = overlayOpacity,
-                        onOpacityChange = { stateManager.get().overlayOpacity.value = it },
-                        onPointerSensChange = { stateManager.get().savePointerSensitivity(it) },
-                        onAdvancedSettingsClick = {
-                            val intent = Intent(baseContext, MainActivity::class.java).apply {
-                                flags =
-                                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-                                action = MainActivity.INTENT_ACTION_SETTINGS
-                            }
-                            baseContext.startActivity(intent)
-                            stateManager.get().onFloatingBubbleClick()
-                        },
-                        onCloseOverlayClick = {
-                            stopSelf()
-                        })
-                }
-            }
-        }
-    }
-}
-
-
-@Preview
-@Composable
-fun PreviewFloatingBubble() {
-    Box(
-        modifier = Modifier
-    ) {
-        ConstraintLayout {
-            val (background, bubbleLayout, otherLayout, bubble) = createRefs()
-            Box(
-                modifier = Modifier
-                    .constrainAs(background) {
-                        start.linkTo(bubble.start)
-                        top.linkTo(bubble.top)
-                        end.linkTo(bubble.end)
-                        bottom.linkTo(bubbleLayout.bottom)
-                        height = Dimension.fillToConstraints
-                        width = Dimension.fillToConstraints
-                    }
-                    .background(color = MaterialTheme.colorScheme.surface, CircleShape)
-            )
-            FloatingBubble(
-                modifier = Modifier
-                    .size(50.dp)
-                    .constrainAs(bubble) { },
-                expanded = true, onClick = { })
-            AnimatedVisibility(
-                visible = true,
-                Modifier.constrainAs(bubbleLayout) {
-                    top.linkTo(bubble.bottom)
-                    end.linkTo(bubble.end)
-                }) {
-                Column {
-                    IconButton(onClick = {
-                    }) {
-                        Icon(
-                            imageVector = Icons.Rounded.Add,
-                            contentDescription = "Add Item"
-                        )
-                    }
-
-                    IconButton(onClick = {
-                    }) {
-                        Icon(
-                            imageVector = Icons.Rounded.Settings,
-                            contentDescription = "Settings",
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-            }
-            AnimatedVisibility(
-                visible = (false),
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier
-                    .padding(start = 4.dp)
-                    .constrainAs(otherLayout) {
-                        start.linkTo(bubble.end)
-                        top.linkTo(parent.top)
-                        bottom.linkTo(parent.bottom)
-                    }) {
-                MenuItems(onItemClick = { })
-            }
-            AnimatedVisibility(
-                visible = (true),
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier
-                    .padding(start = 4.dp)
-                    .constrainAs(otherLayout) {
-                        start.linkTo(bubble.end)
-                        top.linkTo(parent.top)
-                        bottom.linkTo(parent.bottom)
-                        end.linkTo(parent.end)
-                        width = Dimension.preferredWrapContent
-                    }) {
-                SettingsLayout(
-                    onAdvancedSettingsClick = {},
-                    onPointerSensChange = {},
-                    onOpacityChange = { },
-                    onCloseOverlayClick = {}
-                )
-            }
-        }
-    }
 }
