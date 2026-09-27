@@ -40,8 +40,10 @@
 
 关于验证的现实情况：
 
-- `app/src/test` 与 `app/src/androidTest` 目录存在但**是空的，项目没有任何自动化测试**。
-- 因此「验证」= 编译通过 + 真机手动验证。**编译是唯一可用的自动化回归网**，重命名或删除符号后要立刻跑一次，让编译器点名遗漏。
+- `app/src/test` 有 16 个 JVM 单测（54 个用例），覆盖 `domain/` 下的纯状态机与 `model/` 的序列化；`app/src/androidTest` 只有 `OverlayDragTest`。
+- 跑测试：`.\gradlew.bat :app:testDebugUnitTest --console=plain`。
+- **`compileDebugKotlin` 不编译测试源集。** 只跑编译的话，测试代码引用了已删除的 API 也发现不了——本项目就发生过一次：两个测试文件引用了 `60d95b6` 删掉的 `ProfileSwitchHotkey` / `activationKeyCode` / `profileActivationRoutes`，导致整个测试源集编译失败，54 个用例**全部静默不执行**，而 `assembleDebug` 依旧通过。改完代码请跑 `testDebugUnitTest`，不要只跑 `compileDebugKotlin`。
+- `ui/overlay`、`service`、`domain/EventHandler`、`domain/EventManagerImpl` 与整条注入链路仍然**零自动化覆盖**，只能真机验证。
 - 注意 **Kotlin 未使用的 import 只是 warning，不会报错**，所以删函数后残留 import 不会被编译器抓出来。
 
 ---
@@ -137,12 +139,12 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
 - `overlayOpacity` 旧代码只改 StateFlow 不落盘，重启即丢；已补 `FloatingWindowStateManager.saveOverlayOpacity()` 写穿。
 - `overlayOrigin` 是 `FloatingWindowStateManager` 的运行期私有字段（由实测位置推出，见 `updateMeasuredPosition`），**不随 Profile 存储**；布局一致性依赖 Profile 的 `layoutScreenWidth/Height` 基准 + 实测重算。改动测量/缩放逻辑时两者要一起看。
 
-### 6.4 工具链 / 工作方式（对 AI 尤其重要）
+### 6.4 批量改动的注意事项
 
-- **无法用普通文件编辑工具直接写 `D:` 盘**：本会话的工作目录被限制在 `C:\Users\...\work-mode-projects\6ab361389e05498d436bad83`。要改 D 盘文件时必须写 `.ps1` 脚本，用 `[IO.File]::ReadAllText / WriteAllText` 操作。
-- **含中文的 `.ps1` 必须先转成 UTF-8 BOM 再执行**，否则 PowerShell 5.1 会按 ANSI 解析导致中文乱码：
-  `$t=[IO.File]::ReadAllText($p,[Text.Encoding]::UTF8); [IO.File]::WriteAllText($p,$t,(New-Object Text.UTF8Encoding($true)))`
-- 推荐补丁流程：读取 → 把 `\r\n` 归一化成 `\n` → `.Replace(旧, 新)` → 归一化回 `\r\n` → 以 UTF-8 **无 BOM** 写回。并在脚本里对每个锚点做 `Contains` 检查，最后打印 `MISS` 列表，避免静默失败。
+仓库里 LF 与 CRLF 两种行尾同时存在，写脚本批量替换时必须按文件探测再还原，否则整个文件都会显示成改动。
+
+- 读取 → 探测原文件是否含 `\r\n` → 归一化成 `\n` → `.Replace(旧, 新)` → 按探测结果还原 → 以 UTF-8 **无 BOM** 写回。
+- 每个锚点替换前先断言匹配次数**恰好为 1**，否则抛错。静默匹配 0 次会让补丁看起来成功、实际没改。
 - **here-string 的坑**：`@'...'@` **不包含末尾换行**，拼接 `$a + $b` 很容易把两行粘成一行（本项目就因此出过 `}                Card(` 的语法错误）。拼完记得显式补 `` `n ``。
 - 临时脚本用完要删掉，不要留在仓库里。
 
@@ -176,7 +178,7 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
 ```
 
 状态：`compileDebugKotlin` 与 `assembleDebug` **均已通过**，产物 `app/build/outputs/apk/debug/app-debug.apk`。
-**注意：这批改动尚未 git commit，也尚未在真机上验证过。**（`git log` 最新提交仍是 `60d95b6 新增键位交换对 + 修复横屏 + 移除切换热键`）
+这批改动已提交为 `481b5a3 增加随机抖动`。**真机验证仍未完成**（见第 8 节）。
 
 ---
 

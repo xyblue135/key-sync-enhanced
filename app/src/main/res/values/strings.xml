@@ -167,6 +167,7 @@
     <string name="shizuku_not_running">请先启动 Shizuku 服务</string>
     <string name="permission_needed">请先完成授权</string>
     <string name="permission_action_settings">去设置</string>
+    <string name="permission_action_open_shizuku">打开 Shizuku</string>
     <string name="settings_profile_created">已创建并切换到「%1$s」</string>
 
     <!-- 悬浮窗：气泡菜单 -->

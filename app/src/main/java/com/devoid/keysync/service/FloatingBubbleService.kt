@@ -78,6 +78,7 @@ import dagger.Lazy
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -112,7 +113,10 @@ class FloatingBubbleService : Service() {
 
     private val lifecycleOwner = ServiceLifecycleOwner()
 
-    private val scope = CoroutineScope(Dispatchers.Main)
+    // SupervisorJob: the notification-label observer and the edit-mode observer
+    // are siblings. Without it one failing child cancels the other and the
+    // notification actions silently stop reflecting the current state.
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var containerView: ComposeView? = null
     private var overlayInitialized = false
     // 通知刷新监听只允许挂一次：每个通知 action 都会重入 onStartCommand。
@@ -239,6 +243,9 @@ class FloatingBubbleService : Service() {
             ) { _, _ -> Unit }.collect {
                 // startForeground 跑过之后才投递，避免「先 notify 后 startForeground」。
                 if (!overlayInitialized) return@collect
+                if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                    checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                    android.content.pm.PackageManager.PERMISSION_GRANTED) return@collect
                 runCatching {
                     NotificationManagerCompat.from(this@FloatingBubbleService)
                         .notify(NOTIFICATION_ID, buildNotification())
@@ -336,6 +343,17 @@ class FloatingBubbleService : Service() {
         touchTranslator: TouchToMouseTranslator
     ): ComposeView {
         val composeView = ComposeView(this)
+        // Measure the actual overlay viewport, including changes from rotation/insets.
+        composeView.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
+            view.post {
+                if (view.isAttachedToWindow) {
+                    val origin = IntArray(2)
+                    view.getLocationOnScreen(origin)
+                    stateManager.get().onOverlayFrame(view.width, view.height,
+                        androidx.compose.ui.geometry.Offset(origin[0].toFloat(), origin[1].toFloat()))
+                }
+            }
+        }
         composeView.layoutParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT

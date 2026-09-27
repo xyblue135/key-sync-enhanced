@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -58,6 +59,9 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         val INTENT_ACTION_SETTINGS = "navigateToSettings"
+
+        /** Package of the Shizuku app: the only place its permission can be granted. */
+        const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
     }
 
     private val TAG = this::class.simpleName
@@ -78,6 +82,15 @@ class MainActivity : ComponentActivity() {
             val appConfig by viewModel.appConfig.collectAsStateWithLifecycle()
             val snackbarHostState = remember { SnackbarHostState() }
             val navController = rememberNavController()
+            // Stored profiles existed but could not be decoded. Say so instead of
+            // silently presenting an empty layout.
+            val profilesLoadError by viewModel.profilesLoadError.collectAsStateWithLifecycle()
+            LaunchedEffect(profilesLoadError) {
+                profilesLoadError?.let {
+                    snackbarHostState.showSnackbar(it, duration = SnackbarDuration.Long)
+                    viewModel.consumeProfilesLoadError()
+                }
+            }
             // The overlay is a foreground service; on Android 13+ its
             // notification (the only remaining control surface) stays hidden
             // until POST_NOTIFICATIONS is granted, so ask before starting it.
@@ -279,6 +292,29 @@ class MainActivity : ComponentActivity() {
         return Settings.canDrawOverlays(this)
     }
 
+    /**
+     * Opens the Shizuku app so the user can actually grant the permission.
+     *
+     * Shizuku grants its permission from inside its own app (or over ADB), never
+     * from another app's "App info" screen. Sending the user to KeySync's own
+     * application details — as this used to — is a dead end where the problem
+     * cannot be fixed.
+     */
+    private fun openShizukuApp() {
+        val launch = packageManager.getLaunchIntentForPackage(SHIZUKU_PACKAGE)
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (launch != null) {
+            runCatching { startActivity(launch) }
+                .onFailure { Log.w("MainActivity", "could not launch the Shizuku app", it) }
+            return
+        }
+        val details = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            .setData(Uri.fromParts("package", SHIZUKU_PACKAGE, null))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { startActivity(details) }
+            .onFailure { Log.w("MainActivity", "could not open Shizuku app details", it) }
+    }
+
     private fun checkUiState(
         uiState: UiState,
         scope: CoroutineScope,
@@ -287,7 +323,12 @@ class MainActivity : ComponentActivity() {
         when (uiState) {
             UiState.ShizukuNotRunning -> {
                 scope.launch {
-                    snackbarHostState.showSnackbar(getString(R.string.shizuku_not_running))
+                    val result = snackbarHostState.showSnackbar(
+                        message = getString(R.string.shizuku_not_running),
+                        actionLabel = getString(R.string.permission_action_open_shizuku),
+                        duration = SnackbarDuration.Long
+                    )
+                    if (result == SnackbarResult.ActionPerformed) openShizukuApp()
                 }
                 return false
             }
@@ -324,18 +365,7 @@ class MainActivity : ComponentActivity() {
                                 duration = SnackbarDuration.Short
                             )
                         when (result) {
-                            SnackbarResult.ActionPerformed -> {
-                                val settingIntent =
-                                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                                val uri = Uri.fromParts(
-                                    "package",
-                                    packageName,
-                                    null
-                                )
-                                settingIntent.setData(uri)
-                                startActivity(settingIntent)
-                            }
-
+                            SnackbarResult.ActionPerformed -> openShizukuApp()
                             else -> {}
                         }
                     }

@@ -21,6 +21,26 @@ val keystoreProp: (String) -> String? = { name ->
     keystoreProperties.getProperty(name) ?: project.findProperty(name)?.toString()
 }
 
+// A release build with no signing config used to silently produce an unsigned
+// APK, which cannot be installed and is easy to ship by accident. Fail loudly
+// for the tasks whose whole purpose is a shippable artifact, while leaving
+// `build` / `assemble` usable without a keystore.
+val releaseOnlyTasks = setOf(
+    "assembleRelease", "bundleRelease", "installRelease",
+    "publishReleaseApk", "publishReleaseBundle",
+)
+val requestedReleaseTask = gradle.startParameter.taskNames
+    .map { it.substringAfterLast(':') }
+    .firstOrNull { it in releaseOnlyTasks }
+if (requestedReleaseTask != null && keystoreProp("storeFile") == null) {
+    throw GradleException(
+        "'$requestedReleaseTask' needs release signing, but no keystore is configured. " +
+            "Provide keystore.properties in the project root (storeFile / storePassword / " +
+            "keyAlias / keyPassword) or pass -PstoreFile=... -PstorePassword=... " +
+            "-PkeyAlias=... -PkeyPassword=...",
+    )
+}
+
 android {
     sourceSets["main"].assets.srcDir("$rootDir/data")
 

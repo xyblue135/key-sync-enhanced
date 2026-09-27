@@ -3,6 +3,7 @@ package com.devoid.keysync.model
 import androidx.compose.ui.geometry.Offset
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -10,11 +11,8 @@ import org.junit.Test
 /**
  * Covers the clipboard export/import path of a [Profile].
  *
- * The manager layer needs a DataStore/Context, so these tests exercise the
- * exact [Json] configuration it uses and then re-apply the two pure
- * transformations [com.devoid.keysync.service.FloatingWindowStateManager]
- * performs on an imported profile (fresh id / unique name, drop switch
- * hotkey targets that do not exist on this device).
+ * The manager layer needs a DataStore/Context, so these tests exercise the exact
+ * [Json] configuration it uses plus the pure transformations in ProfileTools.
  */
 class ProfileSerializationTest {
 
@@ -29,7 +27,7 @@ class ProfileSerializationTest {
 
     private fun sampleProfile() = Profile(
         id = "profile-1",
-        name = "和平精英",
+        name = "示例预设",
         items = listOf(
             DraggableItem.WASDGroup(
                 id = 1,
@@ -63,15 +61,12 @@ class ProfileSerializationTest {
                 size = 50,
             ),
         ),
-        appConfig = AppConfig.Default.copy(
-            buttonScale = 1.25f,
-            profileSwitchEnabled = true,
+        appConfig = AppConfig.Default.copy(buttonScale = 1.25f),
+        swapPairs = listOf(
+            SwapPair(aItemId = 2, bItemId = 3, swapOnKeyCode = 45, swapOffKeyCode = 52),
         ),
-        switchHotkeys = listOf(
-            ProfileSwitchHotkey(keyCode = 45, targetProfileId = "profile-2"),
-            // null target means "cycle to the next profile".
-            ProfileSwitchHotkey(keyCode = 52, targetProfileId = null),
-        ),
+        layoutScreenWidth = 2400,
+        layoutScreenHeight = 1080,
     )
 
     @Test
@@ -95,27 +90,34 @@ class ProfileSerializationTest {
             decoded.items.map { it::class },
         )
         val wasd = decoded.items.first() as DraggableItem.WASDGroup
-        assertEquals(1.5f, wasd.scale)
+        assertEquals(1.5f, wasd.scale, 0f)
         assertEquals(Offset(0.3f, 0.6f), wasd.d)
     }
 
-    /**
-     * A hotkey with a null target means "cycle". If the encoder dropped the
-     * null it would still decode to null, but the exported text has to keep it
-     * so a human editing the JSON can see the switch is not pinned.
-     */
+    /** Transient runtime coordinates must never reach the clipboard text. */
     @Test
-    fun cycleHotkeyTargetIsWrittenOut() {
-        val text = json.encodeToString(sampleProfile())
-        assertTrue(
-            "expected a 'targetProfileId' entry in:\n$text",
-            text.contains("\"targetProfileId\""),
-        )
+    fun transientMeasuredPositionsAreNotSerialized() {
+        val profile = sampleProfile()
+        profile.items.forEach { it.touchCenter = Offset(1234f, 5678f) }
+        val text = json.encodeToString(profile)
+        assertFalse("touchCenter leaked into the export", text.contains("touchCenter"))
+        assertNull(json.decodeFromString<Profile>(text).items.first().touchCenter)
     }
 
-    /** Profiles exported before switch hotkeys existed must still load. */
+    /**
+     * The layout baseline is what lets a layout survive a resolution or
+     * orientation change; losing it silently rescales every button.
+     */
     @Test
-    fun legacyJsonWithoutSwitchHotkeysDecodes() {
+    fun layoutBaselineSurvivesRoundTrip() {
+        val decoded = json.decodeFromString<Profile>(json.encodeToString(sampleProfile()))
+        assertEquals(2400, decoded.layoutScreenWidth)
+        assertEquals(1080, decoded.layoutScreenHeight)
+    }
+
+    /** Profiles written before swap pairs and baselines existed must still load. */
+    @Test
+    fun legacyJsonWithoutSwapPairsDecodes() {
         val legacy = """
             {
               "id": "old",
@@ -134,8 +136,9 @@ class ProfileSerializationTest {
         """.trimIndent()
         val decoded = json.decodeFromString<Profile>(legacy)
         assertEquals(1, decoded.items.size)
-        assertTrue(decoded.switchHotkeys.isEmpty())
-        assertEquals(AppConfig.Default.buttonScale, decoded.appConfig.buttonScale)
+        assertTrue(decoded.swapPairs.isEmpty())
+        assertEquals(0, decoded.layoutScreenWidth)
+        assertEquals(AppConfig.Default.buttonScale, decoded.appConfig.buttonScale, 0f)
     }
 
     /** Unknown future fields (a newer build's export) must not break the load. */
@@ -144,27 +147,5 @@ class ProfileSerializationTest {
         val future = json.encodeToString(sampleProfile())
             .replaceFirst("\"name\"", "\"somethingNew\": 123,\n  \"name\"")
         assertEquals(sampleProfile(), json.decodeFromString<Profile>(future))
-    }
-
-    @Test
-    fun importedProfileGetsFreshIdAndKeepsUsableHotkeyTargets() {
-        val imported = json.decodeFromString<Profile>(json.encodeToString(sampleProfile()))
-        // Only profile-2 exists on this device, so only that target survives.
-        val known = setOf("profile-2")
-
-        val migrated = imported.copy(
-            id = "new-uuid",
-            name = "和平精英 副本",
-            switchHotkeys = imported.switchHotkeys.map {
-                it.copy(targetProfileId = it.targetProfileId?.takeIf { t -> t in known })
-            },
-        )
-
-        assertEquals("new-uuid", migrated.id)
-        assertEquals("和平精英 副本", migrated.name)
-        assertEquals("profile-2", migrated.switchHotkeys[0].targetProfileId)
-        assertNull(migrated.switchHotkeys[1].targetProfileId)
-        // The original object is untouched by the migration.
-        assertEquals(sampleProfile(), imported)
     }
 }

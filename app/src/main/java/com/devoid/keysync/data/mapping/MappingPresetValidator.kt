@@ -6,6 +6,17 @@ import java.util.Locale
 object MappingPresetValidator {
     private val supportedItemTypes = setOf("KEY", "VARIABLE_KEY", "WASD", "WASD_GROUP", "FIXED", "FIXED_KEY", "CANCELABLE", "CANCELABLE_KEY")
     private val supportedSemanticTypes = setOf("KEY", "FIRE", "SHOOTING_MODE", "SCOPE")
+    private val WASD_TYPES = setOf("WASD", "WASD_GROUP")
+
+    /**
+     * Physical keys a WASD group takes over: W/A/S/D drive the stick and Shift is
+     * its sprint modifier. EventHandler routes these key codes to the joystick
+     * before it ever consults a per-key binding.
+     */
+    private val WASD_CLAIMED_KEYS = setOf(
+        "W", "A", "S", "D",
+        "SHIFT", "LSHIFT", "RSHIFT",
+    )
 
     fun validate(preset: MappingPreset): List<String> {
         val errors = mutableListOf<String>()
@@ -37,6 +48,21 @@ object MappingPresetValidator {
             }
             if (type.startsWith("CANCELABLE") && item.keyCode.isNullOrBlank()) {
                 errors += "item[$index]: cancelable item requires keyCode"
+            }
+        }
+
+        // Any other item bound to a key the WASD group already owns is dead on
+        // arrival: it silently does nothing in game. Report it so the mistake is
+        // caught when a preset is authored rather than by a player mid-match.
+        if (preset.items.any { it.type.uppercase(Locale.ROOT) in WASD_TYPES }) {
+            preset.items.forEachIndexed { index, item ->
+                if (item.type.uppercase(Locale.ROOT) in WASD_TYPES) return@forEachIndexed
+                val raw = item.keyCode
+                    ?.uppercase(Locale.ROOT)
+                    ?.removePrefix("KEYCODE_")
+                    ?: return@forEachIndexed
+                if (raw !in WASD_CLAIMED_KEYS) return@forEachIndexed
+                errors += "item[$index]: keyCode=$raw is claimed by the WASD group and will never fire"
             }
         }
         return errors

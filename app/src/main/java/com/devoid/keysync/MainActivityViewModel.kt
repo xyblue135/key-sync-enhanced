@@ -55,8 +55,21 @@ class MainActivityViewModel @Inject constructor(
     private val _addedPackages = MutableStateFlow<List<String>>(listOf())
     val addedPackages = _addedPackages.asStateFlow()
 
-    private val _appConfig = MutableStateFlow(AppConfig.Default)
-    val appConfig = _appConfig.asStateFlow()
+    /**
+     * Runtime configuration always mirrors the ACTIVE PROFILE.
+     *
+     * This used to be fed from the legacy global `KEYS_CONFIG` key, which a
+     * profile switch does not update. After switching profiles the settings
+     * screen therefore showed the previous profile's theme / touch modes /
+     * sensitivity, and pressing Save wrote those stale values into the newly
+     * active profile, silently reverting it.
+     */
+    val appConfig: StateFlow<AppConfig> = stateManager.keysConfig
+
+    /** Set when stored profiles existed but could not be decoded. */
+    val profilesLoadError: StateFlow<String?> = stateManager.profilesLoadError
+
+    fun consumeProfilesLoadError() = stateManager.consumeProfilesLoadError()
 
 
     private val _connectedDevices = MutableStateFlow<Map<Int, String>>(hashMapOf())
@@ -105,7 +118,6 @@ class MainActivityViewModel @Inject constructor(
         }
         viewModelScope.launch {
             _addedPackages.value = dataStoreManager.getList(DataStoreManager.ADDED_PACKAGES).first()
-            _appConfig.value = dataStoreManager.getKeyConfig(DataStoreManager.KEYS_CONFIG).first()
         }
     }
 
@@ -115,11 +127,10 @@ class MainActivityViewModel @Inject constructor(
         // from the floating window's gear-icon dialog. Settings only manages
         // the remaining AppConfig fields, so just persist into the active
         // profile via FloatingWindowStateManager.
-        _appConfig.value = newAppConfig
+        // The legacy global KEYS_CONFIG key is deliberately not written any more.
+        // It is read only by the one-time migration in FloatingWindowStateManager,
+        // and keeping it in sync is what let a profile switch revert itself.
         stateManager.saveAppConfig(newAppConfig)
-        viewModelScope.launch {
-            dataStoreManager.save(DataStoreManager.KEYS_CONFIG, newAppConfig)
-        }
     }
 
     /* ----------------- profile helpers ----------------- */

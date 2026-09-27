@@ -12,6 +12,7 @@ import android.view.WindowManager
 import androidx.compose.ui.geometry.Offset
 import androidx.core.view.WindowInsetsCompat
 import com.devoid.keysync.data.local.DataStoreManager
+import com.devoid.keysync.data.local.ProfilesLoad
 import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.DraggableItemType
@@ -23,6 +24,7 @@ import com.devoid.keysync.domain.KEYCODE_MMC
 import com.devoid.keysync.domain.KEYCODE_RMC
 import com.devoid.keysync.data.external.ShizukuSystemServerAPi
 import com.devoid.keysync.model.Profile
+import com.devoid.keysync.model.projectLayout
 import com.devoid.keysync.model.SwapPair
 import com.devoid.keysync.model.ProfileBundle
 import com.devoid.keysync.model.independentCopy
@@ -31,6 +33,7 @@ import com.devoid.keysync.model.TouchMode
 import com.devoid.keysync.model.withMeasuredPositionFrom
 import com.devoid.keysync.model.defaultKeyCode
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -50,7 +53,16 @@ class FloatingWindowStateManager @Inject constructor(
 
     private val TAG = "FloatingWindowStateManager"
 
-    val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    /**
+     * SupervisorJob keeps one failed child from cancelling its siblings; the
+     * handler keeps the failure off the default uncaught-exception path, which
+     * on `Dispatchers.Main` means killing the process.
+     */
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e(TAG, "uncaught failure in FloatingWindowStateManager scope", throwable)
+    }
+
+    val scope = CoroutineScope(Dispatchers.Main + SupervisorJob() + exceptionHandler)
 
     private val shizukuSystemServerAPi = ShizukuSystemServerAPi()
     private val eventHandler: EventHandler by lazy { shizukuSystemServerAPi.getEventHandler() }
@@ -91,6 +103,25 @@ class FloatingWindowStateManager @Inject constructor(
     // 见 onMouseEvent）。少数 ROM 不填 AXIS_RELATIVE_X/Y，需要退回「相邻事件
     // raw 坐标差」兜底，这两个字段就用来记上一次的 raw 坐标。
     private var overlayOrigin: Offset? = null
+    private var overlayViewport: Offset? = null
+    // Dimensions of the coordinates currently in _containerItems, not today's orientation.
+    private var layoutViewport: Offset? = null
+
+    fun onOverlayFrame(width: Int, height: Int, origin: Offset) {
+        if (width <= 0 || height <= 0) return
+        val viewport = Offset(width.toFloat(), height.toFloat())
+        if (overlayViewport == viewport && overlayOrigin == origin) return
+        // Save against the OLD frame before replacing it, so rotation cannot relabel old coordinates.
+        if (layoutViewport != null) persistActiveProfile()
+        overlayViewport = viewport
+        overlayOrigin = origin
+        val held = eventHandler.heldKeyCodes()
+        val mouseHeld = eventHandler.heldMouseButtons()
+        applyActiveProfile()
+        eventHandler.replayHeldKeys(held)
+        eventHandler.restoreShootingModeContact()
+        eventHandler.replayHeldMouseButtons(mouseHeld)
+    }
     private val mouseButtons = MouseButtonTracker()
     private val _lastInputLabel = MutableStateFlow("等待输入")
     val lastInputLabel = _lastInputLabel.asStateFlow()
@@ -129,6 +160,18 @@ class FloatingWindowStateManager @Inject constructor(
 
     private val _profiles = MutableStateFlow<List<Profile>>(emptyList())
     val profiles = _profiles.asStateFlow()
+
+    /**
+     * Set when stored profiles existed but could not be decoded. The original
+     * bytes are quarantined and a default layout is loaded, so the user has to be
+     * told rather than silently handed an empty layout.
+     */
+    private val _profilesLoadError = MutableStateFlow<String?>(null)
+    val profilesLoadError = _profilesLoadError.asStateFlow()
+
+    fun consumeProfilesLoadError() {
+        _profilesLoadError.value = null
+    }
 
     private val _activeProfileId = MutableStateFlow<String?>(null)
     val activeProfileId = _activeProfileId.asStateFlow()
@@ -190,13 +233,36 @@ class FloatingWindowStateManager @Inject constructor(
      *  - if no legacy data exists either, create a single empty default.
      */
     private suspend fun bootstrapProfiles() {
-        var stored = dataStoreManager.getProfiles().first()
         val storedActiveId = dataStoreManager.getActiveProfileId().first()
 
+        var stored: List<Profile> = when (val load = dataStoreManager.getProfilesLoad().first()) {
+            is ProfilesLoad.Loaded -> load.profiles
+
+            is ProfilesLoad.Absent -> {
+                // Genuine first run (or an install that predates profile
+                // storage): fold any legacy per-package layout in and adopt it.
+                val fresh = listOf(migrateLegacy())
+                dataStoreManager.saveProfiles(fresh)
+                fresh
+            }
+
+            is ProfilesLoad.Unreadable -> {
+                // A blob exists but cannot be decoded. Preserve the original
+                // bytes under a separate key BEFORE anything writes, then seed a
+                // usable default. Treating this as a first run is what used to
+                // destroy every stored layout on a single bad byte.
+                load.raw?.let { raw ->
+                    runCatching { dataStoreManager.quarantineUnreadableProfiles(raw) }
+                        .onFailure { Log.e(TAG, "failed to quarantine unreadable profiles", it) }
+                }
+                Log.e(TAG, "stored profiles were unreadable; quarantined and reseeded", load.cause)
+                _profilesLoadError.value = "预设数据无法读取，原始数据已保留"
+                listOf(Profile(id = UUID.randomUUID().toString(), name = "默认"))
+            }
+        }
+
         if (stored.isEmpty()) {
-            val migrated = migrateLegacy()
-            stored = listOf(migrated)
-            dataStoreManager.saveProfiles(stored)
+            stored = listOf(Profile(id = UUID.randomUUID().toString(), name = "默认"))
         }
 
         // Virtual mouse buttons used to be persisted as 64/128/256. Those
@@ -288,42 +354,6 @@ class FloatingWindowStateManager @Inject constructor(
         const val legacyLayoutScreenHeight = 1200
     }
 
-    /** 把 layout 的像素坐标/尺寸从基准分辨率还原到当前分辨率（等比）。 */
-    private fun conformItemsToScreen(
-        items: List<DraggableItem>,
-        baseW: Int,
-        baseH: Int,
-        currentW: Int,
-        currentH: Int,
-    ): List<DraggableItem> {
-        val sx = currentW.toFloat() / baseW
-        val sy = currentH.toFloat() / baseH
-        val sSize = if (sx < sy) sx else sy
-        fun point(o: Offset): Offset = Offset(o.x * sSize, o.y * sSize)
-        return items.map { item ->
-            when (item) {
-                is DraggableItem.VariableKey ->
-                    item.copy(position = point(item.position), size = (item.size * sSize).toInt(), anchorPosition = item.anchorPosition?.let { point(it) })
-                is DraggableItem.FixedKey ->
-                    item.copy(position = point(item.position), size = (item.size * sSize).toInt(), anchorPosition = item.anchorPosition?.let { point(it) })
-                is DraggableItem.CancelableKey ->
-                    item.copy(
-                        position = point(item.position),
-                        cancelPosition = point(item.cancelPosition),
-                        size = (item.size * sSize).toInt(),
-                        anchorPosition = item.anchorPosition?.let { point(it) },
-                    )
-                is DraggableItem.WASDGroup ->
-                    item.copy(
-                        position = point(item.position),
-                        sprintForwardDistance = item.sprintForwardDistance?.let { it * sSize },
-                        sprintSideDistance = item.sprintSideDistance?.let { it * sSize },
-                        anchorPosition = item.anchorPosition?.let { point(it) },
-                    )
-            }
-        }
-    }
-
     /** 旧数据未记录分辨率时，统一假定为 legacy 基准，便于 applyActiveProfile 迁移。 */
     private fun migrateLegacyLayoutScreen(stored: List<Profile>): List<Profile>? {
         var changed = false
@@ -332,8 +362,8 @@ class FloatingWindowStateManager @Inject constructor(
             else {
                 changed = true
                 p.copy(
-                    layoutScreenWidth = displayMetrics.widthPixels,
-                    layoutScreenHeight = displayMetrics.heightPixels,
+                    layoutScreenWidth = legacyLayoutScreenWidth,
+                    layoutScreenHeight = legacyLayoutScreenHeight,
                 )
             }
         }
@@ -399,27 +429,14 @@ class FloatingWindowStateManager @Inject constructor(
     private fun applyActiveProfile() {
         val id = _activeProfileId.value ?: return
         val active = _profiles.value.firstOrNull { it.id == id } ?: return
-        val currentW = displayMetrics.widthPixels
-        val currentH = displayMetrics.heightPixels
-        val baseW = if (active.layoutScreenWidth > 0) active.layoutScreenWidth else legacyLayoutScreenWidth
-        val baseH = if (active.layoutScreenHeight > 0) active.layoutScreenHeight else legacyLayoutScreenHeight
-        val needsScale = baseW > 0 && baseH > 0 && (currentW != baseW || currentH != baseH)
-        // Mismatched orientation means the recorded baseline is unreliable (e.g.
-        // polluted with a portrait baseline on a landscape game) or the device
-        // changed. Trust the stored absolute coords and re-baseline this layout
-        // to the current screen so it renders exactly where the author placed it.
-        val orientationMismatch = needsScale && (baseW > baseH) != (currentW > currentH)
-        val items = when {
-            !needsScale -> active.items
-            orientationMismatch -> active.items
-            else -> conformItemsToScreen(active.items, baseW, baseH, currentW, currentH)
-        }
-        if (orientationMismatch) {
-            _profiles.value = _profiles.value.map {
-                if (it.id == id) it.copy(layoutScreenWidth = currentW, layoutScreenHeight = currentH) else it
-            }
-            scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
-        }
+        val viewport = overlayViewport ?: currentScreenSize()
+        val currentW = viewport.x.toInt()
+        val currentH = viewport.y.toInt()
+        val baseW = active.layoutScreenWidth.takeIf { it > 0 } ?: legacyLayoutScreenWidth
+        val baseH = active.layoutScreenHeight.takeIf { it > 0 } ?: legacyLayoutScreenHeight
+        val needsScale = currentW != baseW || currentH != baseH
+        val items = projectLayout(active.items, Offset(baseW.toFloat(), baseH.toFloat()), viewport, active.appConfig.buttonScale)
+        layoutViewport = viewport
         _containerItems.value = items
         _appConfig.value = active.appConfig
         eventHandler.appConfig = active.appConfig
@@ -452,10 +469,10 @@ class FloatingWindowStateManager @Inject constructor(
         val updated = _profiles.value.map { profile ->
             if (profile.id == id) {
                 profile.copy(
-                    items = _containerItems.value,
+                    items = _containerItems.value.map { it.copy() },
                     appConfig = _appConfig.value,
-                    layoutScreenWidth = displayMetrics.widthPixels,
-                    layoutScreenHeight = displayMetrics.heightPixels,
+                    layoutScreenWidth = (layoutViewport ?: overlayViewport ?: currentScreenSize()).x.toInt(),
+                    layoutScreenHeight = (layoutViewport ?: overlayViewport ?: currentScreenSize()).y.toInt(),
                 )
             } else profile
         }
