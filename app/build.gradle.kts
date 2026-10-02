@@ -63,8 +63,8 @@ android {
         applicationId = "com.devoid.keysync"
         minSdk = 29
         targetSdk = 36
-        versionCode = 19
-        versionName = "1.43-android16"
+        versionCode = 20
+        versionName = "1.44-android16"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -72,7 +72,7 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".fpsdebug"
-            versionNameSuffix = "-fps-sprintfix1"
+            versionNameSuffix = "-debug"
         }
         release {
             isMinifyEnabled = true

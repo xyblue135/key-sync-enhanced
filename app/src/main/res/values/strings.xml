@@ -215,4 +215,6 @@
     <string name="overlay_hide_keys">隐藏</string>
     <string name="overlay_show_keys">显示</string>
     <string name="overlay_done">完成</string>
+    <string name="notification_controls_required">请开启 KeySync 通知及按键悬浮窗通知频道，才能使用编辑和关闭入口。开启后请重新启动游戏。</string>
+    <string name="profiles_temporary_changes">预设未成功读取，本次修改不会保存，请重启后重试</string>
 </resources>

@@ -69,6 +69,8 @@ class MainActivityViewModel @Inject constructor(
     /** Set when stored profiles existed but could not be decoded. */
     val profilesLoadError: StateFlow<String?> = stateManager.profilesLoadError
 
+    val canSaveProfiles: Boolean get() = dataStoreManager.canWriteProfiles
+
     fun consumeProfilesLoadError() = stateManager.consumeProfilesLoadError()
 
 

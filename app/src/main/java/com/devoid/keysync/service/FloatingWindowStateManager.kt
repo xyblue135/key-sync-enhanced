@@ -33,6 +33,7 @@ import com.devoid.keysync.model.TouchMode
 import com.devoid.keysync.model.withMeasuredPositionFrom
 import com.devoid.keysync.model.defaultKeyCode
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -162,9 +163,8 @@ class FloatingWindowStateManager @Inject constructor(
     val profiles = _profiles.asStateFlow()
 
     /**
-     * Set when stored profiles existed but could not be decoded. The original
-     * bytes are quarantined and a default layout is loaded, so the user has to be
-     * told rather than silently handed an empty layout.
+     * Set when profiles cannot be read. The original data remains untouched;
+     * the temporary in-memory layout must never be presented as a saved layout.
      */
     private val _profilesLoadError = MutableStateFlow<String?>(null)
     val profilesLoadError = _profilesLoadError.asStateFlow()
@@ -233,9 +233,34 @@ class FloatingWindowStateManager @Inject constructor(
      *  - if no legacy data exists either, create a single empty default.
      */
     private suspend fun bootstrapProfiles() {
+        val load = dataStoreManager.getProfilesLoad().first()
+        if (load is ProfilesLoad.Unreadable) {
+            // Even a successful backup is not consent to replace the user's layouts.
+            // Keep a temporary profile in memory and skip ALL migration/write paths.
+            val backedUp = if (load.raw != null) {
+                try {
+                    dataStoreManager.quarantineUnreadableProfiles(load.raw)
+                    true
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    Log.e(TAG, "could not back up unreadable profiles; original remains untouched", e)
+                    false
+                }
+            } else false
+            _profilesLoadError.value = if (backedUp)
+                "预设解析失败，原始数据已保留并备份。本次预设修改不会保存，请重启后重试。"
+            else "预设读取失败，未覆盖原始数据。本次预设修改不会保存，请重启后重试。"
+            val viewport = currentScreenSize()
+            val temporary = Profile(id = UUID.randomUUID().toString(), name = "临时预设（不会保存）",
+                layoutScreenWidth = viewport.x.toInt(), layoutScreenHeight = viewport.y.toInt())
+            _profiles.value = listOf(temporary)
+            _activeProfileId.value = temporary.id
+            applyActiveProfile()
+            return
+        }
         val storedActiveId = dataStoreManager.getActiveProfileId().first()
 
-        var stored: List<Profile> = when (val load = dataStoreManager.getProfilesLoad().first()) {
+        var stored: List<Profile> = when (load) {
             is ProfilesLoad.Loaded -> load.profiles
 
             is ProfilesLoad.Absent -> {
@@ -246,19 +271,7 @@ class FloatingWindowStateManager @Inject constructor(
                 fresh
             }
 
-            is ProfilesLoad.Unreadable -> {
-                // A blob exists but cannot be decoded. Preserve the original
-                // bytes under a separate key BEFORE anything writes, then seed a
-                // usable default. Treating this as a first run is what used to
-                // destroy every stored layout on a single bad byte.
-                load.raw?.let { raw ->
-                    runCatching { dataStoreManager.quarantineUnreadableProfiles(raw) }
-                        .onFailure { Log.e(TAG, "failed to quarantine unreadable profiles", it) }
-                }
-                Log.e(TAG, "stored profiles were unreadable; quarantined and reseeded", load.cause)
-                _profilesLoadError.value = "预设数据无法读取，原始数据已保留"
-                listOf(Profile(id = UUID.randomUUID().toString(), name = "默认"))
-            }
+            is ProfilesLoad.Unreadable -> error("Unreadable profiles handled before migration")
         }
 
         if (stored.isEmpty()) {
@@ -478,7 +491,9 @@ class FloatingWindowStateManager @Inject constructor(
         }
         _profiles.value = updated
         android.util.Log.i("KeySyncLayout", "persist id=${id} origin=${overlayOrigin?.let { it.x to it.y }} screen=${displayMetrics.widthPixels}x${displayMetrics.heightPixels} items=${_containerItems.value.size}")
-        scope.launch { dataStoreManager.saveProfiles(updated) }
+        if (dataStoreManager.canWriteProfiles) {
+            scope.launch { dataStoreManager.saveProfiles(updated) }
+        }
     }
 
     /* ----------------- swap pairs (swapOn / swapOff) ----------------- */
@@ -1009,6 +1024,9 @@ class FloatingWindowStateManager @Inject constructor(
 
     fun clearActivePointers() {
         mouseButtons.reset()
+        _pressedKeys.value = emptySet()
+        lastMouseRawX = Float.NaN
+        lastMouseRawY = Float.NaN
         eventHandler.clear()
     }
 
@@ -1035,7 +1053,7 @@ class FloatingWindowStateManager @Inject constructor(
         // once more before the overlay disappears so a service stop does not
         // lose the last positioning edit.
         persistActiveProfile()
-        eventHandler.clear()
+        clearActivePointers()
     }
 
     @SuppressLint("InternalInsetResource", "DiscouragedApi")

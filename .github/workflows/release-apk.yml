@@ -2,11 +2,15 @@ name: Android Release APK
 
 on:
   push:
-    branches: [ main ]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -14,91 +18,72 @@ jobs:
     environment: build-env
     outputs:
       version_name: ${{ steps.version.outputs.version_name }}
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Extract Version from Gradle (KTS)
+      - uses: actions/checkout@v5
+      - name: Validate version and release tag
         id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          VERSION_NAME=$(grep 'versionName =' app/build.gradle.kts | sed 's/.*"\(.*\)".*/\1/')
-          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
-
-      - name: Check if versionName changed
-        id: version_check
-        run: |
-          PREV_NAME=$(git show HEAD^:app/build.gradle.kts | grep 'versionName =' | sed 's/.*"\(.*\)".*/\1/' || echo "")
-          if [ "$PREV_NAME" = "${{ steps.version.outputs.version_name }}" ]; then
-            echo "Version name unchanged. Skipping build."
-            echo "skip=true" >> $GITHUB_OUTPUT
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Set Up JDK
-        if: steps.version_check.outputs.skip != 'true'
-        uses: actions/setup-java@v4
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          source = Path('app/build.gradle.kts').read_text(encoding='utf-8')
+          versions = re.findall(r'^\s*versionName\s*=\s*"([^"]+)"', source, re.M)
+          if len(versions) != 1 or not re.fullmatch(r'[0-9A-Za-z][0-9A-Za-z._-]*', versions[0]):
+              raise SystemExit('Expected one valid versionName')
+          version = versions[0]
+          if os.environ['REF_TYPE'] == 'tag' and os.environ['REF_NAME'] != f'v{version}':
+              raise SystemExit(f'Tag must match Gradle version: v{version}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version_name={version}\n')
+          PY
+      - uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: 17
           cache: gradle
-
-      - name: Setup Android SDK
-        if: steps.version_check.outputs.skip != 'true'
-        uses: android-actions/setup-android@v3
-
-      - name: Decode Keystore
-        if: steps.version_check.outputs.skip != 'true'
+      - uses: android-actions/setup-android@v3
+      - run: chmod +x gradlew
+      - name: Run release gates
+        run: ./gradlew :app:testDebugUnitTest :app:lintDebug --console=plain
+      - name: Decode keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE }}
         run: |
-          echo "${{ secrets.KEYSTORE }}" | base64 -d > app/key.jks
-
-      - name: Create gradle.properties
-        if: steps.version_check.outputs.skip != 'true'
-        run: |
-          mkdir -p ~/.gradle
-          cat <<EOF > ~/.gradle/gradle.properties
-          storeFile=${GITHUB_WORKSPACE}/app/key.jks
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
-          EOF
-
-      - name: Grant execute permission to gradlew
-        if: steps.version_check.outputs.skip != 'true'
-        run: chmod +x gradlew
-
-      - name: Build Release APK
-        if: steps.version_check.outputs.skip != 'true'
-        run: ./gradlew assembleRelease
-
-      - name: Upload APK Artifact
-        if: steps.version_check.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
+          test -n "$KEYSTORE_BASE64"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > app/key.jks
+      - name: Build signed release APK
+        env:
+          ORG_GRADLE_PROJECT_storeFile: ${{ github.workspace }}/app/key.jks
+          ORG_GRADLE_PROJECT_storePassword: ${{ secrets.KEYSTORE_PASSWORD }}
+          ORG_GRADLE_PROJECT_keyAlias: ${{ secrets.KEY_ALIAS }}
+          ORG_GRADLE_PROJECT_keyPassword: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --console=plain
+      - uses: actions/upload-artifact@v4
         with:
           name: release-apk-v${{ steps.version.outputs.version_name }}
           path: app/build/outputs/apk/release/app-release.apk
-
-      - name: Cleanup
+          if-no-files-found: error
+      - name: Cleanup signing file
         if: always()
         run: rm -f app/key.jks
 
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: needs.build.outputs.version_name != ''
-
+    permissions:
+      contents: write
     steps:
-      - name: Download APK
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: release-apk-v${{ needs.build.outputs.version_name }}
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.build.outputs.version_name }}
+          target_commitish: ${{ github.sha }}
           name: Release v${{ needs.build.outputs.version_name }}
           files: app-release.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          fail_on_unmatched_files: true

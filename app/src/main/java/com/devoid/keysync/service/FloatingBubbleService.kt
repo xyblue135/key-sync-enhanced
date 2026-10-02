@@ -100,7 +100,7 @@ class FloatingBubbleService : Service() {
 
         /** 前台通知 id 与频道。频道沿用旧的 "channel1"，只更新对外显示名。 */
         private const val NOTIFICATION_ID = 1
-        private const val CHANNEL_ID = "channel1"
+        const val CHANNEL_ID = "channel1"
 
         /** 通知栏 action：全部回投到本 Service，由 onStartCommand 分发。 */
         private const val ACTION_TOGGLE_EDIT = "com.devoid.keysync.action.TOGGLE_EDIT"
@@ -148,7 +148,8 @@ class FloatingBubbleService : Service() {
         startForeground(
             NOTIFICATION_ID,
             buildNotification(),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            if (android.os.Build.VERSION.SDK_INT >= 34)
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
         )
         observeNotificationState()
 
@@ -466,7 +467,12 @@ class FloatingBubbleService : Service() {
             }
         }
         composeView.viewTreeObserver.addOnWindowFocusChangeListener { focused ->
-            if (focused) {
+            if (!focused) {
+                // Key/button UP may go to the notification shade or another window.
+                // End the gesture now; never replay stale held keys on focus recovery.
+                stateManager.get().clearActivePointers()
+                composeView.releasePointerCapture()
+            } else {
                 if (stateManager.get().isEditMode.value) {
                     // 从通知栏进编辑态时，通知栏收起的过程中可能抢走焦点。编辑态
                     // 一旦丢焦点，View 层 setOnKeyListener 就收不到按键（按钮一直显示

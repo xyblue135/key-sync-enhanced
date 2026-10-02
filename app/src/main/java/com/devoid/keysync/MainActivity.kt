@@ -1,6 +1,7 @@
 package com.devoid.keysync
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -33,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -97,22 +99,31 @@ class MainActivity : ComponentActivity() {
             var pendingLaunch by remember { mutableStateOf<(() -> Unit)?>(null) }
             val notificationPermissionLauncher = rememberLauncherForActivityResult(
                 ActivityResultContracts.RequestPermission()
-            ) {
-                pendingLaunch?.invoke()
+            ) { granted ->
+                val launch = pendingLaunch
                 pendingLaunch = null
+                if (granted) launch?.invoke() else showNotificationSettings(snackbarHostState)
             }
             val startPackage: (String) -> Unit = { packageName ->
-                val started = viewModel.launchPackage(packageName, packageManager, isServiceRunning)
-                // getLaunchIntentForPackage() returns null for a disabled /
-                // uninstalled app, which used to fail silently with no feedback.
-                if (!started) {
-                    viewModel.viewModelScope.launch {
-                        snackbarHostState.showSnackbar(
-                            getString(
-                                R.string.main_launch_failed,
-                                viewModel.getPackageLabel(packageName)
+                // Check again after the permission dialog: the channel may still be blocked.
+                val notifications = getSystemService(NotificationManager::class.java)
+                val channel = notifications.getNotificationChannel(FloatingBubbleService.CHANNEL_ID)
+                if (!NotificationManagerCompat.from(this@MainActivity).areNotificationsEnabled() ||
+                    channel?.importance == NotificationManager.IMPORTANCE_NONE) {
+                    showNotificationSettings(snackbarHostState)
+                } else {
+                    val started = viewModel.launchPackage(packageName, packageManager, isServiceRunning)
+                    // getLaunchIntentForPackage() returns null for a disabled /
+                    // uninstalled app, which used to fail silently with no feedback.
+                    if (!started) {
+                        viewModel.viewModelScope.launch {
+                            snackbarHostState.showSnackbar(
+                                getString(
+                                    R.string.main_launch_failed,
+                                    viewModel.getPackageLabel(packageName)
+                                )
                             )
-                        )
+                        }
                     }
                 }
             }
@@ -237,7 +248,8 @@ class MainActivity : ComponentActivity() {
                                 viewModel.saveKeyConfig(it)
                                 Toast.makeText(
                                     this@MainActivity,
-                                    getString(R.string.settings_saved),
+                                    getString(if (viewModel.canSaveProfiles) R.string.settings_saved
+                                        else R.string.profiles_temporary_changes),
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 // popBackStack, not navigate(MainScreen):
@@ -272,6 +284,26 @@ class MainActivity : ComponentActivity() {
         intent.action?.let {
             if (it == INTENT_ACTION_SETTINGS) {
                 navigateTo.value = SettingsScreen
+            }
+        }
+    }
+
+    private fun showNotificationSettings(snackbarHostState: SnackbarHostState) {
+        viewModel.viewModelScope.launch {
+            val result = snackbarHostState.showSnackbar(
+                getString(R.string.notification_controls_required),
+                actionLabel = getString(R.string.permission_action_settings),
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                val channel = getSystemService(NotificationManager::class.java)
+                    .getNotificationChannel(FloatingBubbleService.CHANNEL_ID)
+                val action = if (channel?.importance == NotificationManager.IMPORTANCE_NONE)
+                    Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS else Settings.ACTION_APP_NOTIFICATION_SETTINGS
+                startActivity(Intent(action).apply {
+                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                    putExtra(Settings.EXTRA_CHANNEL_ID, FloatingBubbleService.CHANNEL_ID)
+                })
             }
         }
     }

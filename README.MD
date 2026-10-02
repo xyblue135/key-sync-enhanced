@@ -1,6 +1,6 @@
 # KeySync Enhanced — AI 交接文档
 
-> 面向下一个接手本项目的 AI / 开发者。最后更新：2026-09-24
+> 面向下一个接手本项目的 AI / 开发者。最后更新：2026-10-02
 > 阅读顺序建议：第 1、3 节建立全局观 → 第 5、6 节是「改代码前的红线」→ 第 7、8 节是最新进度与待办。
 
 ---
@@ -19,8 +19,8 @@
 | namespace / applicationId | `com.devoid.keysync` |
 | compileSdk / targetSdk | 36 |
 | minSdk | 29 |
-| versionCode / versionName | 19 / `1.43-android16` |
-| debug 变体 | applicationId 后缀 `.fpsdebug`，versionName 后缀 `-fps-sprintfix1` |
+| versionCode / versionName | 20 / `1.44-android16` |
+| debug 变体 | applicationId 后缀 `.fpsdebug`，versionName 后缀 `-debug` |
 | Kotlin / Java | 17 |
 
 依赖要点：Jetpack Compose（含 `constraintlayout-compose`）、Hilt 2.55（KSP）、kotlinx-serialization、DataStore Preferences、Navigation Compose、Shizuku API。
@@ -40,7 +40,7 @@
 
 关于验证的现实情况：
 
-- `app/src/test` 有 16 个 JVM 单测（54 个用例），覆盖 `domain/` 下的纯状态机与 `model/` 的序列化；`app/src/androidTest` 只有 `OverlayDragTest`。
+- `app/src/test` 有 18 个 JVM 测试类（73 个用例），覆盖 `domain/` 下的纯状态机与 `model/` 的序列化；`app/src/androidTest` 只有 `OverlayDragTest`。
 - 跑测试：`.\gradlew.bat :app:testDebugUnitTest --console=plain`。
 - **`compileDebugKotlin` 不编译测试源集。** 只跑编译的话，测试代码引用了已删除的 API 也发现不了——本项目就发生过一次：两个测试文件引用了 `60d95b6` 删掉的 `ProfileSwitchHotkey` / `activationKeyCode` / `profileActivationRoutes`，导致整个测试源集编译失败，54 个用例**全部静默不执行**，而 `assembleDebug` 依旧通过。改完代码请跑 `testDebugUnitTest`，不要只跑 `compileDebugKotlin`。
 - `ui/overlay`、`service`、`domain/EventHandler`、`domain/EventManagerImpl` 与整条注入链路仍然**零自动化覆盖**，只能真机验证。
@@ -93,7 +93,7 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
 
 - `Profile`：`id` / `name` / `items` / `appConfig` / `swapPairs` / `layoutScreenWidth` / `layoutScreenHeight`。
   后两个字段是**布局保存时的屏幕分辨率基准**，`0` 表示未记录；横竖屏由宽高关系隐含决定。
-- `DraggableItem`：拖拽按键，坐标为**归一化 0..1**；含 `DraggableItem.FixedKey`，以及 `DraggableItemType` 的 `WASD_KEY` / `KEY` / `SHOOTING_MODE` / `WALK_TOGGLE` 等。
+- `DraggableItem`：拖拽按键，运行时及 Profile 保存的是**基准视口内的像素坐标**；含 `DraggableItem.FixedKey`，以及 `DraggableItemType` 的 `WASD_KEY` / `KEY` / `SHOOTING_MODE` / `WALK_TOGGLE` 等。
 - `AppConfig`：`buttonScale`、`pointerSensitivity`、`deleteDataOnRemove`、`screenMirrorCompatMode`、`themePreference` 等。
 
 预设资产：`data/` 通过 `sourceSets["main"].assets.srcDir("$rootDir/data")` 挂成 assets，`data/mapping/**` 共 24 个 JSON（含 `index.json` 索引），分类为 universal / fps / moba / mmorpg / action / racing 与 `templates/blank.json`。**新增预设不需要改 Kotlin**。
@@ -102,16 +102,16 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
 
 ## 5. 硬性约束（改代码前必读）
 
-1. **坐标一律归一化**（相对屏幕宽高的 0..1），禁止存绝对物理像素。
-2. **布局基准必须持久化**：每个 Profile 记住保存时的 `layoutScreenWidth/Height`；**加载/保存预设时不要用当前屏幕去覆盖已记录的基准**。迁移旧数据时基准分辨率用「当前屏幕」，不要写死固定值。
-3. 加载预设时若基准方向与当前屏幕相反（如竖屏基准 vs 横屏游戏），**直接使用布局中存储的绝对坐标**，并把当前屏幕设为新基准。
+1. **区分两种坐标格式**：内置 `MappingPreset` 资产按 `coordinateMode` 使用归一化或像素坐标；用户 `Profile` 保存基准视口内的像素坐标，并同时保存 `layoutScreenWidth/Height`。禁止混用两种 JSON 格式，禁止只改坐标单位而不做数据迁移。
+2. **布局基准必须持久化**：每个 Profile 记住保存时的 `layoutScreenWidth/Height`；**加载/保存预设时不要用当前屏幕去覆盖已记录的基准**。无基准的历史数据目前按已知旧版本的 `2608×1200` 迁移；这是历史兼容假设，不适用于新数据。新布局保存时记录真实视口，后续如需支持其他旧设备，应单独设计迁移选择，不能擅自重解释已有数据。
+3. 加载及旋转时统一通过 `projectLayout()` 投影。普通按键按扣除按键尺寸后的可移动范围分别换算 X/Y，WASD 点按视口宽高比例换算；运行期布局使用自己的 `layoutViewport`，不能把旧坐标直接标为新基准。
 4. **游戏界面必须横屏**，禁止把预设做成竖屏。
 5. **交换对（`swapPairs`）只修改按钮的物理布局位置**，不改键位绑定与名称。参与交换的按钮需维护 `anchorPosition`：普通拖动时 `position` 与 `anchorPosition` 同步，交换时只改 `position`。
 6. **拟人化必须零延迟**：只允许通过调整注入触点位置 / 轨迹随机性实现，**禁止**添加等待、渐进、缓冲逻辑。抖动循环本身约 140ms 重掷一次（`EventHandler.humanizeScope`），这是允许的，因为它不阻塞按键响应路径。
 7. 拟人化需**独立开关 + 强度滑杆（0 表示关闭）**，且**全局生效**（对所有预设统一），不要做成按预设存储。
 8. 键位交换热键必须保留；「预设切换热键」已被要求删除，不要加回来。
 9. **全局功能配置放 `DataStoreManager`**（全局键），不要塞进 `Profile`。
-10. 坐标换算统一使用等比缩放（`sSize`），不要按宽高分别拉伸。
+10. `projectLayout()` 的位置投影与按键尺寸是两回事：位置按每轴可用范围换算，尺寸由 Compose 实测，禁止反复缩放缓存尺寸导致按钮越变越小。以 `LayoutProjectionTest` 的往返、旋转和边界用例为准。
 
 ---
 
@@ -150,7 +150,7 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
 
 ---
 
-## 7. 最近一次改动（尚未提交）
+## 7. 历史改动：通知栏控制入口（已提交）
 
 主题：**控制入口从屏幕悬浮气泡迁移到通知栏**（用户要求「更隐蔽」）。
 
@@ -182,16 +182,16 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
 
 ---
 
-## 8. 待办 / 建议下一步
+## 8. 1.44 稳定性修复与验证
 
-1. **真机验证**（目前只做到编译通过）：
-   - 通知栏三个 action 是否都生效，标签是否随状态正确翻转；
-   - 点通知正文能否稳定进入设置页（trampoline 限制下的实际表现）；
-   - 从通知栏进编辑态后，字母键 / 方向键能否被悬浮层捕获（焦点竞态）；
-   - 拒绝 `POST_NOTIFICATIONS` 后是否有合理提示，以及用户后续是否能在系统设置里补授权。
-2. 设置页新增的「关闭悬浮窗」按钮**不区分服务是否在运行**（未运行时点击是 no-op），如需可加运行状态判断。
-3. 提交前确认仓库里没有残留临时脚本。
-4. 可选清理：`FloatingWindow.kt` 中因删除函数而变成孤儿的 import（如 `Icons.Rounded.Done`、`Profile`）仅为 warning，目前未清理。
+- 通知权限拒绝时不启动映射；启动前还检查应用通知开关和 `channel1` 频道。禁用时提供系统设置入口，开启后需再次点击游戏。
+- 悬浮层失去窗口焦点时统一释放触点、停止抖动、清除按键高亮和鼠标相对位移基准；恢复焦点只恢复捕获，不重放旧按住状态。
+- 预设读取失败时进入临时会话：禁止覆盖保存 Profile 和 active id，跳过迁移，尽可能备份损坏 JSON。备份失败及整个 Preferences 文件损坏也不能自动清空原数据。
+- 新增存储故障回归测试，覆盖临时 I/O 失败、JSON 损坏、备份失败、旧备份保护、取消、首次启动与实际损坏文件保留。
+- `master` push / PR 运行单测、Lint、debug 构建。正式发布只由 `v*` 标签或手动触发，标签必须匹配 Gradle 版本；测试和 Lint 成功后才能签名发布。
+- Android 14 以下启动前台服务时不传入仅 API 34 支持的 `specialUse` 类型。
+
+真机操作及预期结果见 `docs/STABILITY_VALIDATION.md`。本地 JVM 测试和构建不等于真机验证。
 
 ---
 

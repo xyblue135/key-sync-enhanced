@@ -2,11 +2,10 @@ package com.devoid.keysync.data.local
 
 import android.content.Context
 import android.util.Log
-import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -18,7 +17,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
-import javax.inject.Inject
 
 /**
  * Outcome of reading the persisted profile blob.
@@ -45,23 +43,24 @@ sealed interface ProfilesLoad {
 
 private const val TAG = "DataStoreManager"
 
-/**
- * [ReplaceFileCorruptionHandler] only covers a corrupt *preferences file*. A
- * blob that parses as Preferences but not as JSON is handled per key below.
- *
- * Without a handler DataStore throws on every read of a corrupt file. The
- * collectors in FloatingWindowStateManager run on `Dispatchers.Main` without a
- * catch, so that exception would surface as a process crash.
- */
-val Context.datastore by preferencesDataStore(
-    name = "app_configurations",
-    corruptionHandler = ReplaceFileCorruptionHandler { cause ->
-        Log.e(TAG, "preferences file was unreadable; starting from an empty store", cause)
-        emptyPreferences()
-    },
-)
+/** Preserve corrupt files. Read failures are reported below, never replaced with an empty store. */
+val Context.datastore by preferencesDataStore(name = "app_configurations")
 
-class DataStoreManager @Inject constructor(private val context: Context) {
+class DataStoreManager internal constructor(
+    private val store: DataStore<Preferences>,
+    private val reportError: (String, Throwable) -> Unit = { message, error -> Log.e(TAG, message, error); Unit },
+) {
+    constructor(context: Context) : this(context.datastore)
+
+    // Closed until the original profile blob has been read successfully. A failed
+    // read must also prevent later UI edits/service shutdown from overwriting it.
+    @Volatile
+    var canWriteProfiles: Boolean = false
+        private set
+
+    private fun requireWritableProfiles() {
+        check(canWriteProfiles) { "预设尚未成功读取，本次修改不会保存，请重启后重试" }
+    }
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -90,27 +89,27 @@ class DataStoreManager @Inject constructor(private val context: Context) {
         val ACTIVE_PROFILE_ID = stringPreferencesKey("active_profile_id")
 
         /**
-         * Where an unreadable [PROFILES] blob is copied before the store is
-         * reseeded, so the original bytes are never destroyed by an upgrade.
+         * A backup of an unreadable [PROFILES] blob. The active blob is also
+         * preserved; an older, different backup must never be overwritten.
          */
         val PROFILES_QUARANTINE = stringPreferencesKey("profiles_quarantine")
     }
 
     /**
      * DataStore surfaces I/O failures (unreadable file, no space, revoked
-     * storage) as exceptions on the `data` flow. Emitting a fallback keeps the
-     * collector alive; letting it propagate terminates the flow for the rest of
-     * the process lifetime and crashes anything collecting on Main.
+     * storage) as exceptions on the `data` flow. A fallback completes this
+     * collection without a crash; it does not retry or keep the upstream alive.
+     * Profile reads use an explicit Unreadable result instead of defaults.
      */
     private fun <T> Flow<T>.recoverFromReadFailure(fallback: T, label: String): Flow<T> =
         catch { t ->
             if (t is CancellationException) throw t
-            Log.e(TAG, "DataStore read failed for $label; falling back to default", t)
+            reportError("DataStore read failed for $label; falling back to default", t)
             emit(fallback)
         }
 
     fun getButtonsConfigKeys(): Flow<List<Preferences.Key<String>>> {
-        return context.datastore.data
+        return store.data
             .map { pref ->
                 pref.asMap().keys
                     .filter { it.name.startsWith("buttons_config") }
@@ -124,27 +123,27 @@ class DataStoreManager @Inject constructor(private val context: Context) {
     }
 
     suspend fun <T> remove(key: Preferences.Key<T>) {
-        context.datastore.edit { pref ->
+        store.edit { pref ->
             pref.remove(key)
         }
     }
 
     suspend fun save(key: Preferences.Key<String>, value: List<DraggableItem>) {
         val json = json.encodeToString(value)
-        context.datastore.edit { pref ->
+        store.edit { pref ->
             pref[key] = json
         }
     }
 
     fun getButtons(key: Preferences.Key<String>): Flow<List<DraggableItem>> {
-        return context.datastore.data
+        return store.data
             .map { pref ->
                 val raw = pref[key] ?: return@map emptyList()
                 try {
                     json.decodeFromString<List<DraggableItem>>(raw)
                 } catch (t: Throwable) {
                     if (t is CancellationException) throw t
-                    Log.e(TAG, "invalid button mapping JSON for '${key.name}'", t)
+                    reportError("invalid button mapping JSON for '${key.name}'", t)
                     emptyList()
                 }
             }
@@ -153,20 +152,20 @@ class DataStoreManager @Inject constructor(private val context: Context) {
 
     suspend fun saveList(key: Preferences.Key<String>, value: List<String>) {
         val json = json.encodeToString(value)
-        context.datastore.edit { pref ->
+        store.edit { pref ->
             pref[key] = json
         }
     }
 
     fun getList(key: Preferences.Key<String>): Flow<List<String>> {
-        return context.datastore.data
+        return store.data
             .map { pref ->
                 val raw = pref[key] ?: return@map emptyList()
                 try {
                     json.decodeFromString<List<String>>(raw)
                 } catch (t: Throwable) {
                     if (t is CancellationException) throw t
-                    Log.e(TAG, "invalid JSON list for '${key.name}'", t)
+                    reportError("invalid JSON list for '${key.name}'", t)
                     emptyList()
                 }
             }
@@ -175,20 +174,20 @@ class DataStoreManager @Inject constructor(private val context: Context) {
 
     suspend fun save(key: Preferences.Key<String>, value: AppConfig) {
         val json = json.encodeToString(value)
-        context.datastore.edit { pref ->
+        store.edit { pref ->
             pref[key] = json
         }
     }
 
     fun getKeyConfig(key: Preferences.Key<String>): Flow<AppConfig> {
-        return context.datastore.data
+        return store.data
             .map { pref ->
                 val raw = pref[key] ?: return@map AppConfig.Default
                 try {
                     json.decodeFromString<AppConfig>(raw)
                 } catch (t: Throwable) {
                     if (t is CancellationException) throw t
-                    Log.e(TAG, "invalid AppConfig JSON for '${key.name}'; using defaults", t)
+                    reportError("invalid AppConfig JSON for '${key.name}'; using defaults", t)
                     AppConfig.Default
                 }
             }
@@ -198,8 +197,12 @@ class DataStoreManager @Inject constructor(private val context: Context) {
     /* ---------- profile storage ---------- */
 
     suspend fun saveProfiles(profiles: List<Profile>) {
+        requireWritableProfiles()
         val raw = json.encodeToString(profiles)
-        context.datastore.edit { pref -> pref[PROFILES] = raw }
+        store.edit { pref ->
+            requireWritableProfiles()
+            pref[PROFILES] = raw
+        }
     }
 
     /**
@@ -210,11 +213,14 @@ class DataStoreManager @Inject constructor(private val context: Context) {
      * the user's layouts.
      */
     fun getProfilesLoad(): Flow<ProfilesLoad> {
-        return context.datastore.data
-            .map { pref -> decodeProfiles(pref[PROFILES]) }
+        return store.data
+            .map { pref ->
+                decodeProfiles(pref[PROFILES]).also { canWriteProfiles = it !is ProfilesLoad.Unreadable }
+            }
             .catch { t ->
                 if (t is CancellationException) throw t
-                Log.e(TAG, "DataStore read failed while loading profiles", t)
+                canWriteProfiles = false
+                reportError("DataStore read failed while loading profiles", t)
                 emit(ProfilesLoad.Unreadable(null, t))
             }
     }
@@ -225,85 +231,92 @@ class DataStoreManager @Inject constructor(private val context: Context) {
             ProfilesLoad.Loaded(json.decodeFromString(raw))
         } catch (t: Throwable) {
             if (t is CancellationException) throw t
-            Log.e(TAG, "profile blob is present but not decodable; preserving it", t)
+            reportError("profile blob is present but not decodable; preserving it", t)
             ProfilesLoad.Unreadable(raw, t)
         }
     }
 
     /**
-     * Copies an unreadable blob aside before the store is reseeded.
+     * Copies an unreadable blob aside without replacing the active blob.
      *
      * Kept under a separate key rather than in a file so it rides along with the
      * rest of the preferences and can be recovered by a later build that fixes
      * the decoder.
      */
     suspend fun quarantineUnreadableProfiles(raw: String) {
-        context.datastore.edit { pref -> pref[PROFILES_QUARANTINE] = raw }
+        store.edit { pref ->
+            check(pref[PROFILES] == raw) { "Profile data changed before backup" }
+            val previous = pref[PROFILES_QUARANTINE]
+            check(previous == null || previous == raw) { "An earlier profile backup already exists" }
+            pref[PROFILES_QUARANTINE] = raw
+        }
     }
 
     fun getQuarantinedProfiles(): Flow<String?> {
-        return context.datastore.data
+        return store.data
             .map { pref -> pref[PROFILES_QUARANTINE] }
             .recoverFromReadFailure(null, "quarantined profiles")
     }
 
     suspend fun saveActiveProfileId(id: String?) {
-        context.datastore.edit { pref ->
+        requireWritableProfiles()
+        store.edit { pref ->
+            requireWritableProfiles()
             if (id == null) pref.remove(ACTIVE_PROFILE_ID) else pref[ACTIVE_PROFILE_ID] = id
         }
     }
 
     fun getActiveProfileId(): Flow<String?> {
-        return context.datastore.data
+        return store.data
             .map { pref -> pref[ACTIVE_PROFILE_ID] }
             .recoverFromReadFailure(null, "active profile id")
     }
 
     suspend fun save(key: Preferences.Key<String>, value: String) {
-        context.datastore.edit { pref ->
+        store.edit { pref ->
             pref[key] = value
         }
     }
 
 
     fun getString(key: Preferences.Key<String>): Flow<String?> {
-        return context.datastore.data
+        return store.data
             .map { pref -> pref[key] }
             .recoverFromReadFailure(null, "string '${key.name}'")
     }
 
     suspend fun save(key: Preferences.Key<Int>, value: Int) {
-        context.datastore.edit { pref ->
+        store.edit { pref ->
             pref[key] = value
         }
     }
 
     fun getInt(key: Preferences.Key<Int>): Flow<Int?> {
-        return context.datastore.data
+        return store.data
             .map { pref -> pref[key] }
             .recoverFromReadFailure(null, "int '${key.name}'")
     }
 
     suspend fun save(key: Preferences.Key<Float>, value: Float) {
-        context.datastore.edit { pref ->
+        store.edit { pref ->
             pref[key] = value
         }
     }
 
     fun getFloat(key: Preferences.Key<Float>): Flow<Float?> {
-        return context.datastore.data
+        return store.data
             .map { pref -> pref[key] }
             .recoverFromReadFailure(null, "float '${key.name}'")
     }
 
     suspend fun save(key: Preferences.Key<Boolean>, value: Boolean) {
-        context.datastore.edit { pref ->
+        store.edit { pref ->
             pref[key] = value
         }
     }
 
     fun getBoolean(key: Preferences.Key<Boolean>): Flow<Boolean?> {
-        return context.datastore.data
+        return store.data
             .map { pref -> pref[key] }
             .recoverFromReadFailure(null, "boolean '${key.name}'")
     }
