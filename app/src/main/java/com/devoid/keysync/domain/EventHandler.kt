@@ -7,6 +7,7 @@ import android.view.MotionEvent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.nativeKeyCode
+import com.devoid.keysync.model.ClickMacro
 import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.DraggableItemType
@@ -63,6 +64,42 @@ private fun keyToSprintMask(keyCode: Int): Int = when (keyCode) {
 class EventHandler(
     private val eventInjector: EventInjector
 ) {
+
+    // Macro touches use a separate logical id and never recursively synthesize keyboard events.
+    private val macroPointerId = 1_000_000
+    private val macroRunner = ClickMacroRunner(
+        schedule = { delay, action -> mainHandler.postDelayed({ action() }, delay) },
+        down = { position -> eventInjector.injectPointer(macroPointerId, position) },
+        up = { eventInjector.releasePointer(macroPointerId) },
+    )
+    private var macros = emptyList<ClickMacro>()
+    private var macroViewport = Offset.Zero
+    private var macroOrigin = Offset.Zero
+    private val scrollPulse = TapPulse { delay, action -> mainHandler.postDelayed({ action() }, delay) }
+
+    fun setMacros(value: List<ClickMacro>, viewport: Offset, origin: Offset) {
+        macroRunner.cancel()
+        macros = value
+        macroViewport = viewport
+        macroOrigin = origin
+    }
+
+    fun isMacroTrigger(key: Int): Boolean = macros.any { it.enabled && it.triggerKeyCode == key }
+
+    private fun macroEdge(key: Int, pressed: Boolean, repeat: Boolean = false): Boolean =
+        macroRunner.handle(key, pressed, repeat, macros, macroViewport, macroOrigin)
+
+    /** A wheel direction is a tap, regardless of a button's hold/toggle mode. */
+    fun handleScrollBinding(key: Int): Boolean {
+        if (macroEdge(key, true)) { macroEdge(key, false); return true }
+        if (key == shootingModeKeyCode) { toggleShootingMode(); return true }
+        val mapping = keyMap[key] ?: return false
+        val pointer = pointerIds[key] ?: return false
+        scrollPulse.tap(pointer,
+            down = { eventInjector.injectPointer(pointer, mapping.position) },
+            up = { eventInjector.releasePointer(pointer) })
+        return true
+    }
 
     /* ---------- state ---------- */
 
@@ -339,12 +376,9 @@ class EventHandler(
     fun replayHeldMouseButtons(buttons: Set<Int>) {
         heldMouseButtons.clear()
         buttons.forEach { button ->
-            val key = when (button) {
-                MotionEvent.BUTTON_PRIMARY -> KEYCODE_LMC
-                MotionEvent.BUTTON_SECONDARY -> KEYCODE_RMC
-                else -> KEYCODE_MMC
-            }
-            if (key == shootingModeKeyCode) heldMouseButtons.add(button)
+            val key = mouseButtonKeyCode(button) ?: return@forEach
+            // A profile/layout change must not retrigger a one-shot macro.
+            if (key == shootingModeKeyCode || isMacroTrigger(key)) heldMouseButtons.add(button)
             else handleMouseButton(button, true)
         }
     }
@@ -384,6 +418,9 @@ class EventHandler(
     /* ---------- key events ---------- */
 
     fun handleKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP) {
+            if (macroEdge(event.keyCode, event.action == KeyEvent.ACTION_DOWN, event.repeatCount > 0)) return true
+        }
         if (event.keyCode == walkKeyCode && event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0) return true
         val wasdBit = keyToWasdMask(event.keyCode)
         val sprintBit = keyToSprintMask(event.keyCode)
@@ -600,12 +637,8 @@ class EventHandler(
         if (pressed) {
             if (!heldMouseButtons.add(button)) return true
         } else if (!heldMouseButtons.remove(button)) return true
-        val keyCode = when (button) {
-            MotionEvent.BUTTON_PRIMARY -> KEYCODE_LMC
-            MotionEvent.BUTTON_SECONDARY -> KEYCODE_RMC
-            MotionEvent.BUTTON_TERTIARY -> KEYCODE_MMC
-            else -> return false
-        }
+        val keyCode = mouseButtonKeyCode(button) ?: return false
+        if (macroEdge(keyCode, pressed)) return true
         if (keyCode == shootingModeKeyCode) {
             if (!pressed) return false
             toggleShootingMode()
@@ -613,7 +646,7 @@ class EventHandler(
         }
         val pointerId = pointerIds[keyCode] ?: return false
 
-        if (!shootingMode) {
+        if (!shootingMode && button != MotionEvent.BUTTON_BACK && button != MotionEvent.BUTTON_FORWARD) {
             simulateNativeClick(pointerId = pointerId, pressed = pressed)
             return true
         }
@@ -791,6 +824,8 @@ class EventHandler(
     }
 
     fun updateKeyMapping(items: List<DraggableItem>) {
+        macroRunner.cancel()
+        scrollPulse.reset()
         releaseSwitch.reset()
         cursorDownAt.clear()
         cursorGeneration.keys.toList().forEach { cursorGeneration[it] = cursorGeneration.getValue(it) + 1 }
@@ -928,6 +963,8 @@ class EventHandler(
     }
 
     fun clear() {
+        macroRunner.cancel()
+        scrollPulse.reset()
         releaseSwitch.reset()
         cursorDownAt.clear()
         cursorGeneration.keys.toList().forEach { cursorGeneration[it] = cursorGeneration.getValue(it) + 1 }

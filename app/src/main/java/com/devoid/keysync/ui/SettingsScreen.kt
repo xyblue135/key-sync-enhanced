@@ -73,6 +73,7 @@ import com.devoid.keysync.R
 import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.Profile
+import com.devoid.keysync.model.ClickMacro
 import com.devoid.keysync.model.SwapPair
 import com.devoid.keysync.model.ThemePreference
 import com.devoid.keysync.model.TouchMode
@@ -98,6 +99,7 @@ fun SettingsScreen(
     onExportProfile: (String) -> String? = { null },
     onImportProfile: (String) -> String? = { null },
     onSetProfileSwapPairs: (profileId: String, pairs: List<SwapPair>) -> Unit = { _, _ -> },
+    onSetProfileMacros: (String, List<ClickMacro>) -> Unit = { _, _ -> },
     overlayOpacity: Float = 0.5f,
     onSetOverlayOpacity: (Float) -> Unit = {},
     onStopOverlay: () -> Unit = {},
@@ -214,6 +216,7 @@ fun SettingsScreen(
                     onExport = onExportProfile,
                     onImport = onImportProfile,
                     onSetSwapPairs = onSetProfileSwapPairs,
+                    onSetMacros = onSetProfileMacros,
                 )
                 Card {
                     Column(
@@ -690,6 +693,7 @@ fun ProfileManagerCard(
     onExport: (String) -> String?,
     onImport: (String) -> String?,
     onSetSwapPairs: (String, List<SwapPair>) -> Unit,
+    onSetMacros: (String, List<ClickMacro>) -> Unit,
 ) {
     var showNewDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
@@ -700,6 +704,7 @@ fun ProfileManagerCard(
     var menuProfile by remember { mutableStateOf<Profile?>(null) }
     var exportText by remember { mutableStateOf<String?>(null) }
     var swapTarget by remember { mutableStateOf<Profile?>(null) }
+    var macroTarget by remember { mutableStateOf<Profile?>(null) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -756,6 +761,7 @@ fun ProfileManagerCard(
                         onDuplicate = { onDuplicate(profile.id) },
                         onExport = { exportText = onExport(profile.id) },
                         onSetSwap = { swapTarget = profile },
+                        onSetMacros = { macroTarget = profile },
                         onDelete = { deleteTarget = profile }
                     )
                 }
@@ -888,6 +894,11 @@ fun ProfileManagerCard(
     }
 
 
+    macroTarget?.let { target ->
+        ClickMacrosDialog(profile = profiles.firstOrNull { it.id == target.id } ?: target,
+            onDismiss = { macroTarget = null }, onSave = { onSetMacros(target.id, it) })
+    }
+
     swapTarget?.let { target ->
         SwapPairsDialog(
             profile = target,
@@ -916,6 +927,7 @@ private fun ProfileRow(
     onDuplicate: () -> Unit,
     onExport: () -> Unit,
     onSetSwap: () -> Unit,
+    onSetMacros: () -> Unit,
     onDelete: () -> Unit
 ) {
     Row(
@@ -985,6 +997,10 @@ private fun ProfileRow(
                         onMenuDismiss()
                         onExport()
                     }
+                )
+                DropdownMenuItem(
+                    text = { Text("点击宏（顺序点位）") },
+                    onClick = { onMenuDismiss(); onSetMacros() }
                 )
                 DropdownMenuItem(
                     text = { Text("交换对（换位键）") },

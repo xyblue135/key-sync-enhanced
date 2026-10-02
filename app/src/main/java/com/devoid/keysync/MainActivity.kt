@@ -225,6 +225,7 @@ class MainActivity : ComponentActivity() {
                             onDuplicateProfile = { viewModel.duplicateProfile(it) },
                             onExportProfile = { viewModel.exportProfileJson(it) },
                             onImportProfile = { viewModel.importProfileJson(it) },
+                            onSetProfileMacros = viewModel::setMacros,
                             onSetProfileSwapPairs = { profileId, pairs ->
                                 viewModel.setSwapPairs(profileId, pairs)
                             },

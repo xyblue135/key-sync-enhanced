@@ -19,7 +19,7 @@
 | namespace / applicationId | `com.devoid.keysync` |
 | compileSdk / targetSdk | 36 |
 | minSdk | 29 |
-| versionCode / versionName | 20 / `1.44-android16` |
+| versionCode / versionName | 21 / `1.45-android16` |
 | debug 变体 | applicationId 后缀 `.fpsdebug`，versionName 后缀 `-debug` |
 | Kotlin / Java | 17 |
 
@@ -40,10 +40,10 @@
 
 关于验证的现实情况：
 
-- `app/src/test` 有 18 个 JVM 测试类（73 个用例），覆盖 `domain/` 下的纯状态机与 `model/` 的序列化；`app/src/androidTest` 只有 `OverlayDragTest`。
+- `app/src/test` 有 21 个 JVM 测试类（97 个用例），覆盖 `domain/` 下的纯状态机与 `model/` 的序列化；`app/src/androidTest` 有普通按钮与宏编号点的拖动回归测试（另保留模板测试）。
 - 跑测试：`.\gradlew.bat :app:testDebugUnitTest --console=plain`。
 - **`compileDebugKotlin` 不编译测试源集。** 只跑编译的话，测试代码引用了已删除的 API 也发现不了——本项目就发生过一次：两个测试文件引用了 `60d95b6` 删掉的 `ProfileSwitchHotkey` / `activationKeyCode` / `profileActivationRoutes`，导致整个测试源集编译失败，54 个用例**全部静默不执行**，而 `assembleDebug` 依旧通过。改完代码请跑 `testDebugUnitTest`，不要只跑 `compileDebugKotlin`。
-- `ui/overlay`、`service`、`domain/EventHandler`、`domain/EventManagerImpl` 与整条注入链路仍然**零自动化覆盖**，只能真机验证。
+- `service`、`domain/EventHandler`、`domain/EventManagerImpl` 与整条注入链路仍需真机验证；纯宏执行器、鼠标去重与滚轮归一化由 JVM 测试覆盖，拖动由 androidTest 覆盖。
 - 注意 **Kotlin 未使用的 import 只是 warning，不会报错**，所以删函数后残留 import 不会被编译器抓出来。
 
 ---
@@ -91,7 +91,7 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
 
 模型（`model/`）：
 
-- `Profile`：`id` / `name` / `items` / `appConfig` / `swapPairs` / `layoutScreenWidth` / `layoutScreenHeight`。
+- `Profile`：`id` / `name` / `items` / `appConfig` / `swapPairs` / `macros` / `layoutScreenWidth` / `layoutScreenHeight`。
   后两个字段是**布局保存时的屏幕分辨率基准**，`0` 表示未记录；横竖屏由宽高关系隐含决定。
 - `DraggableItem`：拖拽按键，运行时及 Profile 保存的是**基准视口内的像素坐标**；含 `DraggableItem.FixedKey`，以及 `DraggableItemType` 的 `WASD_KEY` / `KEY` / `SHOOTING_MODE` / `WALK_TOGGLE` 等。
 - `AppConfig`：`buttonScale`、`pointerSensitivity`、`deleteDataOnRemove`、`screenMirrorCompatMode`、`themePreference` 等。
@@ -182,7 +182,19 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
 
 ---
 
-## 8. 1.44 稳定性修复与验证
+## 8. 当前版本：1.45 鼠标扩展与独立点击宏
+
+- 原生识别后退／前进侧键，合并 Android 鼠标事件与鼠标来源的 Back/Forward 键事件，避免重复触发和误返回。
+- 滚轮上／下／左／右可以绑定普通点击或宏；小数增量累计到完整刻度，已打开的旧轮盘优先使用滚轮。
+- 每个 Profile 保存独立 `macros`。宏由有序编号点构成，不引用 Tab/Esc 等普通按钮；每点使用相对悬浮视口的归一化中心坐标。
+- 设置 → 预设右侧菜单 →「点击宏（顺序点位）」管理宏；游戏通知栏 →「编辑布局」中拖动编号点。
+- 每宏独立开关，首次创建默认停用；最多 16 个宏、每宏最多 16 点，步骤间隔 0–5000ms。每次点击保持 50ms，第一步即时下按，间隔由主线程定时器调度，不阻塞普通输入。
+- 同时只执行一个宏，执行中再次触发不排队；宏优先于同键普通映射。失焦、进入编辑、映射重建、切换预设和关闭服务均取消剩余步骤。
+- 宏随预设复制、导入导出、持久化，老预设缺少 `macros` 时默认为空；导入校验坐标、间隔、重复触发键等。
+
+使用及真机回归说明见 `docs/MOUSE_AND_MACROS.md`。
+
+### 1.44 稳定性修复（保留）
 
 - 通知权限拒绝时不启动映射；启动前还检查应用通知开关和 `channel1` 频道。禁用时提供系统设置入口，开启后需再次点击游戏。
 - 悬浮层失去窗口焦点时统一释放触点、停止抖动、清除按键高亮和鼠标相对位移基准；恢复焦点只恢复捕获，不重放旧按住状态。

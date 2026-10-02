@@ -19,6 +19,7 @@ import com.devoid.keysync.data.local.DataStoreManager
 import com.devoid.keysync.data.mapping.MappingPreset
 import com.devoid.keysync.data.mapping.MappingPresetRepository
 import com.devoid.keysync.model.AppConfig
+import com.devoid.keysync.model.ClickMacro
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.SwapPair
 import com.devoid.keysync.service.FloatingBubbleService
@@ -163,6 +164,8 @@ class MainActivityViewModel @Inject constructor(
 
     /** @return null on success, otherwise a user-facing error message. */
     fun importProfileJson(raw: String): String? = stateManager.importProfileJson(raw)
+
+    fun setMacros(profileId: String, macros: List<ClickMacro>) = stateManager.setMacros(profileId, macros)
 
     fun setSwapPairs(profileId: String, pairs: List<SwapPair>) {
         stateManager.setSwapPairs(profileId, pairs)

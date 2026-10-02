@@ -16,6 +16,8 @@ data class Profile(
     val appConfig: AppConfig = AppConfig.Default,
     /** Swap pairs: A/B button layout positions swap on swapOn, restore on swapOff. Moves position only. */
     val swapPairs: List<SwapPair> = emptyList(),
+    /** Ordered independent click points, separate from ordinary key bindings. */
+    val macros: List<ClickMacro> = emptyList(),
     /** Layout 保存时的屏幕分辨率（px）。加载时若与当前屏幕不同则把坐标/尺寸等比还原；0 = 未记录。 */
     val layoutScreenWidth: Int = 0,
     val layoutScreenHeight: Int = 0,

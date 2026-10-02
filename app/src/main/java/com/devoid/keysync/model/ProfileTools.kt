@@ -35,6 +35,9 @@ fun Profile.independentCopy(newId: String, newName: String): Profile = copy(
 fun importProfileCopies(sources: List<Profile>, existing: List<Profile>, newId: () -> String): List<Profile> {
     require(sources.isNotEmpty()) { "预设列表为空" }
     require(sources.map { it.id }.distinct().size == sources.size) { "预设 ID 重复" }
+    sources.forEach { profile ->
+        validateClickMacros(profile.macros)?.let { throw IllegalArgumentException(it) }
+    }
     val ids = sources.associate { it.id to newId() }
     val names = existing.mapTo(mutableSetOf()) { it.name }
     return sources.map { source ->

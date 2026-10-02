@@ -92,6 +92,7 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import com.devoid.keysync.R
+import com.devoid.keysync.ui.MouseInputPicker
 import com.devoid.keysync.domain.KEYCODE_MMC
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.AppConfig
@@ -544,6 +545,10 @@ fun KeyCaptureDialog(
                     )
                 }
             }
+
+            MouseInputPicker(captured ?: currentKeyCode) { captured = it }
+            Text("侧键或滚轮可直接触发捕获，也可从鼠标绑定列表选择。滚轮绑定始终点击一次；轮盘打开时优先用于轮盘选择。",
+                style = MaterialTheme.typography.bodySmall)
 
             if (selectedMode == TouchMode.WHEEL) {
                 Text("鼠标轮盘半径：${radius.roundToInt()} px")

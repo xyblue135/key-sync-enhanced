@@ -69,6 +69,7 @@ import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.util.keyCodeToString
 import com.devoid.keysync.model.DraggableItemType
 import com.devoid.keysync.model.TouchMode
+import com.devoid.keysync.ui.overlay.MacroPointsOverlay
 import com.devoid.keysync.ui.overlay.EditToolbar
 import com.devoid.keysync.ui.overlay.ItemsContainer
 import com.devoid.keysync.ui.overlay.ServiceLifecycleOwner
@@ -428,6 +429,11 @@ class FloatingBubbleService : Service() {
                     }
                     // 编辑态操作条。非编辑态完全不渲染 —— 游戏时屏幕上不会有任何常驻控件。
                     if (isEditMode) {
+                        MacroPointsOverlay(
+                            macros = profiles.firstOrNull { it.id == activeId }?.macros.orEmpty(),
+                            onMove = { macro, step, x, y -> stateManager.get().updateMacroPoint(macro, step, x, y) },
+                            onDragFinished = { stateManager.get().saveMacroPoints() },
+                        )
                         EditToolbar(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
@@ -502,9 +508,8 @@ class FloatingBubbleService : Service() {
                 val sm = stateManager.get()
                 if (sm.keyCaptureListener != null && motionEvent.isFromSource(InputDevice.SOURCE_MOUSE) &&
                     motionEvent.actionMasked == MotionEvent.ACTION_DOWN &&
-                    motionEvent.buttonState and MotionEvent.BUTTON_TERTIARY != 0) {
-                    sm.keyCaptureListener?.invoke(com.devoid.keysync.domain.KEYCODE_MMC)
-                    return@setOnTouchListener true
+                    motionEvent.buttonState and (MotionEvent.BUTTON_TERTIARY or MotionEvent.BUTTON_BACK or MotionEvent.BUTTON_FORWARD) != 0) {
+                    return@setOnTouchListener sm.onMouseEvent(motionEvent)
                 }
                 return@setOnTouchListener false
             }

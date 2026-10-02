@@ -17,6 +17,11 @@ import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.DraggableItemType
 import com.devoid.keysync.domain.MouseButtonTracker
+import com.devoid.keysync.domain.ScrollTracker
+import com.devoid.keysync.domain.mouseButtonKeyCode
+import com.devoid.keysync.domain.mouseKeyAlias
+import com.devoid.keysync.model.ClickMacro
+import com.devoid.keysync.model.validateClickMacros
 import com.devoid.keysync.util.keyCodeToString
 import com.devoid.keysync.domain.EventHandler
 import com.devoid.keysync.domain.KEYCODE_LMC
@@ -124,6 +129,7 @@ class FloatingWindowStateManager @Inject constructor(
         eventHandler.replayHeldMouseButtons(mouseHeld)
     }
     private val mouseButtons = MouseButtonTracker()
+    private val scrollTracker = ScrollTracker()
     private val _lastInputLabel = MutableStateFlow("等待输入")
     val lastInputLabel = _lastInputLabel.asStateFlow()
     private var lastMouseRawX = Float.NaN
@@ -469,6 +475,36 @@ class FloatingWindowStateManager @Inject constructor(
             }
         }
         eventHandler.updateKeyMapping(items)
+        syncMacros()
+        scrollTracker.reset()
+    }
+
+    private fun syncMacros() {
+        eventHandler.setMacros(activeProfile()?.macros.orEmpty(),
+            overlayViewport ?: currentScreenSize(), overlayOrigin ?: Offset.Zero)
+    }
+
+    fun setMacros(profileId: String, macros: List<ClickMacro>) {
+        require(validateClickMacros(macros) == null) { validateClickMacros(macros).orEmpty() }
+        _profiles.value = _profiles.value.map { if (it.id == profileId) it.copy(macros = macros) else it }
+        if (_activeProfileId.value == profileId) syncMacros()
+        if (dataStoreManager.canWriteProfiles) scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
+    }
+
+    fun updateMacroPoint(macroId: String, stepId: String, x: Float, y: Float) {
+        if (!_isEditMode.value || !x.isFinite() || !y.isFinite()) return
+        _profiles.value = _profiles.value.map { profile ->
+            if (profile.id != _activeProfileId.value) profile else profile.copy(macros = profile.macros.map { macro ->
+                if (macro.id != macroId) macro else macro.copy(steps = macro.steps.map { step ->
+                    if (step.id != stepId) step else step.copy(x = x.coerceIn(0f, 1f), y = y.coerceIn(0f, 1f))
+                })
+            })
+        }
+    }
+
+    fun saveMacroPoints() {
+        syncMacros()
+        persistActiveProfile()
     }
 
     private fun activeProfile(): Profile? {
@@ -899,16 +935,15 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     fun toggleEditMode() {
+        clearActivePointers()
         eventHandler.screenSize = currentScreenSize()
-        mouseButtons.reset()
-        lastMouseRawX = Float.NaN
-        lastMouseRawY = Float.NaN
         _isEditMode.value = !_isEditMode.value
         // 进/出编辑态都清空按下状态：编辑态下不维护 pressedKeys，避免切换回来时
         // 残留上一个状态的「按下」高亮。
         _pressedKeys.value = emptySet()
         if (!_isEditMode.value) {
             eventHandler.updateKeyMapping(containerItems.value)
+            syncMacros()
             // Position/size edits currently mutate DraggableItem in place, so
             // closing edit mode is the natural commit point for persistence.
             persistActiveProfile()
@@ -921,6 +956,17 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     fun onKeyEvent(keyEvent: KeyEvent): Boolean {
+        mouseKeyAlias(keyEvent.keyCode, keyEvent.source)?.let { button ->
+            if (keyEvent.action != KeyEvent.ACTION_DOWN && keyEvent.action != KeyEvent.ACTION_UP) return true
+            val pressed = keyEvent.action == KeyEvent.ACTION_DOWN
+            if (_isEditMode.value) {
+                if (pressed && keyEvent.repeatCount == 0) mouseButtonKeyCode(button)?.let { keyCaptureListener?.invoke(it) }
+            } else {
+                mouseButtons.update(if (pressed) MotionEvent.ACTION_BUTTON_PRESS else MotionEvent.ACTION_BUTTON_RELEASE,
+                    if (pressed) button else 0, button).forEach { (changed, down) -> handleMouseEdge(changed, down) }
+            }
+            return true
+        }
         if (_isEditMode.value) {
             // 气泡展开（编辑态）：优先把按键交给正在打开的绑定对话框。
             // 注意不清空 keyCaptureListener——它由对话框关闭时的 DisposableEffect
@@ -943,7 +989,8 @@ class FloatingWindowStateManager @Inject constructor(
         }
         // Swap pair: on key press, swap the pair's layout positions; the same
         // key still flows to the game mapping untouched.
-        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0) {
+        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
+            !eventHandler.isMacroTrigger(keyEvent.keyCode)) {
             applySwap(keyEvent.keyCode)
         }
         return eventHandler.handleKeyEvent(keyEvent)
@@ -952,11 +999,17 @@ class FloatingWindowStateManager @Inject constructor(
     fun onMouseEvent(motionEvent: MotionEvent): Boolean {
         if (isEditMode.value) {
             val listener = keyCaptureListener ?: return false
-            // Leave primary clicks to Compose so confirm/cancel remain clickable.
-            if (motionEvent.actionMasked == MotionEvent.ACTION_BUTTON_PRESS &&
-                motionEvent.actionButton == MotionEvent.BUTTON_TERTIARY) {
-                listener(KEYCODE_MMC)
+            if (motionEvent.actionMasked == MotionEvent.ACTION_SCROLL) {
+                scrollTracker.update(motionEvent.getAxisValue(MotionEvent.AXIS_VSCROLL),
+                    motionEvent.getAxisValue(MotionEvent.AXIS_HSCROLL)).firstOrNull()?.let(listener)
                 return true
+            }
+            // Leave left/right clicks to Compose; dropdown also supports those bindings.
+            val bindable = MotionEvent.BUTTON_TERTIARY or MotionEvent.BUTTON_BACK or MotionEvent.BUTTON_FORWARD
+            val button = modifiedMouseButton(motionEvent) and bindable
+            if (motionEvent.actionMasked == MotionEvent.ACTION_BUTTON_PRESS ||
+                motionEvent.actionMasked == MotionEvent.ACTION_DOWN) {
+                mouseButtonKeyCode(button)?.let { listener(it); return true }
             }
             return false
         }
@@ -966,13 +1019,7 @@ class FloatingWindowStateManager @Inject constructor(
             Offset(it.x.coerceIn(0f, screen.x - 1f), it.y.coerceIn(0f, screen.y - 1f))
         }
         mouseButtons.update(motionEvent.actionMasked, motionEvent.buttonState, motionEvent.actionButton)
-            .forEach { (button, pressed) ->
-                mouseButtonToKeyCode(button)?.let { key ->
-                    _pressedKeys.value = if (pressed) _pressedKeys.value + key else _pressedKeys.value - key
-                    _lastInputLabel.value = key.keyCodeToString() + if (pressed) " 按下" else " 松开"
-                }
-                eventHandler.handleMouseButton(button, pressed)
-            }
+            .forEach { (button, pressed) -> handleMouseEdge(button, pressed) }
         when (motionEvent.actionMasked) {
             MotionEvent.ACTION_MOVE, MotionEvent.ACTION_HOVER_MOVE -> {
                 // Captured mouse X/Y already contain deltas. Never differentiate them.
@@ -1014,28 +1061,36 @@ class FloatingWindowStateManager @Inject constructor(
 
             MotionEvent.ACTION_SCROLL -> {
                 val vScroll = motionEvent.getAxisValue(MotionEvent.AXIS_VSCROLL)
-                if (vScroll != 0f) {
-                    return eventHandler.handleScroll(vScroll)
+                // Existing radial-wheel selection owns scrolling while it is held open.
+                if (eventHandler.isWheelActive) { scrollTracker.reset(); return eventHandler.handleScroll(vScroll) }
+                val codes = scrollTracker.update(vScroll, motionEvent.getAxisValue(MotionEvent.AXIS_HSCROLL))
+                codes.forEach { code ->
+                    _lastInputLabel.value = code.keyCodeToString()
+                    if (!eventHandler.isMacroTrigger(code)) applySwap(code)
+                    eventHandler.handleScrollBinding(code)
                 }
+                return true
             }
         }
         return true
     }
 
+    private fun handleMouseEdge(button: Int, pressed: Boolean) {
+        mouseButtonKeyCode(button)?.let { key ->
+            _pressedKeys.value = if (pressed) _pressedKeys.value + key else _pressedKeys.value - key
+            _lastInputLabel.value = key.keyCodeToString() + if (pressed) " 按下" else " 松开"
+            if (pressed && !eventHandler.isMacroTrigger(key)) applySwap(key)
+        }
+        eventHandler.handleMouseButton(button, pressed)
+    }
+
     fun clearActivePointers() {
         mouseButtons.reset()
+        scrollTracker.reset()
         _pressedKeys.value = emptySet()
         lastMouseRawX = Float.NaN
         lastMouseRawY = Float.NaN
         eventHandler.clear()
-    }
-
-    /** 把鼠标物理按钮映射成 KeySync 内部键码（LMB/RMB/MMB），用于按下高亮。 */
-    private fun mouseButtonToKeyCode(button: Int): Int? = when (button) {
-        MotionEvent.BUTTON_PRIMARY -> KEYCODE_LMC
-        MotionEvent.BUTTON_SECONDARY -> KEYCODE_RMC
-        MotionEvent.BUTTON_TERTIARY -> KEYCODE_MMC
-        else -> null
     }
 
     /**
