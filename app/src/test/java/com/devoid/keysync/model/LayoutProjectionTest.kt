@@ -52,4 +52,24 @@ class LayoutProjectionTest {
         assertEquals(600f, projected.w.y, 0.01f)
         assertEquals(800f, projected.d.x, 0.01f)
     }
+    @Test fun keyCannotBeProjectedPastTheLeftOrTopEdge() {
+        // A button saved off the left edge -- the classic landscape symptom --
+        // must come back inside the viewport instead of staying cut off.
+        val button = DraggableItem.VariableKey(1, Offset(-500f, -500f), 35, 100)
+        val projected = projectLayout(listOf(button), Offset(2608f, 1200f), Offset(2400f, 1080f)).single()
+        assertTrue(projected.position.x >= 0f)
+        assertTrue(projected.position.y >= 0f)
+    }
+    @Test fun wasdGroupIsKeptInsideTheProjectedViewport() {
+        // The WASD group has no cached size, so its extent comes from the
+        // geometry it reported; without that it projected straight off the edge.
+        val group = DraggableItem.WASDGroup(1, Offset(5000f, 5000f), scale = 1f,
+            center = Offset(5100f, 5100f), w = Offset(5100f, 5000f), a = Offset(5000f, 5100f),
+            s = Offset(5100f, 5200f), d = Offset(5200f, 5100f))
+        val projected = projectLayout(listOf(group), Offset(2608f, 1200f), Offset(2400f, 1080f)).single()
+        assertTrue(projected.position.x >= 0f)
+        assertTrue(projected.position.y >= 0f)
+        assertTrue(projected.position.x + 200f <= 2400f)
+        assertTrue(projected.position.y + 200f <= 1080f)
+    }
 }

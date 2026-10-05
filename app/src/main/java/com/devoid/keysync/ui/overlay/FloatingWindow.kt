@@ -66,6 +66,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.input.key.key
@@ -99,6 +100,8 @@ import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.DraggableItemType
 import com.devoid.keysync.model.TouchMode
+import com.devoid.keysync.model.clampToViewport
+import com.devoid.keysync.model.layoutSizeForClamp
 import com.devoid.keysync.util.keyCodeToString
 import kotlin.math.max
 import kotlin.math.min
@@ -142,9 +145,16 @@ fun ItemsContainer(
         onBindConsumed()
     }
 
+    // The overlay window is the coordinate space the items live in. Measuring it
+    // here, instead of trusting a display metric, is what keeps the clamp honest
+    // when the window is smaller than the display -- which is exactly what
+    // happens in landscape, where the left edge is the one that gets cut off.
+    var viewport by remember { mutableStateOf(Size.Zero) }
+
     Box(
         modifier
             .fillMaxSize()
+            .onSizeChanged { viewport = Size(it.width.toFloat(), it.height.toFloat()) }
     ) {
         containerItems.forEach { item ->
             key(item.id) {
@@ -171,9 +181,15 @@ fun ItemsContainer(
                             offset = position,
                             onScreenCenter = { item.touchCenter = it; onItemMeasured(item) },
                             onOffsetChange = {
-                                item.position += it
-                                position += it
-                                item.anchorPosition = item.position
+                                val target = clampToViewport(
+                                    position + it,
+                                    item.layoutSizeForClamp(scale),
+                                    scale,
+                                    viewport,
+                                )
+                                item.position = target
+                                position = target
+                                item.anchorPosition = target
                             }
                         ) {
                             BagMapKey(
@@ -206,8 +222,14 @@ fun ItemsContainer(
                             offset = cancelableKeyPosition,
                             onScreenCenter = { item.cancelTouchCenter = it; onItemMeasured(item) },
                             onOffsetChange = {
-                                item.cancelPosition += it
-                                cancelableKeyPosition += it
+                                val target = clampToViewport(
+                                    cancelableKeyPosition + it,
+                                    item.layoutSizeForClamp(scale),
+                                    scale,
+                                    viewport,
+                                )
+                                item.cancelPosition = target
+                                cancelableKeyPosition = target
                             }
                         ) {
                             CancelKey(
@@ -223,9 +245,15 @@ fun ItemsContainer(
                     offset = position,
                     onScreenCenter = { item.touchCenter = it; onItemMeasured(item) },
                     onOffsetChange = {
-                        item.position += it
-                        position += it
-                        item.anchorPosition = item.position
+                        val target = clampToViewport(
+                            position + it,
+                            item.layoutSizeForClamp(scale),
+                            scale,
+                            viewport,
+                        )
+                        item.position = target
+                        position = target
+                        item.anchorPosition = target
                     }
                 ) {
                     when (item) {

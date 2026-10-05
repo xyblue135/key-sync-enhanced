@@ -368,12 +368,16 @@ class MainActivityViewModel @Inject constructor(
     fun applyPreset(packageName: String, presetId: String): String? {
         val preset = _presets.value.firstOrNull { it.id == presetId }
             ?: return context.getString(R.string.main_preset_not_found)
-        val metrics = context.resources.displayMetrics
+        // A preset's normalized coordinates are relative to the space the items
+        // are drawn in, which is the overlay window -- not the Activity's display
+        // metrics. The two disagree about system bars and about orientation, and
+        // the overlay is the one the layout is persisted against.
+        val viewport = stateManager.viewportForLayout
         return try {
             val items = presetRepository.toRuntimeItems(
                 preset = preset,
-                screenWidth = metrics.widthPixels,
-                screenHeight = metrics.heightPixels,
+                screenWidth = viewport.x.toInt(),
+                screenHeight = viewport.y.toInt(),
             )
             if (items.isEmpty()) {
                 context.getString(R.string.main_preset_empty)

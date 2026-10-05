@@ -1,6 +1,7 @@
 package com.devoid.keysync.model
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 
 /** Project a saved layout independently along each axis; never mutate the saved items. */
 internal fun projectLayout(items: List<DraggableItem>, from: Offset, to: Offset, buttonScale: Float = 1f): List<DraggableItem> {
@@ -27,9 +28,19 @@ internal fun projectLayout(items: List<DraggableItem>, from: Offset, to: Offset,
             is DraggableItem.CancelableKey -> item.copy(position = position(item.position, item.size),
                 cancelPosition = position(item.cancelPosition, item.size),
                 anchorPosition = item.anchorPosition?.let { position(it, item.size) })
-            is DraggableItem.WASDGroup -> item.copy(position = point(item.position),
-                center = point(item.center), w = point(item.w), a = point(item.a),
-                s = point(item.s), d = point(item.d), anchorPosition = item.anchorPosition?.let(::point))
+            is DraggableItem.WASDGroup -> {
+                // A WASD group has no cached size, so its extent comes from the
+                // geometry it last reported. Without this an in-range source can
+                // still project to a position whose drawn box leaves the screen.
+                val extent = item.layoutSizeForClamp(item.scale)
+                val limit = Size(to.x, to.y)
+                item.copy(
+                    position = clampToViewport(point(item.position), extent, item.scale, limit),
+                    center = point(item.center), w = point(item.w), a = point(item.a),
+                    s = point(item.s), d = point(item.d),
+                    anchorPosition = item.anchorPosition
+                        ?.let { clampToViewport(point(it), extent, item.scale, limit) })
+            }
         }
     }
 }

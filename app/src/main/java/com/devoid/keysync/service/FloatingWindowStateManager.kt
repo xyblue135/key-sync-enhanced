@@ -10,6 +10,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.core.view.WindowInsetsCompat
 import com.devoid.keysync.data.local.DataStoreManager
 import com.devoid.keysync.data.local.ProfilesLoad
@@ -30,6 +31,7 @@ import com.devoid.keysync.domain.KEYCODE_RMC
 import com.devoid.keysync.data.external.ShizukuSystemServerAPi
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.projectLayout
+import com.devoid.keysync.model.clampToViewport
 import com.devoid.keysync.model.SwapPair
 import com.devoid.keysync.model.ProfileBundle
 import com.devoid.keysync.model.independentCopy
@@ -112,6 +114,15 @@ class FloatingWindowStateManager @Inject constructor(
     private var overlayViewport: Offset? = null
     // Dimensions of the coordinates currently in _containerItems, not today's orientation.
     private var layoutViewport: Offset? = null
+
+    /**
+     * The rectangle the on-screen items are laid out in, and therefore the space
+     * their coordinates are expressed in. Callers that build items from a preset
+     * must scale by this rather than by a display metric: the two disagree about
+     * system bars, and about orientation.
+     */
+    val viewportForLayout: Offset
+        get() = overlayViewport ?: currentScreenSize()
 
     fun onOverlayFrame(width: Int, height: Int, origin: Offset) {
         if (width <= 0 || height <= 0) return
@@ -685,6 +696,49 @@ class FloatingWindowStateManager @Inject constructor(
             overlayOrigin = it - item.position - Offset(size / 2f, size / 2f)
         }
         eventHandler.updateMeasuredPosition(item)
+        pullItemIntoViewport(item)
+    }
+
+    /**
+     * Pull an item back inside the visible overlay once its real size is known.
+     *
+     * A layout saved on another device, restored into a differently sized window,
+     * or dragged past the edge before the drag clamp existed can sit outside the
+     * overlay, where it is drawn clipped and can no longer be grabbed. Compose
+     * reports a button's size only after it has been measured, which is why this
+     * runs from [updateMeasuredPosition] rather than from the drag handler.
+     */
+    private fun pullItemIntoViewport(item: DraggableItem) {
+        val viewport = overlayViewport ?: return
+        val size = when (item) {
+            is DraggableItem.FixedKey -> item.size
+            is DraggableItem.VariableKey -> item.size
+            is DraggableItem.CancelableKey -> item.size
+            // A WASD group has no cached measurement; the drag clamp covers it.
+            is DraggableItem.WASDGroup -> return
+        }
+        if (size <= 0) return
+        val target = clampToViewport(
+            item.position,
+            Size(size.toFloat(), size.toFloat()),
+            _appConfig.value.buttonScale,
+            Size(viewport.x, viewport.y),
+        )
+        if (target == item.position) return
+        val origin = overlayOrigin ?: Offset.Zero
+        _containerItems.value = _containerItems.value.map { current ->
+            if (current.id != item.id) {
+                current
+            } else {
+                current.copy(position = target).also {
+                    it.anchorPosition = target
+                    it.touchCenter = origin + target + Offset(size / 2f, size / 2f)
+                }
+            }
+        }
+        eventHandler.updateKeyMapping(_containerItems.value)
+        persistActiveProfile()
+        Log.i(TAG, "pulled item ${item.id} back into the viewport: ${item.position} -> $target")
     }
 
     fun consumePendingVariableKeyBind() {
@@ -730,7 +784,10 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     private fun nextItemOffset(): Offset {
-        val screen = currentScreenSize()
+        // New items must land inside the window that will draw them, not inside
+        // the raw display: those differ by the system bars and, before the
+        // overlay reports its first frame, by nothing at all.
+        val screen = viewportForLayout
         val width = screen.x
         val height = screen.y
         val density = displayMetrics.density

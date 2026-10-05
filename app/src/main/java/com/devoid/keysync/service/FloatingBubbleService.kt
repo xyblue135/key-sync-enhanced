@@ -9,6 +9,7 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import android.view.MotionEvent
@@ -259,14 +260,30 @@ class FloatingBubbleService : Service() {
     private fun init() {
 
         // 屏幕上只保留按键容器这一个窗口（气泡已删除，控制入口收进通知栏）。
+        // FLAG_LAYOUT_NO_LIMITS let this window be laid out larger than, or
+        // offset from, the visible screen. The Compose tree then measured
+        // whatever rectangle it was handed and every button coordinate was
+        // expressed against that phantom space -- in landscape the left strip
+        // fell outside it, so anything dragged there was drawn clipped. The
+        // window is MATCH_PARENT, so the flag bought nothing and only broke the
+        // coordinate space.
         val baseLP = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         )
         baseLP.gravity = Gravity.START or Gravity.TOP
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Without this the window is inset around a display cutout, which
+            // reintroduces the same unreachable strip on the cutout side.
+            baseLP.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            baseLP.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
 
         val itemsContainerLP = WindowManager.LayoutParams()
         itemsContainerLP.copyFrom(baseLP)
@@ -299,7 +316,7 @@ class FloatingBubbleService : Service() {
                 }
                 if (expanded) {
                     itemsContainerLP.flags =
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                     stateManager.get().windowManager.updateViewLayout(
                         containerView,
                         itemsContainerLP
@@ -317,7 +334,7 @@ class FloatingBubbleService : Service() {
                     containerView?.postDelayed({ containerView?.requestFocus() }, 500)
                 } else {
                     itemsContainerLP.flags =
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                     stateManager.get().windowManager.updateViewLayout(
                         containerView,
                         itemsContainerLP
