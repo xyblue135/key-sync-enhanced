@@ -39,12 +39,20 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write(f'version_name={version}\n')
           PY
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: zulu
           java-version: 17
           cache: gradle
-      - uses: android-actions/setup-android@v3
+      # 与 android-ci.yml 相同：绕开 setup-android@v3 的 sdkmanager 兼容问题
+      - name: Accept Android SDK licenses
+        run: |
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf '%s\n' \
+            '24333f8a63b6825ea9c5514f83c2829b004d1fee' \
+            '8933bad161af4178b1185d1a37fbf41ea5269c55' \
+            'd56f5187479451eabf01fb78af6dfcb131a6481e' > "$ANDROID_HOME/licenses/android-sdk-license"
+          printf '84831b9409646a918e30573bab4c9c9131d7d3a5\n' > "$ANDROID_HOME/licenses/android-sdk-preview-license"
       - run: chmod +x gradlew
       - name: Run release gates
         run: ./gradlew :app:testDebugUnitTest :app:lintDebug --console=plain
