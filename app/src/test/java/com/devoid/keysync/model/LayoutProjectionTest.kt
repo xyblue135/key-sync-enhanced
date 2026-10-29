@@ -43,14 +43,32 @@ class LayoutProjectionTest {
         assertEquals(1642.857f, projected.position.x, 0.01f)
         assertEquals(724.348f, projected.position.y, 0.01f)
     }
-    @Test fun wasdGeometryScalesWithOrientation() {
+    @Test fun projectionLeavesReportedWasdGeometryAlone() {
+        // center/w/a/s/d are absolute screen coordinates that Compose re-measures
+        // from the real layout. Projecting them scaled them about the screen
+        // origin, which detached the joystick origin and deflection from the
+        // drawn group: walking survived that, sprint did not.
         val group = DraggableItem.WASDGroup(1, Offset.Zero,
             center = Offset(300f, 700f), w = Offset(300f, 600f), a = Offset(200f, 700f),
             s = Offset(300f, 800f), d = Offset(400f, 700f))
         val projected = projectLayout(listOf(group), Offset(1000f, 1000f), Offset(2000f, 1000f)).single() as DraggableItem.WASDGroup
-        assertEquals(600f, projected.center.x, 0.01f)
-        assertEquals(600f, projected.w.y, 0.01f)
-        assertEquals(800f, projected.d.x, 0.01f)
+        assertEquals(Offset(300f, 700f), projected.center)
+        assertEquals(Offset(300f, 600f), projected.w)
+        assertEquals(Offset(200f, 700f), projected.a)
+        assertEquals(Offset(300f, 800f), projected.s)
+        assertEquals(Offset(400f, 700f), projected.d)
+    }
+
+    @Test fun projectionKeepsTheSprintDeflectionIntact() {
+        // The sprint target is derived from (w - center) and (d - center). If the
+        // projection scaled those, the deflection would shrink and the game would
+        // keep registering a walk while no longer registering a sprint.
+        val group = DraggableItem.WASDGroup(1, Offset(100f, 600f), scale = 1f,
+            center = Offset(250f, 750f), w = Offset(250f, 600f), a = Offset(100f, 750f),
+            s = Offset(250f, 900f), d = Offset(400f, 750f))
+        val projected = projectLayout(listOf(group), Offset(2608f, 1200f), Offset(2400f, 1080f)).single() as DraggableItem.WASDGroup
+        assertEquals((group.w - group.center).getDistance(), (projected.w - projected.center).getDistance(), 0.01f)
+        assertEquals((group.d - group.center).getDistance(), (projected.d - projected.center).getDistance(), 0.01f)
     }
     @Test fun keyCannotBeProjectedPastTheLeftOrTopEdge() {
         // A button saved off the left edge -- the classic landscape symptom --

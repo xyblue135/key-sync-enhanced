@@ -809,6 +809,10 @@ class EventHandler(
 
     /** Refresh measured coordinates without cancelling active WASD/aim contacts. */
     fun updateMeasuredPosition(item: DraggableItem) {
+        if (item is DraggableItem.WASDGroup) {
+            refreshWasdGeometry(item)
+            return
+        }
         val key = when (item) {
             is DraggableItem.FixedKey -> item.keyCode
             is DraggableItem.VariableKey -> item.keyCode
@@ -820,6 +824,65 @@ class EventHandler(
         }
         item.cancelTouchCenter?.let { center ->
             cancelKeyMap[key]?.let { cancelKeyMap[key] = it.copy(position = center, end = center) }
+        }
+    }
+
+    /**
+     * Rebuild the joystick entries for [item] once Compose has measured it.
+     *
+     * [updateKeyMapping] runs before the first layout pass of a new layout, so
+     * the coordinates it reads are the ones the group reported for the previous
+     * layout. After a rotation or a viewport change those are stale, and the
+     * joystick origin and deflection no longer match the group on screen.
+     * Walking survives a stale origin; sprint does not, because the sprint entry
+     * has to sit well outside the centre to cross the game's sprint threshold.
+     *
+     * Only the WASD entries are rewritten, so live key contacts and the aim
+     * contact are left alone.
+     */
+    fun refreshWasdGeometry(item: DraggableItem) {
+        val group = item as? DraggableItem.WASDGroup ?: return
+        if (!pointerIds.containsKey(KEYCODE_WASD)) return
+        putWasdEntries(group)
+    }
+
+    /** Publish the joystick entries for [item] into [wasdMap]. */
+    private fun putWasdEntries(item: DraggableItem.WASDGroup) {
+        wasdMap[MASK_W] = KeyMap(position = item.w, center = item.center)
+        wasdMap[MASK_A] = KeyMap(position = item.a, center = item.center)
+        wasdMap[MASK_S] = KeyMap(position = item.s, center = item.center)
+        wasdMap[MASK_D] = KeyMap(position = item.d, center = item.center)
+        val wa = Offset(
+            x = item.w.x - ((item.w.x - item.a.x) / 2),
+            y = item.w.y + ((item.a.y - item.w.y) / 2)
+        )
+        val wd = Offset(
+            x = item.w.x + ((item.d.x - item.w.x) / 2),
+            y = item.w.y + ((item.d.y - item.w.y) / 2)
+        )
+        val sa = Offset(
+            x = item.a.x + ((item.s.x - item.a.x) / 2),
+            y = item.a.y + ((item.s.y - item.a.y) / 2)
+        )
+        val sd = Offset(
+            x = item.s.x + ((item.d.x - item.s.x) / 2),
+            y = item.s.y + ((item.d.y - item.s.y) / 2)
+        )
+        wasdMap[MASK_W or MASK_A] = KeyMap(position = wa, center = item.center)
+        wasdMap[MASK_W or MASK_D] = KeyMap(position = wd, center = item.center)
+        wasdMap[MASK_S or MASK_A] = KeyMap(position = sa, center = item.center)
+        wasdMap[MASK_S or MASK_D] = KeyMap(position = sd, center = item.center)
+
+        val forwardDistance = item.sprintForwardDistance
+            ?: ((item.w - item.center).getDistance() * item.sprintScale)
+        val sideDistance = item.sprintSideDistance
+            ?: ((item.d - item.center).getDistance() * item.sprintScale)
+        listOf(MASK_W, MASK_A, MASK_D, MASK_W or MASK_A, MASK_W or MASK_D).forEach { mask ->
+            val forward = if (mask and MASK_W != 0) 1 else 0
+            val side = if (mask and MASK_A != 0) -1 else if (mask and MASK_D != 0) 1 else 0
+            val target = item.center + sprintOffset(forward, side,
+                forwardDistance.coerceIn(10f, 1000f), sideDistance.coerceIn(10f, 1000f))
+            wasdMap[mask or MASK_SPRINT] = KeyMap(position = target, center = item.center)
         }
     }
 
@@ -887,43 +950,7 @@ class EventHandler(
         items.forEach { item ->
             when (item) {
                 is DraggableItem.WASDGroup -> {
-                    wasdMap[MASK_W] = KeyMap(position = item.w, center = item.center)
-                    wasdMap[MASK_A] = KeyMap(position = item.a, center = item.center)
-                    wasdMap[MASK_S] = KeyMap(position = item.s, center = item.center)
-                    wasdMap[MASK_D] = KeyMap(position = item.d, center = item.center)
-                    val wa = Offset(
-                        x = item.w.x - ((item.w.x - item.a.x) / 2),
-                        y = item.w.y + ((item.a.y - item.w.y) / 2)
-                    )
-                    val wd = Offset(
-                        x = item.w.x + ((item.d.x - item.w.x) / 2),
-                        y = item.w.y + ((item.d.y - item.w.y) / 2)
-                    )
-                    val sa = Offset(
-                        x = item.a.x + ((item.s.x - item.a.x) / 2),
-                        y = item.a.y + ((item.s.y - item.a.y) / 2)
-                    )
-                    val sd = Offset(
-                        x = item.s.x + ((item.d.x - item.s.x) / 2),
-                        y = item.s.y + ((item.d.y - item.s.y) / 2)
-                    )
-                    wasdMap[MASK_W or MASK_A] = KeyMap(position = wa, center = item.center)
-                    wasdMap[MASK_W or MASK_D] = KeyMap(position = wd, center = item.center)
-                    wasdMap[MASK_S or MASK_A] = KeyMap(position = sa, center = item.center)
-                    wasdMap[MASK_S or MASK_D] = KeyMap(position = sd, center = item.center)
-
-                    val forwardDistance = item.sprintForwardDistance
-                        ?: ((item.w - item.center).getDistance() * item.sprintScale)
-                    val sideDistance = item.sprintSideDistance
-                        ?: ((item.d - item.center).getDistance() * item.sprintScale)
-                    listOf(MASK_W, MASK_A, MASK_D, MASK_W or MASK_A, MASK_W or MASK_D).forEach { mask ->
-                        val forward = if (mask and MASK_W != 0) 1 else 0
-                        val side = if (mask and MASK_A != 0) -1 else if (mask and MASK_D != 0) 1 else 0
-                        val target = item.center + sprintOffset(forward, side,
-                            forwardDistance.coerceIn(10f, 1000f), sideDistance.coerceIn(10f, 1000f))
-                        wasdMap[mask or MASK_SPRINT] = KeyMap(position = target, center = item.center)
-                    }
-
+                    putWasdEntries(item)
                     alloc(KEYCODE_WASD)
                 }
 

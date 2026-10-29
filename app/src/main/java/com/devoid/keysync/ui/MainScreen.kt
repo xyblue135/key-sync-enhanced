@@ -229,6 +229,10 @@ fun MainScreen(
     val appConfig by viewModel.appConfig.collectAsState()
     val connectedDevices by viewModel.connectedDevices.collectAsState()
     val presets by viewModel.presets.collectAsState()
+    // Resolution / dpi, plus the overlay viewport and the active profile's
+    // baseline. The last two are what explain a layout that "moved by itself".
+    val overlayViewport by viewModel.overlayViewport.collectAsState()
+    val layoutBaseline by viewModel.activeLayoutBaseline.collectAsState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -407,6 +411,18 @@ fun MainScreen(
                 .padding(contentPadding)
                 .consumeWindowInsets(contentPadding)
         ) {
+            DeviceInfoCard(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                viewport = overlayViewport,
+                baseline = layoutBaseline,
+                onCopied = {
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            context.getString(R.string.device_info_copied)
+                        )
+                    }
+                }
+            )
             if (apps.isEmpty()) {
                 EmptyGamesHint(
                     modifier = Modifier

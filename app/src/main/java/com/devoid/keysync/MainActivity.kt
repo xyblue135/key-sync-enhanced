@@ -207,6 +207,7 @@ class MainActivity : ComponentActivity() {
                         val keyHumanization by viewModel.keyHumanization.collectAsStateWithLifecycle()
                         val humanizationStrength by viewModel.humanizationStrength.collectAsStateWithLifecycle()
                         val overlayOpacity by viewModel.overlayOpacity.collectAsStateWithLifecycle()
+                        val statusBarVisible by viewModel.statusBarVisible.collectAsStateWithLifecycle()
                         // Collected so a change applied outside the save button
                         // (the profile-switch master switch) is reflected
                         // instead of being overwritten by a stale newConfig.
@@ -237,6 +238,8 @@ class MainActivity : ComponentActivity() {
                             onSetHumanizationStrength = viewModel::setHumanizationStrength,
                             overlayOpacity = overlayOpacity,
                             onSetOverlayOpacity = viewModel::setOverlayOpacity,
+                            statusBarVisible = statusBarVisible,
+                            onSetStatusBarVisible = viewModel::setStatusBarVisible,
                             onStopOverlay = {
                                 stopService(
                                     Intent(

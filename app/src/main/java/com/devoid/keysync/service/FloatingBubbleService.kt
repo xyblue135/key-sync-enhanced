@@ -107,6 +107,7 @@ class FloatingBubbleService : Service() {
         /** 通知栏 action：全部回投到本 Service，由 onStartCommand 分发。 */
         private const val ACTION_TOGGLE_EDIT = "com.devoid.keysync.action.TOGGLE_EDIT"
         private const val ACTION_TOGGLE_KEYS = "com.devoid.keysync.action.TOGGLE_KEYS"
+        private const val ACTION_TOGGLE_STATUS = "com.devoid.keysync.action.TOGGLE_STATUS"
         private const val ACTION_STOP = "com.devoid.keysync.action.STOP"
 
         private val _isRunning = MutableStateFlow(false)
@@ -138,6 +139,7 @@ class FloatingBubbleService : Service() {
         when (intent?.action) {
             ACTION_TOGGLE_EDIT -> stateManager.get().toggleEditMode()
             ACTION_TOGGLE_KEYS -> stateManager.get().toggleKeysVisible()
+            ACTION_TOGGLE_STATUS -> stateManager.get().toggleStatusBarVisible()
         }
 
         _isRunning.value = true
@@ -187,10 +189,17 @@ class FloatingBubbleService : Service() {
             if (sm.keysVisible.value) R.string.notification_action_hide_keys
             else R.string.notification_action_show_keys
         )
+        val statusLabel = getString(
+            if (sm.statusBarVisible.value) R.string.notification_action_hide_status
+            else R.string.notification_action_show_status
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID).apply {
             setSmallIcon(R.drawable.ic_launcher_foreground)
             setContentTitle(getString(R.string.app_name))
             setContentText(getString(R.string.notification_text_overlay_running))
+            // 折叠态只放得下 3 个 action，第 4 个要靠展开才可见。
+            // BigTextStyle 让通知可展开，从而不会让「关闭」彻底消失。
+            setStyle(NotificationCompat.BigTextStyle())
             setContentIntent(settingsPendingIntent())
             setOngoing(true)
             setSilent(true)
@@ -198,6 +207,7 @@ class FloatingBubbleService : Service() {
             setPriority(NotificationCompat.PRIORITY_LOW)
             addAction(0, editLabel, servicePendingIntent(ACTION_TOGGLE_EDIT, 101))
             addAction(0, keysLabel, servicePendingIntent(ACTION_TOGGLE_KEYS, 102))
+            addAction(0, statusLabel, servicePendingIntent(ACTION_TOGGLE_STATUS, 104))
             addAction(0, getString(R.string.notification_action_stop), servicePendingIntent(ACTION_STOP, 103))
         }.build()
     }
@@ -235,15 +245,16 @@ class FloatingBubbleService : Service() {
         )
     }
 
-    /** 编辑态 / 按键显隐变化时刷新通知，让 action 标签与实际状态保持一致。 */
+    /** 编辑态 / 按键显隐 / 提示条显隐变化时刷新通知，让 action 标签与实际状态保持一致。 */
     private fun observeNotificationState() {
         if (notificationObserverStarted) return
         notificationObserverStarted = true
         scope.launch {
             combine(
                 stateManager.get().isEditMode,
-                stateManager.get().keysVisible
-            ) { _, _ -> Unit }.collect {
+                stateManager.get().keysVisible,
+                stateManager.get().statusBarVisible
+            ) { _, _, _ -> Unit }.collect {
                 // startForeground 跑过之后才投递，避免「先 notify 后 startForeground」。
                 if (!overlayInitialized) return@collect
                 if (android.os.Build.VERSION.SDK_INT >= 33 &&
@@ -386,6 +397,7 @@ class FloatingBubbleService : Service() {
                 val pointerOffset by stateManager.get().pointerOffset.collectAsState()
                 val keysConfig by stateManager.get().keysConfig.collectAsState()
                 val keysVisible by stateManager.get().keysVisible.collectAsState()
+                val statusBarVisible by stateManager.get().statusBarVisible.collectAsState()
                 val pendingBindId by stateManager.get().pendingVariableKeyBind.collectAsState()
                 val pressedKeys by stateManager.get().pressedKeys.collectAsState()
                 val wheelCursor by stateManager.get().wheelCursor.collectAsState()
@@ -432,7 +444,9 @@ class FloatingBubbleService : Service() {
                             pressedKeys = pressedKeys,
                             onRequestFocus = { composeView.post { composeView.requestFocus() } },
                         )
-                        if (!isEditMode) {
+                        // 顶部状态提示条：预设名 · 模式 · 最近输入。
+                        // 通知栏的「隐藏提示」action 只关这一行，不影响按键容器。
+                        if (!isEditMode && statusBarVisible) {
                             val toggle = draggableItems.filterIsInstance<DraggableItem.FixedKey>()
                                 .firstOrNull { it.type == DraggableItemType.SHOOTING_MODE }
                             val mode = if (isShootingMode) "射击模式" else if (toggle == null)
@@ -456,7 +470,9 @@ class FloatingBubbleService : Service() {
                                 .align(Alignment.TopEnd)
                                 .padding(8.dp),
                             keysVisible = keysVisible,
+                            statusBarVisible = statusBarVisible,
                             onToggleKeysVisible = { stateManager.get().toggleKeysVisible() },
+                            onToggleStatusBarVisible = { stateManager.get().toggleStatusBarVisible() },
                             onToggleEditMode = { stateManager.get().toggleEditMode() },
                             onAddItem = { stateManager.get().addNewItem(it) },
                         )

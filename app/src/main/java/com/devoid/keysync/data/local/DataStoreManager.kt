@@ -76,6 +76,13 @@ class DataStoreManager internal constructor(
         val ADDED_PACKAGES = stringPreferencesKey("added_packages")
         val POINTER_SENSITIVITY = floatPreferencesKey("pointer_sensitivity")
         val OVERLAY_OPACITY = floatPreferencesKey("overlay_opacity")
+
+        /**
+         * 悬浮窗顶部状态提示条（预设名 · 模式 · 最近输入）的显隐。
+         * 全局键：提示条是纯信息展示，关掉它通常是想一直关着，
+         * 因此与 keysVisible 不同，这个开关会被持久化。
+         */
+        val STATUS_BAR_VISIBLE = booleanPreferencesKey("status_bar_visible")
         // 按键拟人化（随机偏移）开关与强度：全局键，对所有预设统一生效。
         val WASD_HUMANIZATION = booleanPreferencesKey("wasd_humanization")
         val KEY_HUMANIZATION = booleanPreferencesKey("key_humanization")

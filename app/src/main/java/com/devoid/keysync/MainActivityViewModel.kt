@@ -13,6 +13,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import android.view.InputDevice
+import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.devoid.keysync.data.local.DataStoreManager
@@ -28,9 +29,12 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
@@ -92,6 +96,32 @@ class MainActivityViewModel @Inject constructor(
     val humanizationStrength: StateFlow<Float> = stateManager.humanizationStrength
     /** 悬浮窗透明度（全局设置），设置页用；改动立即持久化。 */
     val overlayOpacity: StateFlow<Float> = stateManager.overlayOpacity
+    /** 顶部状态提示条（预设名 · 模式 · 最近输入）的显隐；全局设置，立即持久化。 */
+    val statusBarVisible: StateFlow<Boolean> = stateManager.statusBarVisible
+
+    /**
+     * Device/layout numbers for the home screen.
+     *
+     * [overlayViewport] is the overlay window's own pixel size and is null until
+     * the service reports its first frame. [activeLayoutBaseline] is the pixel
+     * size the active profile's coordinates were saved against. When the two
+     * disagree, [projectLayout] rescales every saved position on load, which is
+     * the usual explanation for "my buttons moved after rotating / changing
+     * device" -- so the home screen shows both instead of just the display size.
+     */
+    val overlayViewport: StateFlow<Offset?> = stateManager.reportedViewport
+
+    val activeLayoutBaseline: StateFlow<Offset?> = combine(
+        stateManager.profiles,
+        stateManager.activeProfileId,
+    ) { profiles, activeId ->
+        val active = profiles.firstOrNull { it.id == activeId } ?: profiles.firstOrNull()
+        if (active == null || active.layoutScreenWidth <= 0 || active.layoutScreenHeight <= 0) {
+            null
+        } else {
+            Offset(active.layoutScreenWidth.toFloat(), active.layoutScreenHeight.toFloat())
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** Resolve an app label once per package; the sheet re-renders on every
      *  keystroke of its search field and PackageManager lookups are not free. */
@@ -175,6 +205,7 @@ class MainActivityViewModel @Inject constructor(
     fun setKeyHumanization(enabled: Boolean) = stateManager.setKeyHumanization(enabled)
     fun setHumanizationStrength(value: Float) = stateManager.setHumanizationStrength(value)
     fun setOverlayOpacity(value: Float) = stateManager.saveOverlayOpacity(value)
+    fun setStatusBarVisible(visible: Boolean) = stateManager.setStatusBarVisible(visible)
 
     /**
      * Removes games by package name.

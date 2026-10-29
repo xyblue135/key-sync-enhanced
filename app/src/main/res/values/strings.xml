@@ -150,6 +150,33 @@
     <string name="main_preset_failed">应用预设失败：%1$s</string>
     <string name="main_launch_failed">无法启动 %1$s</string>
 
+    <!-- MainScreen：设备信息卡片 -->
+    <string name="device_info_title">设备信息</string>
+    <string name="device_info_summary">%1$d × %2$d px · %3$d dpi · %4$s · %5$s 英寸 · %6$s</string>
+    <string name="device_info_landscape">横屏</string>
+    <string name="device_info_portrait">竖屏</string>
+    <string name="device_info_label_physical">物理分辨率</string>
+    <string name="device_info_label_logical">逻辑尺寸</string>
+    <string name="device_info_label_density">屏幕密度</string>
+    <string name="device_info_label_diagonal">屏幕尺寸</string>
+    <string name="device_info_label_orientation">当前方向</string>
+    <string name="device_info_label_viewport">悬浮窗视口</string>
+    <string name="device_info_label_baseline">预设基准</string>
+    <string name="device_info_label_device">设备型号</string>
+    <string name="device_info_label_android">系统版本</string>
+    <string name="device_info_value_px">%1$d × %2$d px</string>
+    <string name="device_info_value_dp">%1$d × %2$d dp</string>
+    <string name="device_info_value_density">%1$d dpi · %2$s</string>
+    <string name="device_info_value_inches">%1$s 英寸</string>
+    <string name="device_info_value_viewport_unknown">悬浮窗未启动</string>
+    <string name="device_info_value_baseline_unrecorded">未记录</string>
+    <string name="device_info_value_android">Android %1$s · API %2$d</string>
+    <string name="device_info_mismatch">视口与预设基准不一致，布局会按比例缩放</string>
+    <string name="device_info_expand">展开详情</string>
+    <string name="device_info_collapse">收起详情</string>
+    <string name="device_info_copy">复制设备信息</string>
+    <string name="device_info_copied">设备信息已复制到剪贴板</string>
+
     <!-- SettingsScreen -->
     <string name="settings_discard_title">放弃修改？</string>
     <string name="settings_discard_message">有尚未保存的设置改动，确定要返回吗？</string>
@@ -209,11 +236,15 @@
     <string name="notification_action_exit_edit">退出编辑</string>
     <string name="notification_action_hide_keys">隐藏按键</string>
     <string name="notification_action_show_keys">显示按键</string>
+    <string name="notification_action_hide_status">隐藏提示</string>
+    <string name="notification_action_show_status">显示提示</string>
     <string name="notification_action_stop">关闭</string>
 
     <!-- 编辑态操作条 -->
-    <string name="overlay_hide_keys">隐藏</string>
-    <string name="overlay_show_keys">显示</string>
+    <string name="overlay_hide_keys">隐藏按键</string>
+    <string name="overlay_show_keys">显示按键</string>
+    <string name="overlay_hide_status">隐藏提示</string>
+    <string name="overlay_show_status">显示提示</string>
     <string name="overlay_done">完成</string>
     <string name="notification_controls_required">请开启 KeySync 通知及按键悬浮窗通知频道，才能使用编辑和关闭入口。开启后请重新启动游戏。</string>
     <string name="profiles_temporary_changes">预设未成功读取，本次修改不会保存，请重启后重试</string>

@@ -46,6 +46,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -89,6 +90,12 @@ class FloatingWindowStateManager @Inject constructor(
     private val _keysVisible = MutableStateFlow(true)
     val keysVisible = _keysVisible.asStateFlow()
 
+    // 顶部状态提示条（预设名 · 模式 · 最近输入）的显隐。
+    // 与 keysVisible 不同，这个开关是持久化的：提示条只是信息展示，
+    // 用户关掉它通常是想一直关着，而不是每次重启服务都要再关一次。
+    private val _statusBarVisible = MutableStateFlow(true)
+    val statusBarVisible = _statusBarVisible.asStateFlow()
+
     private val _appConfig = MutableStateFlow(AppConfig.Default)
     val keysConfig = _appConfig.asStateFlow()
 
@@ -115,6 +122,16 @@ class FloatingWindowStateManager @Inject constructor(
     // Dimensions of the coordinates currently in _containerItems, not today's orientation.
     private var layoutViewport: Offset? = null
 
+    private val _reportedViewport = MutableStateFlow<Offset?>(null)
+
+    /**
+     * The overlay window's own size in pixels, or null until the service reports
+     * its first frame. Unlike [viewportForLayout] this never falls back to a
+     * display metric, so the home screen can tell "the overlay has not measured
+     * itself yet" apart from "the overlay is exactly as big as the display".
+     */
+    val reportedViewport: StateFlow<Offset?> = _reportedViewport.asStateFlow()
+
     /**
      * The rectangle the on-screen items are laid out in, and therefore the space
      * their coordinates are expressed in. Callers that build items from a preset
@@ -132,6 +149,7 @@ class FloatingWindowStateManager @Inject constructor(
         if (layoutViewport != null) persistActiveProfile()
         overlayViewport = viewport
         overlayOrigin = origin
+        _reportedViewport.value = viewport
         val held = eventHandler.heldKeyCodes()
         val mouseHeld = eventHandler.heldMouseButtons()
         applyActiveProfile()
@@ -234,6 +252,9 @@ class FloatingWindowStateManager @Inject constructor(
                 dataStoreManager.getBoolean(DataStoreManager.KEY_HUMANIZATION).first() ?: false
             humanizationStrength.value =
                 dataStoreManager.getFloat(DataStoreManager.HUMANIZATION_STRENGTH).first() ?: 0f
+            // 顶部提示条是持久化开关：默认显示，用户关掉后下次启动仍然隐藏。
+            _statusBarVisible.value =
+                dataStoreManager.getBoolean(DataStoreManager.STATUS_BAR_VISIBLE).first() ?: true
             syncHumanization()
         }
         // Load profiles + active id. Run migration if this is the first run.
@@ -1010,6 +1031,20 @@ class FloatingWindowStateManager @Inject constructor(
     /** 一键切换悬浮窗按键的显示/隐藏。 */
     fun toggleKeysVisible() {
         _keysVisible.value = !_keysVisible.value
+    }
+
+    /**
+     * 一键切换顶部状态提示条（预设名 · 模式 · 最近输入）的显示/隐藏。
+     * 只影响这一行文字，不影响按键容器，也不影响任何注入逻辑。
+     */
+    fun toggleStatusBarVisible() {
+        setStatusBarVisible(!_statusBarVisible.value)
+    }
+
+    /** 设置顶部提示条的显隐并持久化，重启服务后保持。 */
+    fun setStatusBarVisible(visible: Boolean) {
+        _statusBarVisible.value = visible
+        scope.launch { dataStoreManager.save(DataStoreManager.STATUS_BAR_VISIBLE, visible) }
     }
 
     fun onKeyEvent(keyEvent: KeyEvent): Boolean {

@@ -102,6 +102,8 @@ fun SettingsScreen(
     onSetProfileMacros: (String, List<ClickMacro>) -> Unit = { _, _ -> },
     overlayOpacity: Float = 0.5f,
     onSetOverlayOpacity: (Float) -> Unit = {},
+    statusBarVisible: Boolean = true,
+    onSetStatusBarVisible: (Boolean) -> Unit = {},
     onStopOverlay: () -> Unit = {},
     wasdHumanization: Boolean = false,
     keyHumanization: Boolean = false,
@@ -542,6 +544,24 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "顶部状态提示条",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    text = "屏幕最上边那行「预设名 · 模式 · 最近输入」。关掉后游戏画面上不再出现，通知栏也有同名按钮，改动立即生效并会保存。",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = statusBarVisible,
+                                onCheckedChange = onSetStatusBarVisible
+                            )
+                        }
                     }
                 }
                 Card(modifier = Modifier.fillMaxWidth()) {

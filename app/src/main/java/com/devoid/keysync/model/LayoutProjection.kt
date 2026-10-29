@@ -34,10 +34,15 @@ internal fun projectLayout(items: List<DraggableItem>, from: Offset, to: Offset,
                 // still project to a position whose drawn box leaves the screen.
                 val extent = item.layoutSizeForClamp(item.scale)
                 val limit = Size(to.x, to.y)
+                // center/w/a/s/d are absolute screen coordinates that Compose
+                // re-measures from the real layout (the WASD group's
+                // onGloballyPositioned). They are not offsets, so scaling them
+                // about the screen origin would leave the joystick origin and
+                // deflection detached from the drawn group. The measurement
+                // callback republishes them instead, so only the layout offset
+                // is projected here.
                 item.copy(
                     position = clampToViewport(point(item.position), extent, item.scale, limit),
-                    center = point(item.center), w = point(item.w), a = point(item.a),
-                    s = point(item.s), d = point(item.d),
                     anchorPosition = item.anchorPosition
                         ?.let { clampToViewport(point(it), extent, item.scale, limit) })
             }

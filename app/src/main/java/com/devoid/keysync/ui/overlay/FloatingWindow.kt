@@ -286,6 +286,11 @@ fun ItemsContainer(
                                     item.a = Offset(layoutX, item.center.y)
                                     item.s = Offset(item.center.x, layoutY + coordinates.size.height * scale)
                                     item.d = Offset(layoutX + coordinates.size.width * scale, item.center.y)
+                                    // The joystick map is built from these four
+                                    // points, but it is populated before the
+                                    // first layout pass, so it would otherwise
+                                    // keep the geometry of the previous layout.
+                                    onItemMeasured(item)
 
                                 }, onPanIconDrag = { dragAmount ->
                                 val scaleAmount = scale + (dragAmount.y / 500)
@@ -702,7 +707,9 @@ fun DraggableItem(
 fun EditToolbar(
     modifier: Modifier = Modifier,
     keysVisible: Boolean,
+    statusBarVisible: Boolean = true,
     onToggleKeysVisible: () -> Unit,
+    onToggleStatusBarVisible: () -> Unit = {},
     onToggleEditMode: () -> Unit,
     onAddItem: (DraggableItemType) -> Unit,
 ) {
@@ -726,6 +733,12 @@ fun EditToolbar(
                 Text(
                     if (keysVisible) stringResource(R.string.overlay_hide_keys)
                     else stringResource(R.string.overlay_show_keys)
+                )
+            }
+            TextButton(onClick = onToggleStatusBarVisible) {
+                Text(
+                    if (statusBarVisible) stringResource(R.string.overlay_hide_status)
+                    else stringResource(R.string.overlay_show_status)
                 )
             }
             TextButton(onClick = onToggleEditMode) {
