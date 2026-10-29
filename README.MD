@@ -13,7 +13,7 @@
 | namespace / applicationId | `com.devoid.keysync` |
 | compileSdk / targetSdk | 36 |
 | minSdk | 29 |
-| versionCode / versionName | 21 / `1.45-android16` |
+| versionCode / versionName | 24 / `1.48-android16` |
 | debug 变体 | applicationId 后缀 `.fpsdebug`，versionName 后缀 `-debug` |
 | Kotlin / Java | 17 |
 
@@ -176,7 +176,20 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
 
 ---
 
-## 8. 当前版本：1.45 鼠标扩展与独立点击宏
+## 8. 当前版本：1.48 设备信息卡片、状态提示条开关与摇杆几何刷新
+
+2026-10-28 提交 `fa3f61e`，标签 `v1.48-android16`。**真机验证未完成。**
+
+- **主页设备信息卡片**：物理分辨率、逻辑尺寸、密度、屏幕尺寸、方向、设备型号与系统版本，可展开、可复制。同时显示**悬浮窗视口**与**激活预设的基准分辨率**——两者不一致时 `projectLayout()` 会按比例缩放所有坐标，这是「旋转/换设备后按钮位置变了」的常见解释，卡片会对该状态给出提示。
+- **悬浮窗顶部状态提示条开关**：提示条（预设名 · 模式 · 最近输入）的显隐改走全局持久化键 `status_bar_visible`（`DataStoreManager`）。设置页有开关，编辑工具条与通知栏有显隐按钮，改动立即生效。与 `keysVisible` 不同：关闭后重启仍保持关闭（有 `StatusBarSettingTest` 覆盖）。
+- **WASD 摇杆几何随布局刷新**：`EventHandler.refreshWasdGeometry()` 在 Compose 完成测量后重建摇杆条目。`updateKeyMapping()` 早于首次布局，读到的是上一个布局的坐标——旋转/视口变化后走位尚可，疾跑必坏（疾跑注入点必须落在实际屏幕位置的外侧才能越过游戏阈值）。只重写 WASD 条目，不触碰普通按键与开镜触点（改动风险见 6.1，红线不变）。
+- 新增 `StatusBarSettingTest`、`DeviceInfoTest`，扩展 `LayoutProjectionTest`。
+
+### 1.46（补记）
+
+- 修复横屏左侧按钮被截断：统一悬浮窗坐标系（提交 `a66d2ec`）。
+
+### 1.45 鼠标扩展与独立点击宏（保留）
 
 - 原生识别后退／前进侧键，合并 Android 鼠标事件与鼠标来源的 Back/Forward 键事件，避免重复触发和误返回。
 - 滚轮上／下／左／右可以绑定普通点击或宏；小数增量累计到完整刻度，已打开的旧轮盘优先使用滚轮。
