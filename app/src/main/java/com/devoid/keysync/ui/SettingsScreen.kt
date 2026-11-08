@@ -74,6 +74,7 @@ import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.ClickMacro
+import com.devoid.keysync.model.FeatureTier
 import com.devoid.keysync.model.SwapPair
 import com.devoid.keysync.model.ThemePreference
 import com.devoid.keysync.model.TouchMode
@@ -104,6 +105,8 @@ fun SettingsScreen(
     onSetOverlayOpacity: (Float) -> Unit = {},
     statusBarVisible: Boolean = true,
     onSetStatusBarVisible: (Boolean) -> Unit = {},
+    featureTier: FeatureTier = FeatureTier.FULL,
+    onSetFeatureTier: (FeatureTier) -> Unit = {},
     onStopOverlay: () -> Unit = {},
     wasdHumanization: Boolean = false,
     keyHumanization: Boolean = false,
@@ -206,9 +209,11 @@ fun SettingsScreen(
                 .verticalScroll(state = scrollState)
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FeatureTierCard(tier = featureTier, onSelect = onSetFeatureTier)
                 ProfileManagerCard(
                     profiles = profiles,
                     activeProfileId = activeProfileId,
+                    advanced = featureTier == FeatureTier.FULL,
                     onCreate = onCreateProfile,
                     onExportAllProfiles = onExportAllProfiles,
                     onSwitch = onSwitchProfile,
@@ -696,6 +701,73 @@ fun KeyConfigTextField(
 }
 
 /**
+ * 基础 / 完整模式选择。只控制 UI 入口与宏是否参与分发，
+ * 已保存的布局和宏数据在任何模式下都原样保留。
+ */
+@Composable
+private fun FeatureTierCard(tier: FeatureTier, onSelect: (FeatureTier) -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                "功能模式",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                "基础模式只保留键鼠映射：宏会被停用、入口隐藏，预设导入导出也隐藏。已保存的布局与宏不会被删除，切回完整模式立即恢复。改动立即生效并保存。",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            FeatureTierOption(
+                tier = FeatureTier.BASIC,
+                current = tier,
+                title = "基础模式",
+                desc = "按键映射、悬浮窗、拟人化",
+                onSelect = onSelect
+            )
+            FeatureTierOption(
+                tier = FeatureTier.FULL,
+                current = tier,
+                title = "完整模式",
+                desc = "额外启用点击宏与预设导入导出",
+                onSelect = onSelect
+            )
+        }
+    }
+}
+
+@Composable
+private fun FeatureTierOption(
+    tier: FeatureTier,
+    current: FeatureTier,
+    title: String,
+    desc: String,
+    onSelect: (FeatureTier) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onSelect(tier) }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = current == tier, onClick = { onSelect(tier) })
+        Column(Modifier.padding(start = 4.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                desc,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
  * Card for managing multiple keymap profiles. Each row in the list is a
  * radio + name + (rename, delete) actions; a "+ 新建" button lets the user
  * create a fresh empty profile and immediately switch to it.
@@ -704,6 +776,7 @@ fun KeyConfigTextField(
 fun ProfileManagerCard(
     profiles: List<Profile>,
     activeProfileId: String?,
+    advanced: Boolean,
     onCreate: (String) -> Unit,
     onExportAllProfiles: () -> String,
     onSwitch: (String) -> Unit,
@@ -739,8 +812,10 @@ fun ProfileManagerCard(
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.primary
                 )
-                TextButton(onClick = { showImportDialog = true }) {
-                    Text(stringResource(R.string.profile_import))
+                if (advanced) {
+                    TextButton(onClick = { showImportDialog = true }) {
+                        Text(stringResource(R.string.profile_import))
+                    }
                 }
                 FilledTonalButton(onClick = { showNewDialog = true }) {
                     Icon(Icons.Rounded.Add, contentDescription = null)
@@ -753,8 +828,10 @@ fun ProfileManagerCard(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Row {
-                TextButton(onClick = { exportText = onExportAllProfiles() }) { Text("复制全部预设") }
+            if (advanced) {
+                Row {
+                    TextButton(onClick = { exportText = onExportAllProfiles() }) { Text("复制全部预设") }
+                }
             }
             HorizontalDivider()
             // LazyColumn, not Column: with a plain Column the rows overflowed
@@ -770,6 +847,7 @@ fun ProfileManagerCard(
                         profile = profile,
                         isActive = profile.id == activeProfileId,
                         canDelete = profiles.size > 1,
+                        advanced = advanced,
                         menuExpanded = menuProfile?.id == profile.id,
                         onMenuClick = { menuProfile = profile },
                         onMenuDismiss = { menuProfile = null },
@@ -939,6 +1017,7 @@ private fun ProfileRow(
     profile: Profile,
     isActive: Boolean,
     canDelete: Boolean,
+    advanced: Boolean,
     menuExpanded: Boolean,
     onMenuClick: () -> Unit,
     onMenuDismiss: () -> Unit,
@@ -1011,17 +1090,19 @@ private fun ProfileRow(
                         onDuplicate()
                     }
                 )
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.profile_export)) },
-                    onClick = {
-                        onMenuDismiss()
-                        onExport()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("点击宏（顺序点位）") },
-                    onClick = { onMenuDismiss(); onSetMacros() }
-                )
+                if (advanced) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.profile_export)) },
+                        onClick = {
+                            onMenuDismiss()
+                            onExport()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("点击宏（顺序点位）") },
+                        onClick = { onMenuDismiss(); onSetMacros() }
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text("交换对（换位键）") },
                     onClick = {

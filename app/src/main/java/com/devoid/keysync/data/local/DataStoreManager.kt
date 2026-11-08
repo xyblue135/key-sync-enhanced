@@ -83,6 +83,12 @@ class DataStoreManager internal constructor(
          * 因此与 keysVisible 不同，这个开关会被持久化。
          */
         val STATUS_BAR_VISIBLE = booleanPreferencesKey("status_bar_visible")
+
+        /**
+         * 功能模式（基础 / 完整）。全局键：这是设备级的「这个包要多复杂」选择，
+         * 不随预设存储，也不影响预设数据本身。
+         */
+        val FEATURE_TIER = stringPreferencesKey("feature_tier")
         // 按键拟人化（随机偏移）开关与强度：全局键，对所有预设统一生效。
         val WASD_HUMANIZATION = booleanPreferencesKey("wasd_humanization")
         val KEY_HUMANIZATION = booleanPreferencesKey("key_humanization")

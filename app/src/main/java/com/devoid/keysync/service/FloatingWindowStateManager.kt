@@ -22,6 +22,7 @@ import com.devoid.keysync.domain.ScrollTracker
 import com.devoid.keysync.domain.mouseButtonKeyCode
 import com.devoid.keysync.domain.mouseKeyAlias
 import com.devoid.keysync.model.ClickMacro
+import com.devoid.keysync.model.FeatureTier
 import com.devoid.keysync.model.validateClickMacros
 import com.devoid.keysync.util.keyCodeToString
 import com.devoid.keysync.domain.EventHandler
@@ -95,6 +96,11 @@ class FloatingWindowStateManager @Inject constructor(
     // 用户关掉它通常是想一直关着，而不是每次重启服务都要再关一次。
     private val _statusBarVisible = MutableStateFlow(true)
     val statusBarVisible = _statusBarVisible.asStateFlow()
+
+    // 功能模式：基础模式只保留键鼠映射本身，隐藏并停用宏与预设导入导出。
+    // 只影响 UI 与宏分发，不改写已保存的 Profile，切回完整模式立即恢复。
+    private val _featureTier = MutableStateFlow(FeatureTier.FULL)
+    val featureTier: StateFlow<FeatureTier> = _featureTier.asStateFlow()
 
     private val _appConfig = MutableStateFlow(AppConfig.Default)
     val keysConfig = _appConfig.asStateFlow()
@@ -255,6 +261,12 @@ class FloatingWindowStateManager @Inject constructor(
             // 顶部提示条是持久化开关：默认显示，用户关掉后下次启动仍然隐藏。
             _statusBarVisible.value =
                 dataStoreManager.getBoolean(DataStoreManager.STATUS_BAR_VISIBLE).first() ?: true
+            // 功能模式默认完整：缺失/读不出时不能静默降级成基础模式。
+            _featureTier.value = FeatureTier.fromStorage(
+                dataStoreManager.getString(DataStoreManager.FEATURE_TIER).first()
+            )
+            // 两条 init 协程的完成顺序不确定：若预设先加载完，这里要把刚读到的模式补应用一次。
+            syncMacros()
             syncHumanization()
         }
         // Load profiles + active id. Run migration if this is the first run.
@@ -512,7 +524,10 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     private fun syncMacros() {
-        eventHandler.setMacros(activeProfile()?.macros.orEmpty(),
+        // 基础模式下宏不参与键位分发；宏数据本身保留，切回完整模式后 syncMacros 会重新挂载。
+        val macros = if (_featureTier.value == FeatureTier.BASIC) emptyList()
+        else activeProfile()?.macros.orEmpty()
+        eventHandler.setMacros(macros,
             overlayViewport ?: currentScreenSize(), overlayOrigin ?: Offset.Zero)
     }
 
@@ -1045,6 +1060,17 @@ class FloatingWindowStateManager @Inject constructor(
     fun setStatusBarVisible(visible: Boolean) {
         _statusBarVisible.value = visible
         scope.launch { dataStoreManager.save(DataStoreManager.STATUS_BAR_VISIBLE, visible) }
+    }
+
+    /**
+     * 切换基础 / 完整模式。立即持久化；切到基础模式时宏从键位分发中摘除，
+     * 但 Profile 里的宏数据原样保留，切回完整模式会自动重新挂载。
+     */
+    fun setFeatureTier(tier: FeatureTier) {
+        if (_featureTier.value == tier) return
+        _featureTier.value = tier
+        syncMacros()
+        scope.launch { dataStoreManager.save(DataStoreManager.FEATURE_TIER, tier.storageValue) }
     }
 
     fun onKeyEvent(keyEvent: KeyEvent): Boolean {

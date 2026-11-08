@@ -69,6 +69,7 @@ import com.devoid.keysync.R
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.util.keyCodeToString
 import com.devoid.keysync.model.DraggableItemType
+import com.devoid.keysync.model.FeatureTier
 import com.devoid.keysync.model.TouchMode
 import com.devoid.keysync.ui.overlay.MacroPointsOverlay
 import com.devoid.keysync.ui.overlay.EditToolbar
@@ -398,6 +399,7 @@ class FloatingBubbleService : Service() {
                 val keysConfig by stateManager.get().keysConfig.collectAsState()
                 val keysVisible by stateManager.get().keysVisible.collectAsState()
                 val statusBarVisible by stateManager.get().statusBarVisible.collectAsState()
+                val featureTier by stateManager.get().featureTier.collectAsState()
                 val pendingBindId by stateManager.get().pendingVariableKeyBind.collectAsState()
                 val pressedKeys by stateManager.get().pressedKeys.collectAsState()
                 val wheelCursor by stateManager.get().wheelCursor.collectAsState()
@@ -460,11 +462,14 @@ class FloatingBubbleService : Service() {
                     }
                     // 编辑态操作条。非编辑态完全不渲染 —— 游戏时屏幕上不会有任何常驻控件。
                     if (isEditMode) {
-                        MacroPointsOverlay(
-                            macros = profiles.firstOrNull { it.id == activeId }?.macros.orEmpty(),
-                            onMove = { macro, step, x, y -> stateManager.get().updateMacroPoint(macro, step, x, y) },
-                            onDragFinished = { stateManager.get().saveMacroPoints() },
-                        )
+                        // 基础模式下宏入口隐藏，编号点也不再渲染；宏数据仍保留在 Profile 里。
+                        if (featureTier == FeatureTier.FULL) {
+                            MacroPointsOverlay(
+                                macros = profiles.firstOrNull { it.id == activeId }?.macros.orEmpty(),
+                                onMove = { macro, step, x, y -> stateManager.get().updateMacroPoint(macro, step, x, y) },
+                                onDragFinished = { stateManager.get().saveMacroPoints() },
+                            )
+                        }
                         EditToolbar(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)

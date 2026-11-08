@@ -21,6 +21,7 @@ import com.devoid.keysync.data.mapping.MappingPreset
 import com.devoid.keysync.data.mapping.MappingPresetRepository
 import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.ClickMacro
+import com.devoid.keysync.model.FeatureTier
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.SwapPair
 import com.devoid.keysync.service.FloatingBubbleService
@@ -98,6 +99,8 @@ class MainActivityViewModel @Inject constructor(
     val overlayOpacity: StateFlow<Float> = stateManager.overlayOpacity
     /** 顶部状态提示条（预设名 · 模式 · 最近输入）的显隐；全局设置，立即持久化。 */
     val statusBarVisible: StateFlow<Boolean> = stateManager.statusBarVisible
+    /** 功能模式（基础 / 完整）；全局设置，立即持久化。 */
+    val featureTier: StateFlow<FeatureTier> = stateManager.featureTier
 
     /**
      * Device/layout numbers for the home screen.
@@ -206,6 +209,7 @@ class MainActivityViewModel @Inject constructor(
     fun setHumanizationStrength(value: Float) = stateManager.setHumanizationStrength(value)
     fun setOverlayOpacity(value: Float) = stateManager.saveOverlayOpacity(value)
     fun setStatusBarVisible(visible: Boolean) = stateManager.setStatusBarVisible(visible)
+    fun setFeatureTier(tier: FeatureTier) = stateManager.setFeatureTier(tier)
 
     /**
      * Removes games by package name.

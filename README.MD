@@ -19,6 +19,24 @@
 
 依赖要点：Jetpack Compose（含 `constraintlayout-compose`）、Hilt 2.55（KSP）、kotlinx-serialization、DataStore Preferences、Navigation Compose、Shizuku API。
 
+### 1.1 基础模式与完整模式
+
+同一个 APK 内置两档功能模式，默认**完整模式**。切换入口在设置页顶部的「功能模式」卡片，改动立即生效并持久化（全局键 `feature_tier`）。
+
+| 能力 | 基础模式 | 完整模式 |
+|---|---|---|
+| 键鼠 → 触屏映射（预设、WASD、开火、倍镜、滚轮四向） | ✅ | ✅ |
+| 悬浮窗、编辑布局、按键显隐、通知栏控制面 | ✅ | ✅ |
+| 拟人化抖动、键位交换对、指针灵敏度、透明度、状态提示条 | ✅ | ✅ |
+| 点击宏（顺序点位、每宏独立开关、执行） | ❌ 停用且入口隐藏 | ✅ |
+| 预设导入 / 单预设导出 / 复制全部预设 | ❌ 隐藏 | ✅ |
+
+- **基础模式只裁剪「宏 + 便携配置」**：按键映射与悬浮窗的全部能力都保留。
+- **数据零风险**：基础模式只是不再把 `Profile.macros` 挂到键位分发上（`syncMacros` 传空列表），宏数据原样保留；切回完整模式立即恢复，不需要重新配置。
+- 基础模式下编辑布局不渲染宏编号点，预设菜单里也不显示「点击宏」与「导出」。
+- 存储值缺失、非法或旧版本升级时一律回退到**完整模式**，避免升级后功能静默消失。
+- 换了模式不需要重启服务，也不影响当前激活的预设与布局。
+
 ---
 
 ## 2. 构建与验证
@@ -57,12 +75,70 @@
 | `service/FloatingBubbleService.kt` | 前台服务 + 悬浮窗（WindowManager overlay）+ **通知栏控制面** |
 | `service/FloatingWindowStateManager.kt` | 全局状态中心（946 行）：Profile / 按键 / 编辑态 / 拟人化 / 迁移 / 持久化 |
 | `domain/EventHandler.kt` | 键鼠事件 → 触摸事件的核心状态机（856 行）：WASD 摇杆、开火、倍镜、滚轮、拟人化 |
+| `domain/MouseButtonTracker.kt` | 鼠标按钮位去重：把 `MotionEvent` 按钮与鼠标来源的 Back/Forward 键盘事件归一成一次边沿 |
+| `domain/MouseInputs.kt` | 侧键 / 滚轮四向的私有键码、鼠标键码映射、滚轮小数累计 |
+| `domain/EventInjectorImpl.kt` | 注入串行队列 + 高频 MOVE 合并（鼠标 125–1000Hz） |
+| `domain/PendingMoves.kt` | 单触点位移累加批次，合并时保留总位移 |
 | `domain/JoystickMotion.kt` | WASD 虚拟摇杆的「重锚点」逻辑（见 6.1，改动风险最高的小文件） |
 | `domain/MultiModeTouchHandlerImpl.kt`、`TouchToMouseTranslator.kt` | 点击 / 按住 / 滑动等手势模式与鼠标翻译 |
 | `data/mapping/MappingPresetRepository.kt` | 读取 `data/mapping/*.json` 预设 |
 | `data/local/DataStoreManager.kt` | DataStore 读写（单一配置仓） |
 | `ui/overlay/FloatingWindow.kt` | `ItemsContainer`（按键渲染）、`EditToolbar`（编辑态操作条）、`MenuItems`（加号菜单） |
 | `ui/overlay/ContainerItems.kt` | 单个可拖拽按键的渲染与手势 |
+
+### 3.1 鼠标输入
+
+鼠标链路与键盘分开，入口是 `FloatingWindowStateManager.onMouseEvent()`：
+
+1. `FloatingBubbleService` 对 ComposeView 请求 **pointer capture**，用 `setOnCapturedPointerListener` + `setOnGenericMotionListener` 收事件。
+2. **相对鼠标**（`SOURCE_MOUSE_RELATIVE`）直接把 `event.x / event.y` 当作增量；非相对源先取 `AXIS_RELATIVE_X/Y`，再回退到相邻 `rawX/rawY` 的差值。绝对坐标只用来算差值，不能直接当位移。
+3. `EventHandler.handlePointerMove()` 分流：轮盘激活时转轮盘；射击模式乘 `pointerSensitivity` 转视角；光标模式 1:1 移动光标，且**只有按住左键时才拖动 LMC 触点**（否则触点会被拖出屏幕，导致游戏重置全部触点、WASD 断触）。
+4. 注入走 `EventInjectorImpl` → `ShizukuSystemServerAPi`（见第 1 节）。
+
+支持范围：
+
+| 输入 | 私有键码 | 说明 |
+|---|---|---|
+| 左 / 右 / 中键 | LMB / RMB / MMB | `BUTTON_PRIMARY / SECONDARY / TERTIARY` |
+| 侧键 1 / 侧键 2 | `-10006` / `-10007` | 后退 / 前进，可绑点击、按住和宏 |
+| 滚轮上 / 下 / 左 / 右 | `-10008` ~ `-10011` | 上下取 `AXIS_VSCROLL`，左右取 `AXIS_HSCROLL` |
+
+- 鼠标私有键码从 `-10002` 起，全部是负值，不与 Android `KeyEvent` 键码重叠；`mouseInputKeyCodes` 是唯一清单。
+- **侧键去重**：同一颗侧键可能同时以 `MotionEvent.BUTTON_BACK/FORWARD` 和 `KeyEvent.KEYCODE_BACK/FORWARD` 到达。`mouseKeyAlias()` 只在 `source` 是鼠标时做别名，`MouseButtonTracker` 把两条路径归一成一次边沿，避免触发两次或误触发系统返回。
+- **滚轮**：`ScrollTracker` 累计小数增量（高分辨率滚轮 / 触控板），方向反转时先归零，单次累计限制 ±16；只有满一格才产生一次点击。轮盘打开时滚轮优先控制轮盘，不再触发普通绑定。
+- **1000Hz 高回报率**：注入用 `INJECT_INPUT_EVENT_MODE_ASYNC`，并用 `PendingMoves` 把同一触点两次 flush 之间的位移累加成一条 MOVE。**总位移不丢、中间采样点丢弃**，所以注入吞吐不足时是降采样而不是积压；`EventInjectorImpl` 的单线程队列保证 DOWN / MOVE / UP 不乱序。
+- 宏的 50ms 点击与拟人化 140ms 抖动循环不在这条路径上，和高回报率互不影响。
+
+### 3.2 鼠标按键数量的硬限制（G502 等）
+
+Android 的 `MotionEvent` 只定义 5 个按钮位（PRIMARY / SECONDARY / TERTIARY / BACK / FORWARD），`MouseButtonTracker` 也只认这 5 位。**第 6 个及以后的鼠标键不可能通过 `buttonState` 进入本应用。**
+
+| 按键 | 状态 |
+|---|---|
+| 左 / 右 / 中键、两个拇指侧键 | 原生支持 |
+| 滚轮上下、左右倾斜 | 支持；横向需要硬件与 ROM 都实际上报 `AXIS_HSCROLL` |
+| G502 的 DPI 加/减、狙击键、配置文件键、G Shift | **不支持**。多为固件级功能（狙击键只改传感器 DPI）或厂商私有 HID usage，Android `InputReader` 不产生事件，任何应用都拦不到 |
+| 被板载配置映射成键盘键的额外键 | **可支持**。以普通 `KeyEvent` 到达，按一下即可绑定 |
+
+**推荐做法（G502 等）**：在 PC 上用 Logitech G HUB 把额外键写入鼠标**板载内存**，映射成 `F13–F24` 这类手机上基本不用的键盘键；再把鼠标接到手机，在绑定窗口按一下就能当普通按键用，也能当宏触发键。G HUB 的映射不会在手机上生效，必须先写入板载内存。蓝牙连接的上报能力通常弱于 USB 接收器，测试时优先用接收器。
+
+**排查方法**：
+
+```powershell
+adb shell getevent -l
+```
+
+逐个按鼠标键，观察落到哪个 `/dev/input/eventX`：
+
+```
+BTN_LEFT / BTN_RIGHT / BTN_MIDDLE  → 左 / 右 / 中键
+BTN_SIDE / BTN_EXTRA               → 侧键 1 / 侧键 2
+REL_WHEEL / REL_HWHEEL             → 滚轮上/下、左/右
+KEY_F13 ... KEY_F24                → 额外键被当成键盘键（可绑定）
+完全没有输出                        → 固件级功能，无解
+```
+
+真机验收流程见 `docs/MOUSE_AND_MACROS.md`。
 
 ---
 
@@ -144,77 +220,7 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
 
 ---
 
-## 7. 历史改动：通知栏控制入口（已提交）
-
-主题：**控制入口从屏幕悬浮气泡迁移到通知栏**（用户要求「更隐蔽」）。
-
-- 屏幕上那枚 50dp 悬浮气泡**彻底删除**，游戏过程中屏幕上不再有任何常驻控件。
-- 通知栏成为唯一常驻控制面：点通知正文 → 设置页；三个 action = `编辑布局 / 退出编辑`、`隐藏按键 / 显示按键`、`关闭`；action 标签随状态自动刷新（`observeNotificationState()` 用 `combine(isEditMode, keysVisible)` 驱动 `notify`，并用 `notificationObserverStarted` 防止重复挂载）。
-- 编辑态保留极简操作条 `EditToolbar`（`＋` 添加按键 / 显隐 / 完成），**只在编辑态渲染**。
-- 原气泡里的设置面板拆解：预设切换与按钮大小设置页本来就有；**指针灵敏度**与**悬浮透明度**补进设置页；设置页底部新增「关闭悬浮窗」按钮。
-- 全局重命名：`isBubbleExpanded` → `isEditMode`，`onFloatingBubbleClick` → `toggleEditMode`。
-- 删除三个 Compose 函数：`FloatingBubble`、`SettingsLayout`、`PreviewSettingsLayout`。
-
-`git diff --stat`（11 个文件，+587 / -509）：
-
-```
- app/src/main/AndroidManifest.xml                   |   1 +
- .../MainActivity.kt                                |  80 +++-
- .../MainActivityViewModel.kt                       |  12 +
- .../data/local/DataStoreManager.kt                 |  17 +
- .../domain/EventHandler.kt                         |  82 +++-
- .../domain/JoystickMotion.kt                       |  16 +
- .../service/FloatingBubbleService.kt               | 491 +++++++--------------
- .../service/FloatingWindowStateManager.kt          |  65 ++-
- .../ui/SettingsScreen.kt                           | 115 +++++
- .../ui/overlay/FloatingWindow.kt                   | 202 +++------
- app/src/main/res/values/strings.xml                |  15 +
-```
-
-状态：`compileDebugKotlin` 与 `assembleDebug` **均已通过**，产物 `app/build/outputs/apk/debug/app-debug.apk`。
-这批改动已提交为 `481b5a3 增加随机抖动`。**真机验证仍未完成**（见第 8 节）。
-
----
-
-## 8. 当前版本：1.48 设备信息卡片、状态提示条开关与摇杆几何刷新
-
-2026-10-28 提交 `fa3f61e`，标签 `v1.48-android16`。**真机验证未完成。**
-
-- **主页设备信息卡片**：物理分辨率、逻辑尺寸、密度、屏幕尺寸、方向、设备型号与系统版本，可展开、可复制。同时显示**悬浮窗视口**与**激活预设的基准分辨率**——两者不一致时 `projectLayout()` 会按比例缩放所有坐标，这是「旋转/换设备后按钮位置变了」的常见解释，卡片会对该状态给出提示。
-- **悬浮窗顶部状态提示条开关**：提示条（预设名 · 模式 · 最近输入）的显隐改走全局持久化键 `status_bar_visible`（`DataStoreManager`）。设置页有开关，编辑工具条与通知栏有显隐按钮，改动立即生效。与 `keysVisible` 不同：关闭后重启仍保持关闭（有 `StatusBarSettingTest` 覆盖）。
-- **WASD 摇杆几何随布局刷新**：`EventHandler.refreshWasdGeometry()` 在 Compose 完成测量后重建摇杆条目。`updateKeyMapping()` 早于首次布局，读到的是上一个布局的坐标——旋转/视口变化后走位尚可，疾跑必坏（疾跑注入点必须落在实际屏幕位置的外侧才能越过游戏阈值）。只重写 WASD 条目，不触碰普通按键与开镜触点（改动风险见 6.1，红线不变）。
-- 新增 `StatusBarSettingTest`、`DeviceInfoTest`，扩展 `LayoutProjectionTest`。
-
-### 1.46（补记）
-
-- 修复横屏左侧按钮被截断：统一悬浮窗坐标系（提交 `a66d2ec`）。
-
-### 1.45 鼠标扩展与独立点击宏（保留）
-
-- 原生识别后退／前进侧键，合并 Android 鼠标事件与鼠标来源的 Back/Forward 键事件，避免重复触发和误返回。
-- 滚轮上／下／左／右可以绑定普通点击或宏；小数增量累计到完整刻度，已打开的旧轮盘优先使用滚轮。
-- 每个 Profile 保存独立 `macros`。宏由有序编号点构成，不引用 Tab/Esc 等普通按钮；每点使用相对悬浮视口的归一化中心坐标。
-- 设置 → 预设右侧菜单 →「点击宏（顺序点位）」管理宏；游戏通知栏 →「编辑布局」中拖动编号点。
-- 每宏独立开关，首次创建默认停用；最多 16 个宏、每宏最多 16 点，步骤间隔 0–5000ms。每次点击保持 50ms，第一步即时下按，间隔由主线程定时器调度，不阻塞普通输入。
-- 同时只执行一个宏，执行中再次触发不排队；宏优先于同键普通映射。失焦、进入编辑、映射重建、切换预设和关闭服务均取消剩余步骤。
-- 宏随预设复制、导入导出、持久化，老预设缺少 `macros` 时默认为空；导入校验坐标、间隔、重复触发键等。
-
-使用及真机回归说明见 `docs/MOUSE_AND_MACROS.md`。
-
-### 1.44 稳定性修复（保留）
-
-- 通知权限拒绝时不启动映射；启动前还检查应用通知开关和 `channel1` 频道。禁用时提供系统设置入口，开启后需再次点击游戏。
-- 悬浮层失去窗口焦点时统一释放触点、停止抖动、清除按键高亮和鼠标相对位移基准；恢复焦点只恢复捕获，不重放旧按住状态。
-- 预设读取失败时进入临时会话：禁止覆盖保存 Profile 和 active id，跳过迁移，尽可能备份损坏 JSON。备份失败及整个 Preferences 文件损坏也不能自动清空原数据。
-- 新增存储故障回归测试，覆盖临时 I/O 失败、JSON 损坏、备份失败、旧备份保护、取消、首次启动与实际损坏文件保留。
-- `master` push / PR 运行单测、Lint、debug 构建。正式发布只由 `v*` 标签或手动触发，标签必须匹配 Gradle 版本；测试和 Lint 成功后才能签名发布。
-- Android 14 以下启动前台服务时不传入仅 API 34 支持的 `specialUse` 类型。
-
-真机操作及预期结果见 `docs/STABILITY_VALIDATION.md`。本地 JVM 测试和构建不等于真机验证。
-
----
-
-## 9. 与下一个 AI 的协作建议
+## 7. 与下一个 AI 的协作建议
 
 - **先 `Read` 再改**。状态耦合很重（`FloatingWindowStateManager` 946 行、`EventHandler` 856 行），凭猜测改动的代价很高。
 - 涉及坐标 / 布局基准 / 预设加载 → 回看第 5 节。
@@ -225,5 +231,5 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
   - 功能迭代用版本号推进；
   - 每个功能要有**独立开关**，可按需启用/禁用；
   - 极端在意**跟手性**，拒绝任何引入延迟的实现；
-  - 不喜欢屏幕上多余的常驻 UI（本次删除悬浮气泡就是这个诉求）；
+  - 不喜欢屏幕上多余的常驻 UI（控制入口已迁到通知栏，屏幕无悬浮气泡）；
   - 不喜欢半透明窗口；偏好侧边栏常驻展开、按钮样式统一、面板间距充裕。
