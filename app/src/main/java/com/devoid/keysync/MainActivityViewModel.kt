@@ -16,6 +16,7 @@ import android.view.InputDevice
 import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.devoid.keysync.data.external.GitHubReleaseClient
 import com.devoid.keysync.data.local.DataStoreManager
 import com.devoid.keysync.data.mapping.MappingPreset
 import com.devoid.keysync.data.mapping.MappingPresetRepository
@@ -24,8 +25,10 @@ import com.devoid.keysync.model.ClickMacro
 import com.devoid.keysync.model.FeatureTier
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.SwapPair
+import com.devoid.keysync.model.UpdateState
 import com.devoid.keysync.service.FloatingBubbleService
 import com.devoid.keysync.service.FloatingWindowStateManager
+import com.devoid.keysync.util.VersionComparator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -101,6 +104,10 @@ class MainActivityViewModel @Inject constructor(
     val statusBarVisible: StateFlow<Boolean> = stateManager.statusBarVisible
     /** 功能模式（基础 / 完整）；全局设置，立即持久化。 */
     val featureTier: StateFlow<FeatureTier> = stateManager.featureTier
+
+    private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
+    /** 手动「检查更新」的状态；只在用户点击后变化，不自动轮询。 */
+    val updateState = _updateState.asStateFlow()
 
     /**
      * Device/layout numbers for the home screen.
@@ -367,12 +374,47 @@ class MainActivityViewModel @Inject constructor(
     }
 
     fun openGithub() {
-        val url = "https://github.com/aka-munan/keysync"
+        openUrl(GitHubReleaseClient.REPO_URL)
+    }
+
+    fun openUrl(url: String) {
         val i = Intent(Intent.ACTION_VIEW)
         i.setData(Uri.parse(url))
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(i)
     }
+
+    /**
+     * 手动检查更新：查询本仓库的最新 Release（或标签），与本地 versionName 比较。
+     *
+     * 不做后台轮询、不自动下载；查询只由用户点击触发，避免在游戏过程中产生任何网络开销。
+     */
+    fun checkForUpdates() {
+        if (_updateState.value == UpdateState.Checking) return
+        _updateState.value = UpdateState.Checking
+        viewModelScope.launch {
+            val current = currentVersionName()
+            _updateState.value = when (val result = GitHubReleaseClient.latestTag()) {
+                is GitHubReleaseClient.Result.Success -> {
+                    val latest = result.tag
+                    if (VersionComparator.isNewer(current, latest)) {
+                        UpdateState.Available(
+                            current = current,
+                            latest = VersionComparator.normalize(latest),
+                            releaseUrl = result.htmlUrl,
+                        )
+                    } else {
+                        UpdateState.UpToDate(current)
+                    }
+                }
+                is GitHubReleaseClient.Result.Failure -> UpdateState.Failed(result.message)
+            }
+        }
+    }
+
+    private fun currentVersionName(): String = runCatching {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName
+    }.getOrNull().orEmpty().removeSuffix("-debug").ifBlank { "0.0" }
 
     sealed interface UiState {
         data object ShizukuNotRunning : UiState

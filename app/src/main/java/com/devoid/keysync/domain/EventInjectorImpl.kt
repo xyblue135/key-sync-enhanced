@@ -189,6 +189,10 @@ abstract class EventInjectorImpl(private val eventManager: EventManager = EventM
         }
     }
 
+    override fun setHumanizeContact(enabled: Boolean) {
+        eventManager.setHumanizeContact(enabled)
+    }
+
     override fun clear() {
         // Drop coalesced MOVE data immediately. Otherwise an already queued
         // flush may run after CANCEL and resurrect movement from the old state.

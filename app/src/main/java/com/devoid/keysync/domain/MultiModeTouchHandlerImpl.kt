@@ -20,7 +20,10 @@ import com.devoid.keysync.model.MultiModeTouchHandler
  */
 internal val mainHandler = Handler(Looper.getMainLooper())
 
-class TapModeTouchHandler(private val eventInjector: EventInjector) : MultiModeTouchHandler {
+class TapModeTouchHandler(
+    private val eventInjector: EventInjector,
+    private val midMove: ((Int, KeyMap) -> Unit)? = null,
+) : MultiModeTouchHandler {
     private val pulse = TapPulse { delay, action -> mainHandler.postDelayed({ action() }, delay) }
     fun resetPendingActions() = pulse.reset()
 
@@ -33,7 +36,8 @@ class TapModeTouchHandler(private val eventInjector: EventInjector) : MultiModeT
         if (keyEvent.action == MotionEvent.ACTION_DOWN) {
             pulse.tap(pointerId,
                 down = { eventInjector.injectPointer(pointerId, keyMap.position, keyMap.end!!) },
-                up = { eventInjector.releasePointer(pointerId) })
+                up = { eventInjector.releasePointer(pointerId) },
+                mid = midMove?.let { move -> { move(pointerId, keyMap) } })
         }
         // Physical UP does not shorten the pulse; its timer owns the release.
         return false

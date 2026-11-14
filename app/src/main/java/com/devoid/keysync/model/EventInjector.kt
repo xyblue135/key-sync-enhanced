@@ -13,6 +13,8 @@ interface EventInjector {
     fun updatePointerPosition(pointerID: Int, position:Offset)
     /** 丢弃某触点尚未 flush 的 MOVE 增量（回中抬按前调用，避免尾段把触点拖出界）。 */
     fun cancelPendingMove(pointerID: Int)
+    /** 拟人化：控制触点压力/接触面积是否随机（关闭时保持固定值）。 */
+    fun setHumanizeContact(enabled: Boolean)
     fun clear()
     fun releasePointer(pointerID: Int)
     suspend fun injected(pointerID: Int):Boolean

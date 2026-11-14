@@ -34,4 +34,16 @@ class TapPulseTest {
         tasks[1]()
         assertEquals(1, releases)
     }
+    @Test fun midMoveFiresBeforeReleaseAndNeverAfterStaleTap() {
+        val tasks = mutableListOf<() -> Unit>()
+        val events = mutableListOf<String>()
+        val pulse = TapPulse { _, task -> tasks.add(task) }
+        pulse.tap(1, { events.add("down") }, { events.add("up") }, mid = { events.add("mid") })
+        // 先按下，再补一帧位移，最后抬起：顺序固定，且不额外引入等待。
+        assertEquals(listOf("down"), events)
+        tasks[0]()
+        assertEquals(listOf("down", "mid"), events)
+        tasks[1]()
+        assertEquals(listOf("down", "mid", "up"), events)
+    }
 }

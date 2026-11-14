@@ -26,6 +26,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlin.random.Random
 
 
@@ -173,21 +176,29 @@ class EventHandler(
         wasdHumanization = wasd
         keyHumanization = keys
         humanizationStrength = strength.coerceIn(0f, 1f)
+        // 触点压力/接触面积与位置抖动同源：任一路开启即让触点参数不再是固定值。
+        eventInjector.setHumanizeContact(wasd || keys)
+        if (!keys) stopAllKeyJitter()
     }
 
-    // 持键期间低频率重掷抖动（约 140ms），在完全静止的方向上也产生自然的轨迹扰动。
+    // 持键期间低频率重掷抖动（周期随机 100–220ms），在完全静止的方向上也产生自然的轨迹扰动。
     private val humanizeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var wasdJitterJob: Job? = null
+    private val keyJitterJobs = HashMap<Int, Job>(16)
 
     /** 拟人化抖动偏移（px）。强度 0 时返回零偏移。 */
     private fun jitterOffset(): Offset {
-        val max = humanizationStrength * 40f
-        if (max <= 0f) return Offset.Zero
-        return Offset(
-            (Random.nextFloat() * 2f - 1f) * max,
-            (Random.nextFloat() * 2f - 1f) * max,
-        )
+        val radius = humanizationStrength * 40f
+        if (radius <= 0f) return Offset.Zero
+        // 圆内均匀采样：真实手指落点集中在目标中心附近，方形分布会让四个角
+        // 概率与中心相同，统计上比圆分布更容易被识别。
+        val r = radius * sqrt(Random.nextFloat())
+        val angle = Random.nextFloat() * (2 * Math.PI).toFloat()
+        return Offset(r * cos(angle), r * sin(angle))
     }
+
+    /** 抖动周期不能是固定值：固定 140ms 本身就是可提取的周期性信号。 */
+    private fun nextJitterDelay(): Long = Random.nextLong(100L, 220L)
 
     private fun stopWasdJitter() {
         wasdJitterJob?.cancel()
@@ -198,12 +209,59 @@ class EventHandler(
         wasdJitterJob?.cancel()
         wasdJitterJob = humanizeScope.launch {
             while (isActive && wasdHumanization) {
-                delay(140L)
+                delay(nextJitterDelay())
                 if (!wasdHumanization) break
                 // 只拖 current 触点，绝不 reanchor（见 JoystickMotion.jitter）。
                 joystickMotion.jitter(pointerId, mask, map.position + jitterOffset())
             }
         }
+    }
+
+    /**
+     * 持键期间的触点微抖。
+     *
+     * 只对「单点落位」的按键生效：滑动类按键（position != end）的落点本身就在
+     * 矩形内随机，再按锚点抽动会把触点拽回角落，破坏滑动语义。
+     * 只发 MOVE，绝不重新 DOWN —— 重新按下会打断连发/开火状态。
+     */
+    private fun startKeyJitter(pointerId: Int, map: KeyMap) {
+        stopKeyJitter(pointerId)
+        if (!keyHumanization || humanizationStrength <= 0f) return
+        if (map.end != map.position) return
+        val anchor = map.position
+        keyJitterJobs[pointerId] = humanizeScope.launch {
+            while (isActive) {
+                delay(nextJitterDelay())
+                if (!keyHumanization || humanizationStrength <= 0f) break
+                eventInjector.transFormGesture(pointerId, anchor + jitterOffset())
+            }
+        }
+    }
+
+    private fun stopKeyJitter(pointerId: Int) {
+        keyJitterJobs.remove(pointerId)?.cancel()
+    }
+
+    private fun stopAllKeyJitter() {
+        keyJitterJobs.values.forEach { it.cancel() }
+        keyJitterJobs.clear()
+    }
+
+    /**
+     * TAP 的松手由脉冲定时器负责，触点不是「按住」状态，抽动会打乱点击节奏；
+     * 其它模式只要 handler 报告仍在按下就持续微抖。
+     */
+    private fun syncHeldJitter(pointerId: Int, pressed: Boolean, mode: TouchMode, map: KeyMap) {
+        if (pressed && mode != TouchMode.TAP) startKeyJitter(pointerId, map) else stopKeyJitter(pointerId)
+    }
+
+    /** TAP 按下与抬起之间补一帧小幅位移：真实手指不会在两次采样之间完全静止。 */
+    private fun tapWiggle(pointerId: Int, map: KeyMap) {
+        if (!keyHumanization || humanizationStrength <= 0f) return
+        val max = 1.5f + humanizationStrength * 4.5f
+        val dx = (Random.nextFloat() * 2f - 1f) * max
+        val dy = (Random.nextFloat() * 2f - 1f) * max
+        eventInjector.transFormGesture(pointerId, map.position + Offset(dx, dy))
     }
 
     /** 普通按键的触点位置加随机抖动（仅当「其他按键拟人化」开启时）。 */
@@ -302,7 +360,7 @@ class EventHandler(
     private fun normalHandler(mode: TouchMode): MultiModeTouchHandler =
         normalHandlers.getOrPut(mode) {
             when (mode) {
-                TouchMode.TAP -> TapModeTouchHandler(eventInjector)
+                TouchMode.TAP -> TapModeTouchHandler(eventInjector, ::tapWiggle)
                 TouchMode.HOLD -> HoldModeTouchHandler(eventInjector)
                 TouchMode.MIXED -> MixedModeTouchHandler(eventInjector)
                 TouchMode.WHEEL -> throw IllegalArgumentException("WHEEL is handled by the wheel state machine")
@@ -582,12 +640,14 @@ class EventHandler(
                     val handler = normalHandler(mode)
                     val id = keyId(keyCode)
                     val wasPressed = mappingPressed[id] ?: false
+                    val pressedMap = humanizedMap(it)
                     mappingPressed[id] = handler.handleTouchEvent(
                         KeyEvent(KeyEvent.ACTION_DOWN, keyCode),
                         wasPressed,
                         pointerId,
-                        humanizedMap(it)
+                        pressedMap
                     )
+                    syncHeldJitter(pointerId, mappingPressed[id] ?: false, mode, pressedMap)
                 }
             }
         }
@@ -596,6 +656,7 @@ class EventHandler(
     private fun handleKeyUp(keyCode: Int, pointerId: Int) {
         // The toggle owns a persistent aim contact; normal UP handlers must not lift it.
         if (keyCode == walkKeyCode || keyCode == shootingModeKeyCode) return
+        stopKeyJitter(pointerId)
         val id = keyId(keyCode)
         keyMap[keyCode]?.let {
             if (it.type == KeymapType.CANCELABLE){
@@ -657,10 +718,13 @@ class EventHandler(
         }
         keyMap[keyCode]?.let {
             val m = humanizedMap(it)
-            if (pressed)
+            if (pressed) {
                 eventInjector.injectPointer(pointerId, m.position, m.end!!)
-            else
+                syncHeldJitter(pointerId, true, TouchMode.HOLD, m)
+            } else {
+                stopKeyJitter(pointerId)
                 eventInjector.releasePointer(pointerId)
+            }
         }
         return true
     }
@@ -922,6 +986,7 @@ class EventHandler(
         wasdMask = 0
         joystickMotion.reset()
         stopWasdJitter()
+        stopAllKeyJitter()
         wheelActive = false
         _wheelCursor.value = null
         wheelPointerId = -1
@@ -1009,6 +1074,7 @@ class EventHandler(
         wasdMask = 0
         joystickMotion.reset()
         stopWasdJitter()
+        stopAllKeyJitter()
         wheelActive = false
         _wheelCursor.value = null
         wheelPointerId = -1

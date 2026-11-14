@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.devoid.keysync.R
+import com.devoid.keysync.model.UpdateState
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -45,14 +46,17 @@ import com.devoid.keysync.R
 @Preview
 @Composable
 fun PreviewAboutScreen(){
-    AboutScreen(onNavigateBack = {}) {  }
+    AboutScreen(onNavigateBack = {}, onOpenGithub = {})
 }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutScreen(
     modifier: Modifier = Modifier,
     onNavigateBack: () -> Unit ,
-    onOpenGithub:()->Unit
+    onOpenGithub:()->Unit,
+    updateState: UpdateState = UpdateState.Idle,
+    onCheckUpdate: () -> Unit = {},
+    onOpenRelease: (String) -> Unit = {},
 ) {
     Scaffold(modifier = modifier,
         topBar = {
@@ -96,7 +100,12 @@ fun AboutScreen(
                 "Version: ${getVersionName(LocalContext.current)}",
                 modifier = Modifier
                     .align(Alignment.CenterHorizontally)
-                    .padding(bottom = 16.dp)
+                    .padding(bottom = 8.dp)
+            )
+            UpdateSection(
+                state = updateState,
+                onCheckUpdate = onCheckUpdate,
+                onOpenRelease = onOpenRelease,
             )
             Row(
                 modifier = Modifier
@@ -137,4 +146,57 @@ fun AboutScreen(
 
 fun getVersionName(context: Context):String {
     return context.packageManager.getPackageInfo(context.packageName, 0).versionName?:"0.0"
+}
+
+/**
+ * 手动检查更新。[state] 只由用户点击 [onCheckUpdate] 后变化，页面打开时不会自动查询。
+ */
+@Composable
+private fun UpdateSection(
+    state: UpdateState,
+    onCheckUpdate: () -> Unit,
+    onOpenRelease: (String) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        when (state) {
+            is UpdateState.Idle -> Unit
+            is UpdateState.Checking -> Text(
+                text = "正在从 GitHub 查询最新版本…",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            is UpdateState.UpToDate -> Text(
+                text = "已是最新版本（${state.current}）",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            is UpdateState.Available -> {
+                Text(
+                    text = "发现新版本 ${state.latest}，当前 ${state.current}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                FilledTonalButton(onClick = { onOpenRelease(state.releaseUrl) }) {
+                    Text("前往下载")
+                }
+            }
+            is UpdateState.Failed -> Text(
+                text = "检查失败：${state.message}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+        FilledTonalButton(
+            onClick = onCheckUpdate,
+            enabled = state != UpdateState.Checking
+        ) {
+            Text(if (state == UpdateState.Checking) "检查中…" else "检查更新")
+        }
+    }
 }

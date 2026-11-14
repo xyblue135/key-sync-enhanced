@@ -46,7 +46,7 @@ README 讲「怎么用、怎么改」，这里只讲「哪里会炸、为什么�
 ### 2.1 Shift 疾跑时「向后顿一下」（历史最高风险）
 
 - **现象**：纯 WASD 走位正常，叠加 Shift 疾跑就一顿一顿，像网卡。
-- **根因**：`JoystickMotion.update()` 的重锚判定写成 `(lastMask or mask) and sprintBit != 0`，用的是**或**。疾跑期间每次 `update()` 都被判成「疾跑切换」，于是 `release()` + 重新 `start()`，从摇杆中性位重新起拖，游戏读到的是「松手再推」。过去 `update()` 只在物理按键时调用，频率低看不出来；拟人化 140ms 抖动循环把它放大成了明显卡顿。
+- **根因**：`JoystickMotion.update()` 的重锚判定写成 `(lastMask or mask) and sprintBit != 0`，用的是**或**。疾跑期间每次 `update()` 都被判成「疾跑切换」，于是 `release()` + 重新 `start()`，从摇杆中性位重新起拖，游戏读到的是「松手再推」。过去 `update()` 只在物理按键时调用，频率低看不出来；固定的 140ms 拟人化抖动循环把它放大成了明显卡顿。
 - **修复**：
   - 新增 `JoystickMotion.jitter()`：**只发 MOVE，绝不 reanchor**，抖动循环改调它。
   - `wasdMap` 没有对应项时停掉抖动循环。
@@ -60,6 +60,13 @@ README 讲「怎么用、怎么改」，这里只讲「哪里会炸、为什么�
 - **修复**：`EventHandler.refreshWasdGeometry()` 在测量完成后重建摇杆条目；**只重写 WASD 条目**，不触碰普通按键与开镜触点。
 - **验证**：旋转屏幕后依次测 W / A / S / D + Shift，四个方向都要能疾跑。
 - **注意**：这里仍然不能触发 reanchor，2.1 的红线不变。
+
+### 2.3 持键微抖误触发「重新按下」
+
+- **现象**：按住开火 / 连发键时变成「按一下停一下」，或按住方向键时角色抽搐。
+- **根因**：抖动循环如果调用 `injectPointer`（重新 DOWN）而不是移动已有触点，会打断正在生效的按压状态；滑动类按键（`position != end`）若按锚点重定位，会把触点从矩形落点拽回角落。
+- **修复**：`EventHandler.startKeyJitter()` 只调用 `transFormGesture`（`updatePointer` + ACTION_MOVE），且只对 `position == end` 的单点按键生效；`handleKeyUp`、`updateKeyMapping()`、`clear()` 都会停止对应抖动。
+- **红线**：抖动路径永远不得调用 `injectPointer` / `releasePointer`，与 `jitter()` 不得 reanchor 同源。
 
 ---
 

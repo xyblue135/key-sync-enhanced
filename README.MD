@@ -52,7 +52,7 @@
 
 关于验证的现实情况：
 
-- `app/src/test` 有 21 个 JVM 测试类（97 个用例），覆盖 `domain/` 下的纯状态机与 `model/` 的序列化；`app/src/androidTest` 有普通按钮与宏编号点的拖动回归测试（另保留模板测试）。
+- `app/src/test` 有 26 个 JVM 测试类（137 个用例），覆盖 `domain/` 下的纯状态机与 `model/` 的序列化；`app/src/androidTest` 有普通按钮与宏编号点的拖动回归测试（另保留模板测试）。
 - 跑测试：`.\gradlew.bat :app:testDebugUnitTest --console=plain`。
 - **`compileDebugKotlin` 不编译测试源集。** 只跑编译的话，测试代码引用了已删除的 API 也发现不了——本项目就发生过一次：两个测试文件引用了 `60d95b6` 删掉的 `ProfileSwitchHotkey` / `activationKeyCode` / `profileActivationRoutes`，导致整个测试源集编译失败，54 个用例**全部静默不执行**，而 `assembleDebug` 依旧通过。改完代码请跑 `testDebugUnitTest`，不要只跑 `compileDebugKotlin`。
 - `service`、`domain/EventHandler`、`domain/EventManagerImpl` 与整条注入链路仍需真机验证；纯宏执行器、鼠标去重与滚轮归一化由 JVM 测试覆盖，拖动由 androidTest 覆盖。
@@ -107,7 +107,7 @@
 - **侧键去重**：同一颗侧键可能同时以 `MotionEvent.BUTTON_BACK/FORWARD` 和 `KeyEvent.KEYCODE_BACK/FORWARD` 到达。`mouseKeyAlias()` 只在 `source` 是鼠标时做别名，`MouseButtonTracker` 把两条路径归一成一次边沿，避免触发两次或误触发系统返回。
 - **滚轮**：`ScrollTracker` 累计小数增量（高分辨率滚轮 / 触控板），方向反转时先归零，单次累计限制 ±16；只有满一格才产生一次点击。轮盘打开时滚轮优先控制轮盘，不再触发普通绑定。
 - **1000Hz 高回报率**：注入用 `INJECT_INPUT_EVENT_MODE_ASYNC`，并用 `PendingMoves` 把同一触点两次 flush 之间的位移累加成一条 MOVE。**总位移不丢、中间采样点丢弃**，所以注入吞吐不足时是降采样而不是积压；`EventInjectorImpl` 的单线程队列保证 DOWN / MOVE / UP 不乱序。
-- 宏的 50ms 点击与拟人化 140ms 抖动循环不在这条路径上，和高回报率互不影响。
+- 宏的 50ms 点击与拟人化抖动循环（100–220ms 随机）不在这条路径上，和高回报率互不影响。
 
 ### 3.2 鼠标按键数量的硬限制（G502 等）
 
@@ -139,6 +139,45 @@ KEY_F13 ... KEY_F24                → 额外键被当成键盘键（可绑定�
 ```
 
 真机验收流程见 `docs/MOUSE_AND_MACROS.md`。
+
+### 3.3 检查更新（手动触发）
+
+更新源就是本仓库：`github.com/xyblue135/key-sync-enhanced`。
+
+- 入口在「关于」页的**检查更新**按钮；页面打开时**不会**自动请求，只有点击才发一次查询。
+- `data/external/GitHubReleaseClient.kt` 读取 `releases/latest`；仓库只打了标签、还没建 Release 时回退到 `tags` 的第一项。8 秒超时，无后台轮询、无自动下载。
+- `util/VersionComparator.kt` 只比较版本号核心（开头的点分数字），因此 `v1.48-android16` 与 `1.48` 视为同一版本，`-android16` / `-debug` 后缀里的数字不会造成误报。
+- 判定有更新时显示「前往下载」，跳转 Release 页面；失败时展示具体原因（HTTP 状态 / 超时 / 仓库暂无发布）。
+- 需要 `INTERNET` 权限；该权限只用于这一条手动查询。
+
+### 3.4 预设导入导出
+
+预设（键鼠布局 + 键位绑定 + 切换热键 + 宏）支持两种方式带走：
+
+| 方式 | 入口 | 说明 |
+|---|---|---|
+| 文件 | 预设卡片「导出到文件」/ 单预设导出对话框「保存为文件」/ 「从文件导入」/ 对话框「从文件选择」 | 走系统文件选择器（SAF），无需存储权限；跨设备拷贝 `.json` 即可 |
+| 剪贴板 | 「复制全部预设」/ 导出对话框「复制」/ 导入对话框「粘贴」 | 适合快速分享单套预设 |
+
+- 文件格式与剪贴板完全一致：单预设为 `Profile` JSON，全部预设为 `ProfileBundle { version: 1, profiles: [...] }`。
+- 两种入口共用同一套校验：版本号、宏点位、重复触发键、预设 ID 去重、同名自动加「副本 N」。
+- 导入一律作为**独立副本**加入，不覆盖现有预设；快捷键冲突时保留切入键但停用。
+- 导入导出属于「完整模式」；基础模式下入口隐藏（见 1.1）。
+
+### 3.5 拟人化（模拟人手）
+
+目标是让注入触点在线迹、时序、触点参数上不再呈现机械规律，**同时保持零延迟**：只改位置与触点数值，从不增加等待。
+
+| 维度 | 行为 |
+|---|---|
+| 落点分布 | 圆内均匀采样（`EventHandler.jitterOffset()`），半径上限为 `强度 × 40px`；强度 0 时返回零偏移 |
+| WASD 持键 | 每 100–220ms 随机间隔重掷，只发 MOVE（`JoystickMotion.jitter()`），**绝不 reanchor**（见 6.1） |
+| 普通按键持键 | HOLD / MIXED 同样随机间隔微抖，只对单点落位（`position == end`）生效；滑动类按键跳过，避免把触点拽回锚点 |
+| TAP 点击 | 按下与抬起之间在 25ms 处补一帧小幅位移（1.5–6px），不改变抬起时刻 |
+| 触点参数 | 压力 `0.82–1.00`、`size` `0.85–1.00`、接触面积 ±15%，每个触点在按下时独立取样（`EventManagerImpl`） |
+| 关闭行为 | 两路拟人化都关闭时恢复固定压力/面积；强度为 0 时位置零偏移且不启动任何循环 |
+
+拟人化属于基础模式也保留的能力（见 1.1）。它只能改变轨迹与触点参数，无法改变事件的设备身份（`deviceId`）。
 
 ---
 
@@ -177,7 +216,7 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
 3. 加载及旋转时统一通过 `projectLayout()` 投影。普通按键按扣除按键尺寸后的可移动范围分别换算 X/Y，WASD 点按视口宽高比例换算；运行期布局使用自己的 `layoutViewport`，不能把旧坐标直接标为新基准。
 4. **游戏界面必须横屏**，禁止把预设做成竖屏。
 5. **交换对（`swapPairs`）只修改按钮的物理布局位置**，不改键位绑定与名称。参与交换的按钮需维护 `anchorPosition`：普通拖动时 `position` 与 `anchorPosition` 同步，交换时只改 `position`。
-6. **拟人化必须零延迟**：只允许通过调整注入触点位置 / 轨迹随机性实现，**禁止**添加等待、渐进、缓冲逻辑。抖动循环本身约 140ms 重掷一次（`EventHandler.humanizeScope`），这是允许的，因为它不阻塞按键响应路径。
+6. **拟人化必须零延迟**：只允许通过调整注入触点位置 / 轨迹 / 触点参数实现，**禁止**添加等待、渐进、缓冲逻辑。抖动循环的间隔随机 100–220ms（`EventHandler.humanizeScope`），它不阻塞按键响应路径。
 7. 拟人化需**独立开关 + 强度滑杆（0 表示关闭）**，且**全局生效**（对所有预设统一），不要做成按预设存储。
 8. 键位交换热键必须保留；「预设切换热键」已被要求删除，不要加回来。
 9. **全局功能配置放 `DataStoreManager`**（全局键），不要塞进 `Profile`。

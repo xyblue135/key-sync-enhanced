@@ -268,9 +268,13 @@ class MainActivity : ComponentActivity() {
                             })
                     }
                     composable<AboutScreen> {
+                        val updateState by viewModel.updateState.collectAsStateWithLifecycle()
                         AboutScreen(
                             onNavigateBack = navController::popBackStack,
-                            onOpenGithub = viewModel::openGithub
+                            onOpenGithub = viewModel::openGithub,
+                            updateState = updateState,
+                            onCheckUpdate = viewModel::checkForUpdates,
+                            onOpenRelease = viewModel::openUrl,
                         )
                     }
                 }

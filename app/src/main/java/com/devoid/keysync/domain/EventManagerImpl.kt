@@ -7,6 +7,7 @@ import android.view.InputDevice
 import android.view.MotionEvent
 import androidx.compose.ui.geometry.Offset
 import com.devoid.keysync.model.EventManager
+import kotlin.random.Random
 
 /**
  * Tracks the synthetic touch pointers that are currently "on screen" and builds
@@ -38,6 +39,17 @@ class EventManagerImpl : EventManager {
 
     private val propsArray = Array(maxPointers) { MotionEvent.PointerProperties() }
     private val coordsArray = Array(maxPointers) { MotionEvent.PointerCoords() }
+
+    /**
+     * 拟人化开关：按下的那一刻给触点压力与接触面积取一组随机值。
+     * 真实手指每次按压都不同，固定 1.0f 是最容易被一眼看出的特征。
+     */
+    @Volatile
+    private var humanizeContact = false
+
+    override fun setHumanizeContact(enabled: Boolean) {
+        humanizeContact = enabled
+    }
 
     private companion object {
         /** Android rejects pointer ids outside this range when building an event. */
@@ -74,12 +86,22 @@ class EventManagerImpl : EventManager {
         coordsArray[index].also { coords ->
             coords.x = x
             coords.y = y
-            coords.pressure = 1.0f
-            coords.size = 1.0f
-            coords.touchMajor = CONTACT_SIZE_PX
-            coords.touchMinor = CONTACT_SIZE_PX
-            coords.toolMajor = CONTACT_SIZE_PX
-            coords.toolMinor = CONTACT_SIZE_PX
+            if (humanizeContact) {
+                coords.pressure = 0.82f + Random.nextFloat() * 0.18f
+                coords.size = 0.85f + Random.nextFloat() * 0.15f
+                val contact = CONTACT_SIZE_PX * (0.85f + Random.nextFloat() * 0.3f)
+                coords.touchMajor = contact
+                coords.touchMinor = contact
+                coords.toolMajor = contact
+                coords.toolMinor = contact
+            } else {
+                coords.pressure = 1.0f
+                coords.size = 1.0f
+                coords.touchMajor = CONTACT_SIZE_PX
+                coords.touchMinor = CONTACT_SIZE_PX
+                coords.toolMajor = CONTACT_SIZE_PX
+                coords.toolMinor = CONTACT_SIZE_PX
+            }
             coords.orientation = 0f
         }
 

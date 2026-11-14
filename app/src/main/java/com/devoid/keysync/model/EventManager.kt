@@ -17,4 +17,6 @@ interface EventManager {
     suspend fun getPointerAction(pointerId: Int, isUp: Boolean):Int
     suspend fun getPointerLocation(pointerId: Int): Offset?
     suspend fun clear():Boolean
+    /** 拟人化：开启后每个触点的压力/接触面积在合理范围内随机，关闭时保持固定值。 */
+    fun setHumanizeContact(enabled: Boolean)
 }

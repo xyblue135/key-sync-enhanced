@@ -2,6 +2,8 @@ package com.devoid.keysync.ui
 
 import android.view.KeyEvent as NativeKeyEvent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -53,6 +55,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,6 +65,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -80,6 +84,9 @@ import com.devoid.keysync.model.ThemePreference
 import com.devoid.keysync.model.TouchMode
 import com.devoid.keysync.util.capitalizeFirst
 import com.devoid.keysync.util.keyCodeToString
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -799,6 +806,49 @@ fun ProfileManagerCard(
     var swapTarget by remember { mutableStateOf<Profile?>(null) }
     var macroTarget by remember { mutableStateOf<Profile?>(null) }
 
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var fileError by remember { mutableStateOf<String?>(null) }
+
+    // 导出为文件：预设数据在系统文件选择器里落盘，换设备时拷走这个 JSON 即可。
+    val exportAllLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            val json = onExportAllProfiles()
+            scope.launch {
+                val failure = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openOutputStream(uri)?.use { out ->
+                            out.write(json.toByteArray(Charsets.UTF_8))
+                        } ?: error("无法打开输出文件")
+                    }.exceptionOrNull()?.let { "导出失败：${it.message ?: "无法写入所选文件"}" }
+                }
+                if (failure != null) fileError = failure
+            }
+        }
+    }
+
+    // 从文件导入：读取 KeySync 导出的 JSON，交给与剪贴板导入相同的校验流程。
+    val importFromFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val text = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    }.getOrNull()
+                }
+                fileError = if (text.isNullOrBlank()) {
+                    "读取文件失败：请选择 KeySync 导出的 JSON 文件"
+                } else {
+                    onImport(text)
+                }
+            }
+        }
+    }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -816,6 +866,9 @@ fun ProfileManagerCard(
                     TextButton(onClick = { showImportDialog = true }) {
                         Text(stringResource(R.string.profile_import))
                     }
+                    TextButton(onClick = { importFromFileLauncher.launch(arrayOf("*/*")) }) {
+                        Text("从文件导入")
+                    }
                 }
                 FilledTonalButton(onClick = { showNewDialog = true }) {
                     Icon(Icons.Rounded.Add, contentDescription = null)
@@ -831,6 +884,9 @@ fun ProfileManagerCard(
             if (advanced) {
                 Row {
                     TextButton(onClick = { exportText = onExportAllProfiles() }) { Text("复制全部预设") }
+                    TextButton(onClick = { exportAllLauncher.launch("keysync-profiles.json") }) {
+                        Text("导出到文件")
+                    }
                 }
             }
             HorizontalDivider()
@@ -991,6 +1047,19 @@ fun ProfileManagerCard(
         ProfileExportDialog(json = json, onDismiss = { exportText = null })
     }
 
+    fileError?.let { message ->
+        AlertDialog(
+            onDismissRequest = { fileError = null },
+            title = { Text("预设文件") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { fileError = null }) {
+                    Text(stringResource(R.string.common_dismiss))
+                }
+            }
+        )
+    }
+
 
     macroTarget?.let { target ->
         ClickMacrosDialog(profile = profiles.firstOrNull { it.id == target.id } ?: target,
@@ -1133,6 +1202,24 @@ private fun ProfileRow(
 @Composable
 fun ProfileExportDialog(json: String, onDismiss: () -> Unit) {
     val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var saveError by remember { mutableStateOf<String?>(null) }
+    val saveFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                saveError = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openOutputStream(uri)?.use { out ->
+                            out.write(json.toByteArray(Charsets.UTF_8))
+                        } ?: error("无法打开输出文件")
+                    }.exceptionOrNull()?.let { "保存失败：${it.message ?: "无法写入所选文件"}" }
+                }
+            }
+        }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.profile_export_title)) },
@@ -1152,6 +1239,18 @@ fun ProfileExportDialog(json: String, onDismiss: () -> Unit) {
                         .heightIn(max = 260.dp),
                     textStyle = MaterialTheme.typography.bodySmall
                 )
+                saveError?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                Text(
+                    text = "保存为 .json 文件后可以拷到其他设备，在「导入」里选择该文件即可加入。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         },
         confirmButton = {
@@ -1161,7 +1260,12 @@ fun ProfileExportDialog(json: String, onDismiss: () -> Unit) {
             }) { Text(stringResource(R.string.profile_copy_to_clipboard)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.key_rebind_cancel)) }
+            Row {
+                TextButton(onClick = { saveFileLauncher.launch("keysync-profile.json") }) {
+                    Text("保存为文件")
+                }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.key_rebind_cancel)) }
+            }
         }
     )
 }
@@ -1173,8 +1277,29 @@ fun ProfileImportDialog(
     onImport: (String) -> String?,
 ) {
     val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var text by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    val pickFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val loaded = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    }.getOrNull()
+                }
+                if (loaded.isNullOrBlank()) {
+                    error = "读取文件失败：请选择 KeySync 导出的 JSON 文件"
+                } else {
+                    text = loaded
+                    error = null
+                }
+            }
+        }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.profile_import_title)) },
@@ -1210,6 +1335,9 @@ fun ProfileImportDialog(
         },
         dismissButton = {
             Row {
+                TextButton(onClick = { pickFileLauncher.launch(arrayOf("*/*")) }) {
+                    Text("从文件选择")
+                }
                 TextButton(onClick = {
                     val pasted = clipboard.getText()?.text.orEmpty()
                     if (pasted.isNotBlank()) {
