@@ -121,6 +121,7 @@ fun ItemsContainer(
     onRemove: (Int) -> Unit,
     onUpdateKeyCode: (Int, Int, TouchMode?) -> Unit = { _, _, _ -> },
     onUpdateVariableKeyCode: (Int, Int, TouchMode?) -> Unit = { _, _, _ -> },
+    onUpdateItemSize: (Int, Float) -> Unit = { _, _ -> },
     pendingBindId: Int? = null,
     onBindConsumed: () -> Unit = {},
     onKeyCaptureChanged: (((Int) -> Unit)?) -> Unit = {},
@@ -263,6 +264,7 @@ fun ItemsContainer(
                             GenericFixedKey(
                                 modifier = Modifier.onSizeChanged { item.size = it.width },
                                 editable = editing,
+                                sizeDp = item.customSizeDp.dp,
                                 label = item.keyCode?.keyCodeToString()?.removePrefix("KEYCODE_") ?: "+",
                                 pressed = item.keyCode?.let { pressedKeys.contains(it) } ?: false,
                                 onRemove = { onRemove(item.id) },
@@ -308,6 +310,7 @@ fun ItemsContainer(
                             GenericFixedKey(
                                 modifier = Modifier.onSizeChanged { onSizeChangeListener(it) },
                                 editable = editing,
+                                sizeDp = item.customSizeDp.dp,
                                 label = if (item.type == DraggableItemType.WALK_TOGGLE)
                                     (if (walkEnabled) "静步 开" else "静步 关") else item.keyCode.keyCodeToString(),
                                 iconRes = when (item.type) {
@@ -372,6 +375,8 @@ fun ItemsContainer(
                     currentKeyCode = target.keyCode,
                     currentWheelRadius = target.wheelRadius,
                     onWheelRadiusChange = { target.wheelRadius = it },
+                    currentSizeDp = target.customSizeDp,
+                    onSizeDpChange = { onUpdateItemSize(target.id, it) },
                     currentTouchMode = target.touchMode,
                     onConfirm = { newCode, touchMode ->
                         onUpdateKeyCode(target.id, newCode, touchMode)
@@ -389,6 +394,8 @@ fun ItemsContainer(
                 currentKeyCode = target.keyCode ?: KeyEvent.KEYCODE_UNKNOWN,
                 currentWheelRadius = target.wheelRadius,
                 onWheelRadiusChange = { target.wheelRadius = it },
+                currentSizeDp = target.customSizeDp,
+                onSizeDpChange = { onUpdateItemSize(target.id, it) },
                 currentTouchMode = target.touchMode,
                 onConfirm = { newCode, touchMode ->
                     onUpdateVariableKeyCode(target.id, newCode, touchMode)
@@ -503,6 +510,8 @@ fun ShootingModeKeyDialog(
 fun KeyCaptureDialog(
     currentWheelRadius: Float = 50f,
     onWheelRadiusChange: (Float) -> Unit = {},
+    currentSizeDp: Float = 50f,
+    onSizeDpChange: (Float) -> Unit = {},
     walkCustomization: Boolean = false,
     onCalibrateWalkOff: () -> Unit = {},
     currentKeyCode: Int,
@@ -515,6 +524,7 @@ fun KeyCaptureDialog(
     var captured by remember { mutableStateOf<Int?>(null) }
     var selectedMode by remember { mutableStateOf(currentTouchMode) }
     var radius by remember { mutableFloatStateOf(currentWheelRadius.coerceIn(10f, 500f)) }
+    var sizeDp by remember { mutableFloatStateOf(currentSizeDp.coerceIn(28f, 110f)) }
     val borderColor = MaterialTheme.colorScheme.outline
 
     // 悬浮窗跑在 Service 里没有 Activity 焦点，Compose 的 onKeyEvent 收不到物理按键
@@ -580,6 +590,12 @@ fun KeyCaptureDialog(
             }
 
             MouseInputPicker(captured ?: currentKeyCode) { captured = it }
+            Text("按钮大小：${sizeDp.roundToInt()} dp", style = MaterialTheme.typography.bodySmall)
+            Slider(
+                value = sizeDp,
+                onValueChange = { sizeDp = it; onSizeDpChange(it) },
+                valueRange = 28f..110f
+            )
             Text("侧键或滚轮可直接触发捕获，也可从鼠标绑定列表选择。滚轮绑定始终点击一次；轮盘打开时优先用于轮盘选择。",
                 style = MaterialTheme.typography.bodySmall)
 

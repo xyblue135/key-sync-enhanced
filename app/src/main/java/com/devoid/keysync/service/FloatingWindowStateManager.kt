@@ -812,6 +812,34 @@ class FloatingWindowStateManager @Inject constructor(
         persistActiveProfile()
     }
 
+    /**
+     * 单个按钮的渲染尺寸（dp）。只改外观，不动按键绑定与位置；
+     * `size`（实际测量像素）会在重组后的 onSizeChanged 里刷新，
+     * 触点中心由 onGloballyPositioned 重新上报。
+     */
+    fun updateItemSize(itemId: Int, sizeDp: Float) {
+        val clamped = sizeDp.coerceIn(28f, 110f)
+        var changed = false
+        _containerItems.value.forEach { item ->
+            when (item) {
+                is DraggableItem.VariableKey -> if (item.id == itemId) {
+                    item.customSizeDp = clamped; changed = true
+                }
+                is DraggableItem.FixedKey -> if (item.id == itemId) {
+                    item.customSizeDp = clamped; changed = true
+                }
+                is DraggableItem.CancelableKey -> if (item.id == itemId) {
+                    item.customSizeDp = clamped; changed = true
+                }
+                is DraggableItem.WASDGroup -> Unit
+            }
+        }
+        if (!changed) return
+        // DraggableItem 是可变对象，必须换一个列表实例才能触发重组。
+        _containerItems.value = _containerItems.value.toList()
+        persistActiveProfile()
+    }
+
     /** UI 弹出绑定框后调用，清除待绑定信号，避免下次重组又弹一次。 */
     fun updateMeasuredPosition(item: DraggableItem) {
         val size = when (item) {

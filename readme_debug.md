@@ -98,6 +98,12 @@ README 讲「怎么用、怎么改」，这里只讲「哪里会炸、为什么�
 - **编辑条**：原来固定在 `TopEnd`，无法避开目标区域。现在整条可拖动（左侧 `⠿` 手柄 + `detectDragGestures`），偏移只在当前编辑会话内有效，退出编辑复位。拖动必须放在独立手柄上，直接给整条加手势会和按钮点击抢事件。
 - **2-3-4 连点**：预设级开关（默认开启）。`runTapSequence234()` 用 `eventHandler.handleKeyEvent` 串行注入 2/3/4（45ms 按下、110ms 间隔），并吞掉原始 `3`。注意：三个按钮缺任一时不接管，否则用户会以为按 3 失效；同时用 Job 互斥，避免连按叠加。
 
+### 2.9 按钮太大 / 需要单独调尺寸
+
+- 原来按钮尺寸只有全局 `buttonScale`，单个键无法调整。现在 `VariableKey` / `FixedKey` / `CancelableKey` 都带 `customSizeDp`（默认 50），齿轮配置框里用滑块调 28–110 dp；渲染时 `IconKey(sizeDp = item.customSizeDp.dp)`，全局 `buttonScale` 继续叠加。
+- **注意**：`customSizeDp` 是渲染尺寸，`size` 仍是测量后的像素宽度（注入用的触点靠它算）。改尺寸后 `onSizeChanged` 刷新 `size`、`onGloballyPositioned` 重新上报 `touchCenter`，所以不要自己手算触点中心。
+- **注意**：`DraggableItem` 是可变对象，改完字段必须 `_containerItems.value = _containerItems.value.toList()` 换新列表实例，否则 Compose 不会重组，滑块看起来"没反应"。
+
 ### 2.6 交换对对话框：换位键无法录入 / 按钮选不到
 
 - **现象**：交换对对话框里 A/B 只能选到少数按钮，换位键、还原键点上去没反应；交换对一多（第 3、4 组）后，输入区域被挤出对话框，完全无法操作。

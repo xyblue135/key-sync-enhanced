@@ -90,6 +90,7 @@ fun IconKey(
     modifier: Modifier = Modifier,
     background:Color=MaterialTheme.colorScheme.surface,
     borderColor: Color,
+    sizeDp: androidx.compose.ui.unit.Dp = 50.dp,
     onClick: (() -> Unit)?,
     onConfigure: (() -> Unit)? = null,
     removable: Boolean = true,
@@ -98,7 +99,7 @@ fun IconKey(
 ) {
     Box(
         modifier = modifier
-            .size(50.dp), contentAlignment = Alignment.Center
+            .size(sizeDp), contentAlignment = Alignment.Center
     ) {
         Box(
             modifier = Modifier
@@ -235,6 +236,7 @@ fun GenericFixedKey(
     iconRes: Int? = null,
     editable: Boolean = true,
     pressed: Boolean = false,
+    sizeDp: androidx.compose.ui.unit.Dp = 50.dp,
     onRemove: () -> Unit,
     onConfigure: (() -> Unit)? = null
 ) {
@@ -242,6 +244,7 @@ fun GenericFixedKey(
         modifier = modifier,
         borderColor = if (pressed) Color.Cyan else MaterialTheme.colorScheme.primary,
         background = if (pressed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+        sizeDp = sizeDp,
         onClick = null,
         onRemove = onRemove,
         removable = editable,

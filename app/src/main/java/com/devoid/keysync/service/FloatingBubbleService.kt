@@ -318,6 +318,9 @@ class FloatingBubbleService : Service() {
                 onUpdateVariableKeyCode = { id, newKeyCode, touchMode ->
                     sm.updateVariableKeyCode(id, newKeyCode, touchMode)
                 },
+                onUpdateItemSize = { id, sizeDp ->
+                    sm.updateItemSize(id, sizeDp)
+                },
                 touchTranslator = touchTranslator,
             )
 
@@ -372,6 +375,7 @@ class FloatingBubbleService : Service() {
         onRemove: (Int) -> Unit,
         onUpdateKeyCode: (Int, Int, TouchMode?) -> Unit,
         onUpdateVariableKeyCode: (Int, Int, TouchMode?) -> Unit,
+        onUpdateItemSize: (Int, Float) -> Unit,
         touchTranslator: TouchToMouseTranslator
     ): ComposeView {
         val composeView = ComposeView(this)
@@ -448,6 +452,7 @@ class FloatingBubbleService : Service() {
                             onRemove = onRemove,
                             onUpdateKeyCode = onUpdateKeyCode,
                             onUpdateVariableKeyCode = onUpdateVariableKeyCode,
+                            onUpdateItemSize = onUpdateItemSize,
                             pendingBindId = pendingBindId,
                             onBindConsumed = { stateManager.get().consumePendingVariableKeyBind() },
                             onKeyCaptureChanged = { listener ->

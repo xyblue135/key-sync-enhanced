@@ -13,7 +13,7 @@
 | namespace / applicationId | `com.devoid.keysync` |
 | compileSdk / targetSdk | 36 |
 | minSdk | 29 |
-| versionCode / versionName | 28 / `1.52-android16` |
+| versionCode / versionName | 29 / `1.53-android16` |
 | debug 变体 | applicationId 后缀 `.fpsdebug`，versionName 后缀 `-debug` |
 | Kotlin / Java | 17 |
 
@@ -202,6 +202,8 @@ KEY_F13 ... KEY_F24                → 额外键被当成键盘键（可绑定�
 - 开关位置同快捷换位：设置页 → 预设行溢出菜单 →「按 3 依次点 2/3/4」。
 
 **编辑条可拖动**：编辑态操作条（`＋ / 显隐 / 提示 / 完成`）左侧新增 `⠿` 手柄，按住即可把整条移到不遮挡目标位置的地方。手柄使用独立拖动手势，不会和按钮点击冲突。
+
+**单按钮尺寸**：每个按钮（通用按钮 / 固定键 / 可取消键）新增 `customSizeDp`，在齿轮配置框里用滑块单独调节（28–110 dp），与全局 `buttonScale` 叠乘。位置坐标不受影响，触点中心由测量结果自动跟随，改大改小都不会让点击跑偏。
 
 **横竖屏**：`projectLayout()` 检测基准与当前视口朝向是否一致。交叉时整体旋转 90°（横→竖顺时针、竖→横逆时针，两者互为逆运算），而不是把 X/Y 各自拉伸——后者会把横屏布局直接"搬"到竖屏，左右两侧按钮全部错位。同朝向的不同分辨率仍按轴独立缩放。
 
