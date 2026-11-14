@@ -228,8 +228,8 @@ class MainActivity : ComponentActivity() {
                             onExportProfile = { viewModel.exportProfileJson(it) },
                             onImportProfile = { viewModel.importProfileJson(it) },
                             onSetProfileMacros = viewModel::setMacros,
-                            onSetProfileSwapPairs = { profileId, pairs ->
-                                viewModel.setSwapPairs(profileId, pairs)
+                            onSetProfileQuickSwap = { profileId, enabled ->
+                                viewModel.setQuickSwap(profileId, enabled)
                             },
                             wasdHumanization = wasdHumanization,
                             keyHumanization = keyHumanization,

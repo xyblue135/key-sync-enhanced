@@ -589,6 +589,54 @@ class FloatingWindowStateManager @Inject constructor(
         scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
     }
 
+    /** 预设级快捷换位开关（X 换位 / 1 还原），默认开启。 */
+    fun setQuickSwap(profileId: String, enabled: Boolean) {
+        _profiles.value = _profiles.value.map {
+            if (it.id == profileId) it.copy(quickSwapEnabled = enabled) else it
+        }
+        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
+    }
+
+    /**
+     * 快捷换位：按 X 让「R 键按钮」与「鼠标右键按钮」交换屏幕位置，按 1 还原。
+     *
+     * 不依赖任何手动配置：A/B 每次按当前绑定实时解析，所以用户重绑 R 或右键后
+     * 依然正确；位置恢复使用 anchorPosition，不会漂移。
+     */
+    private fun applyQuickSwap(keyCode: Int): Boolean {
+        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
+        if (!profile.quickSwapEnabled) return false
+        val swap = when (keyCode) {
+            KeyEvent.KEYCODE_X -> true
+            KeyEvent.KEYCODE_1 -> false
+            else -> return false
+        }
+        val items = _containerItems.value
+        val r = items.firstOrNull { it.boundKeyCode() == KeyEvent.KEYCODE_R } ?: return false
+        val rmb = items.firstOrNull { it.boundKeyCode() == KEYCODE_RMC } ?: return false
+        if (r === rmb) return false
+        r.anchorPosition = r.anchorPosition ?: r.position
+        rmb.anchorPosition = rmb.anchorPosition ?: rmb.position
+        if (swap) {
+            r.position = rmb.anchorPosition!!
+            rmb.position = r.anchorPosition!!
+        } else {
+            r.position = r.anchorPosition!!
+            rmb.position = rmb.anchorPosition!!
+        }
+        refreshItemTouchCenters(items)
+        eventHandler.repositionItems(listOf(r, rmb))
+        persistActiveProfile()
+        return true
+    }
+
+    private fun DraggableItem.boundKeyCode(): Int? = when (this) {
+        is DraggableItem.VariableKey -> keyCode
+        is DraggableItem.FixedKey -> keyCode
+        is DraggableItem.CancelableKey -> keyCode
+        is DraggableItem.WASDGroup -> null
+    }
+
     /**
      * Runs the active profile's swap pair bound to [keyCode].
      *
@@ -1112,7 +1160,7 @@ class FloatingWindowStateManager @Inject constructor(
         // key still flows to the game mapping untouched.
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
             !eventHandler.isMacroTrigger(keyEvent.keyCode)) {
-            applySwap(keyEvent.keyCode)
+            if (!applySwap(keyEvent.keyCode)) applyQuickSwap(keyEvent.keyCode)
         }
         return eventHandler.handleKeyEvent(keyEvent)
     }
@@ -1187,7 +1235,7 @@ class FloatingWindowStateManager @Inject constructor(
                 val codes = scrollTracker.update(vScroll, motionEvent.getAxisValue(MotionEvent.AXIS_HSCROLL))
                 codes.forEach { code ->
                     _lastInputLabel.value = code.keyCodeToString()
-                    if (!eventHandler.isMacroTrigger(code)) applySwap(code)
+                    if (!eventHandler.isMacroTrigger(code) && !applySwap(code)) applyQuickSwap(code)
                     eventHandler.handleScrollBinding(code)
                 }
                 return true

@@ -37,11 +37,18 @@ class LayoutProjectionTest {
         assertTrue(projected.position.x + projected.size <= 2400f)
         assertTrue(projected.position.y + projected.size <= 1080f)
     }
-    @Test fun portraitToLandscapeProjectsAxesWithoutKeepingStalePortraitPixels() {
+    @Test fun portraitToLandscapeRotatesInsteadOfStretching() {
         val button = DraggableItem.FixedKey(1, Offset(700f, 1700f), DraggableItemType.KEY, 35, 100)
         val projected = projectLayout(listOf(button), Offset(1080f, 2400f), Offset(2400f, 1080f)).single() as DraggableItem.FixedKey
-        assertEquals(1642.857f, projected.position.x, 0.01f)
-        assertEquals(724.348f, projected.position.y, 0.01f)
+        assertEquals(1700f, projected.position.x, 0.01f)
+        assertEquals(380f, projected.position.y, 0.01f)
+    }
+
+    @Test fun landscapeToPortraitRotatesInsteadOfStretching() {
+        val button = DraggableItem.FixedKey(1, Offset(2500f, 900f), DraggableItemType.KEY, 35, 100)
+        val projected = projectLayout(listOf(button), Offset(2608f, 1200f), Offset(1200f, 2608f)).single() as DraggableItem.FixedKey
+        assertEquals(300f, projected.position.x, 0.01f)
+        assertEquals(2500f, projected.position.y, 0.01f)
     }
     @Test fun projectionLeavesReportedWasdGeometryAlone() {
         // center/w/a/s/d are absolute screen coordinates that Compose re-measures

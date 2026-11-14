@@ -211,6 +211,10 @@ class MainActivityViewModel @Inject constructor(
         stateManager.setSwapPairs(profileId, pairs)
     }
 
+    fun setQuickSwap(profileId: String, enabled: Boolean) {
+        stateManager.setQuickSwap(profileId, enabled)
+    }
+
     fun setWasdHumanization(enabled: Boolean) = stateManager.setWasdHumanization(enabled)
     fun setKeyHumanization(enabled: Boolean) = stateManager.setKeyHumanization(enabled)
     fun setHumanizationStrength(value: Float) = stateManager.setHumanizationStrength(value)

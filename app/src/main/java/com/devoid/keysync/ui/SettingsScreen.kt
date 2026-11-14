@@ -110,7 +110,7 @@ fun SettingsScreen(
     onDuplicateProfile: (String) -> Unit = {},
     onExportProfile: (String) -> String? = { null },
     onImportProfile: (String) -> String? = { null },
-    onSetProfileSwapPairs: (profileId: String, pairs: List<SwapPair>) -> Unit = { _, _ -> },
+    onSetProfileQuickSwap: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
     onSetProfileMacros: (String, List<ClickMacro>) -> Unit = { _, _ -> },
     overlayOpacity: Float = 0.5f,
     onSetOverlayOpacity: (Float) -> Unit = {},
@@ -233,7 +233,7 @@ fun SettingsScreen(
                     onDuplicate = onDuplicateProfile,
                     onExport = onExportProfile,
                     onImport = onImportProfile,
-                    onSetSwapPairs = onSetProfileSwapPairs,
+                    onSetQuickSwap = onSetProfileQuickSwap,
                     onSetMacros = onSetProfileMacros,
                 )
                 Card {
@@ -796,7 +796,7 @@ fun ProfileManagerCard(
     onDuplicate: (String) -> Unit,
     onExport: (String) -> String?,
     onImport: (String) -> String?,
-    onSetSwapPairs: (String, List<SwapPair>) -> Unit,
+    onSetQuickSwap: (String, Boolean) -> Unit,
     onSetMacros: (String, List<ClickMacro>) -> Unit,
 ) {
     var showNewDialog by remember { mutableStateOf(false) }
@@ -807,7 +807,6 @@ fun ProfileManagerCard(
     var deleteTarget by remember { mutableStateOf<Profile?>(null) }
     var menuProfile by remember { mutableStateOf<Profile?>(null) }
     var exportText by remember { mutableStateOf<String?>(null) }
-    var swapTarget by remember { mutableStateOf<Profile?>(null) }
     var macroTarget by remember { mutableStateOf<Profile?>(null) }
 
     val context = LocalContext.current
@@ -918,7 +917,9 @@ fun ProfileManagerCard(
                         },
                         onDuplicate = { onDuplicate(profile.id) },
                         onExport = { exportText = onExport(profile.id) },
-                        onSetSwap = { swapTarget = profile },
+                        onToggleQuickSwap = {
+                            onSetQuickSwap(profile.id, !profile.quickSwapEnabled)
+                        },
                         onSetMacros = { macroTarget = profile },
                         onDelete = { deleteTarget = profile }
                     )
@@ -1069,14 +1070,6 @@ fun ProfileManagerCard(
         ClickMacrosDialog(profile = profiles.firstOrNull { it.id == target.id } ?: target,
             onDismiss = { macroTarget = null }, onSave = { onSetMacros(target.id, it) })
     }
-
-    swapTarget?.let { target ->
-        SwapPairsDialog(
-            profile = target,
-            onDismiss = { swapTarget = null },
-            onSave = { pairs -> onSetSwapPairs(target.id, pairs) }
-        )
-    }
 }
 
 /**
@@ -1098,7 +1091,7 @@ private fun ProfileRow(
     onRename: () -> Unit,
     onDuplicate: () -> Unit,
     onExport: () -> Unit,
-    onSetSwap: () -> Unit,
+    onToggleQuickSwap: () -> Unit,
     onSetMacros: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -1124,7 +1117,7 @@ private fun ProfileRow(
             )
             if (profile.layoutScreenWidth > 0 && profile.layoutScreenHeight > 0) {
                 Text(
-                    text = "${profile.layoutScreenWidth} x ${profile.layoutScreenHeight}",
+                    text = "${profile.layoutScreenWidth} x ${profile.layoutScreenHeight}（悬浮层可用区域，不含系统栏）",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1177,10 +1170,18 @@ private fun ProfileRow(
                     )
                 }
                 DropdownMenuItem(
-                    text = { Text("交换对（换位键）") },
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "R ↔ 右键（X 换位 / 1 还原）",
+                                modifier = Modifier.weight(1f)
+                            )
+                            Switch(checked = profile.quickSwapEnabled, onCheckedChange = null)
+                        }
+                    },
                     onClick = {
                         onMenuDismiss()
-                        onSetSwap()
+                        onToggleQuickSwap()
                     }
                 )
                 DropdownMenuItem(

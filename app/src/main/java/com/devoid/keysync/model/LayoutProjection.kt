@@ -6,10 +6,26 @@ import androidx.compose.ui.geometry.Size
 /** Project a saved layout independently along each axis; never mutate the saved items. */
 internal fun projectLayout(items: List<DraggableItem>, from: Offset, to: Offset, buttonScale: Float = 1f): List<DraggableItem> {
     require(from.x > 0f && from.y > 0f && to.x > 0f && to.y > 0f)
-    fun point(p: Offset) = Offset(p.x * to.x / from.x, p.y * to.y / from.y)
+    // 横竖屏交叉时必须整体旋转 90°，而不是把两个轴各自拉伸：后者会把横屏布局
+    // 直接"搬"到竖屏上，左右两侧的按钮全部错位。旋转方向取互为逆运算的那一侧，
+    // 保证 横→竖→横 能回到原坐标。
+    val rotate = (from.x > from.y) != (to.x > to.y)
+    val rotatedFrom = if (rotate) Offset(from.y, from.x) else from
+
+    fun orient(p: Offset): Offset = when {
+        !rotate -> p
+        from.x > from.y -> Offset(from.y - p.y, p.x)   // 横 → 竖：顺时针
+        else -> Offset(p.y, from.x - p.x)              // 竖 → 横：逆时针
+    }
+
+    fun point(p: Offset): Offset {
+        val q = orient(p)
+        return Offset(q.x * to.x / rotatedFrom.x, q.y * to.y / rotatedFrom.y)
+    }
     // Button dimensions are measured again by Compose in dp. Scaling that cached
     // measurement shrinks it repeatedly across restarts and does not resize the UI.
     fun position(p: Offset, size: Int): Offset {
+        val q = orient(p)
         fun axis(value: Float, old: Float, new: Float): Float {
             val scale = buttonScale.coerceIn(0.6f, 2f)
             val margin = size * (scale - 1f) / 2f
@@ -17,7 +33,7 @@ internal fun projectLayout(items: List<DraggableItem>, from: Offset, to: Offset,
             val newRange = (new - size * scale).coerceAtLeast(0f)
             return margin + ((value - margin) / oldRange).coerceIn(0f, 1f) * newRange
         }
-        return Offset(axis(p.x, from.x, to.x), axis(p.y, from.y, to.y))
+        return Offset(axis(q.x, rotatedFrom.x, to.x), axis(q.y, rotatedFrom.y, to.y))
     }
     return items.map { item ->
         when (item) {
