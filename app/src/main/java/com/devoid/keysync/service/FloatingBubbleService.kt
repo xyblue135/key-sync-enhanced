@@ -21,8 +21,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
@@ -408,20 +409,29 @@ class FloatingBubbleService : Service() {
                 val profiles by stateManager.get().profiles.collectAsState()
                 val activeId by stateManager.get().activeProfileId.collectAsState()
                 Box {
-                    // Wheel selection consumes mouse deltas without exposing a cursor.
+                    // 光标：用半透明触摸指示圈代替箭头，视觉上更接近"手指触点"。
                     if (!isEditMode && !isShootingMode && wheelCursor == null) {
-                        Image(///mouse pointer
-                            modifier = Modifier.offset {
-                                pointerOffset.let {
+                        val diameter = 26.dp
+                        val radiusPx = with(LocalDensity.current) { (diameter / 2).toPx() }
+                        Box(
+                            modifier = Modifier
+                                .offset {
                                     IntOffset(
-                                        it.x.toInt(),
-                                        it.y.toInt()
+                                        (pointerOffset.x - radiusPx).toInt(),
+                                        (pointerOffset.y - radiusPx).toInt()
                                     )
                                 }
-                            },
-                            painter = painterResource(R.drawable.mouse),
-                            contentDescription = "mouse pointer"
-                        )
+                                .size(diameter)
+                                .background(Color.White.copy(alpha = 0.16f), CircleShape)
+                                .border(1.5.dp, Color.White.copy(alpha = 0.85f), CircleShape)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .size(3.dp)
+                                    .background(Color.White.copy(alpha = 0.9f), CircleShape)
+                            )
+                        }
                     }
                     if (!isEditMode && itemsContainerOpacity == 0f)
                         return@Box//do not compose if user set overlay opacity to 0

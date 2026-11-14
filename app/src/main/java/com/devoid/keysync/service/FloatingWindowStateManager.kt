@@ -617,7 +617,9 @@ class FloatingWindowStateManager @Inject constructor(
             b.position = b.anchorPosition!!
         }
         refreshItemTouchCenters(items)
-        eventHandler.updateKeyMapping(items)
+        // 只覆盖这两个按钮的注入坐标。绝不能调用 updateKeyMapping()：它会释放
+        // 所有触点并重建 pointer id，按一次换位键就会把正在按着的 W/开火松开。
+        eventHandler.repositionItems(listOf(a, b))
         persistActiveProfile()
         android.util.Log.i("KeySyncLayout", "swapPair ${pair.aItemId}<->${pair.bItemId} on=${pair.swapOnKeyCode == keyCode}")
         return true
@@ -630,6 +632,7 @@ class FloatingWindowStateManager @Inject constructor(
             val size = when (item) {
                 is DraggableItem.FixedKey -> item.size
                 is DraggableItem.VariableKey -> item.size
+                is DraggableItem.CancelableKey -> item.size
                 else -> 0
             }
             if (size > 0) item.touchCenter = origin + item.position + Offset(size / 2f, size / 2f)

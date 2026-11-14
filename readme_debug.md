@@ -68,6 +68,30 @@ README 讲「怎么用、怎么改」，这里只讲「哪里会炸、为什么�
 - **修复**：`EventHandler.startKeyJitter()` 只调用 `transFormGesture`（`updatePointer` + ACTION_MOVE），且只对 `position == end` 的单点按键生效；`handleKeyUp`、`updateKeyMapping()`、`clear()` 都会停止对应抖动。
 - **红线**：抖动路径永远不得调用 `injectPointer` / `releasePointer`，与 `jitter()` 不得 reanchor 同源。
 
+### 2.4 拟人化强度调高后 WASD 完全不动
+
+- **现象**：强度只有最低一档能正常走路，再往上调角色就完全不动（或频繁顿住）。
+- **根因**：WASD 的方向点是「从摇杆中心向外推的位移」。早期实现对方向点做**各向同性**随机偏移（`position + jitterOffset()`），强度越大越容易把触点拉回中心，落进游戏的摇杆死区，判定为「没有推动」；同时 `update()` 侧的重锚判定不受影响，所以看起来是「突然不能走」。
+- **修复**：新增 `EventHandler.jitterTarget(center, target)` —— 只绕中心旋转极小角度（最高 ±12°，仍在 8 向扇区内），半径仅允许 ±2%~8% 且**不低于原值 97%**，从数学上排除落回死区的可能。
+- **验证**：强度 0 / 50 / 100 三档分别测 W、W+A、W+Shift，角色都应持续移动且不顿挫。
+
+### 2.5 按换位键（交换对）会松开正在按的键
+
+- **现象**：按住 W 走路时按一次换位键，角色停下，必须重新按 W；若在开火，连射也会中断。
+- **根因**：`applySwap()` 早期调用 `eventHandler.updateKeyMapping(items)`，该方法内部 `eventInjector.clear()` 释放所有触点并重建 pointer id。而交换对只改了按钮位置，键位与手势状态完全没变，属于不必要的全量重建。
+- **修复**：新增 `EventHandler.repositionItems(items)`，只覆盖受影响按键在 `keyMap` / `cancelKeyMap` 中的坐标，pointer id、触点与手势状态全部保留。操作因此是幂等的：连按还原键不会累计偏移，也不会卡住。
+- **红线**：交换对、拖动按钮后刷新坐标这类「只改位置」的场景，一律走 `repositionItems()`，禁止调用 `updateKeyMapping()`。
+
+### 2.6 交换对对话框：换位键无法录入 / 按钮选不到
+
+- **现象**：交换对对话框里 A/B 只能选到少数按钮，换位键、还原键点上去没反应；交换对一多（第 3、4 组）后，输入区域被挤出对话框，完全无法操作。
+- **根因**：
+  1. 换位键原来复用 `KeyConfigTextField`（依赖内部 `Text` 的焦点 + `onKeyEvent`）。在 `AlertDialog` 的独立窗口里焦点容易落在按钮上，按键收不到。
+  2. A/B 用 `DropdownMenu`，菜单在对话框窗口内会被裁剪，成员一多就点不到。
+  3. 对话框内容是普通 `Column`，不滚动；列表变长后底部字段超出可视区域。
+- **修复**：对话框根 `Column` 改为 `heightIn(max = 420.dp) + verticalScroll`，并挂 `focusRequester + focusable + onPreviewKeyEvent` 统一捕获下一次按键（`capturing` 状态区分换位键 / 还原键）；A/B 选择改成横向滚动的 `FilterChip`，WASD 组从候选中剔除。
+- **验证**：连续添加 4 组交换对后仍能录入新键；A/B 列表可横向滑动并选中每一项。
+
 ---
 
 ## 3. 通知栏与前台服务

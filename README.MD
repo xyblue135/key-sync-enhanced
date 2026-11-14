@@ -13,7 +13,7 @@
 | namespace / applicationId | `com.devoid.keysync` |
 | compileSdk / targetSdk | 36 |
 | minSdk | 29 |
-| versionCode / versionName | 25 / `1.49-android16` |
+| versionCode / versionName | 26 / `1.50-android16` |
 | debug 变体 | applicationId 后缀 `.fpsdebug`，versionName 后缀 `-debug` |
 | Kotlin / Java | 17 |
 
@@ -108,6 +108,7 @@
 - **滚轮**：`ScrollTracker` 累计小数增量（高分辨率滚轮 / 触控板），方向反转时先归零，单次累计限制 ±16；只有满一格才产生一次点击。轮盘打开时滚轮优先控制轮盘，不再触发普通绑定。
 - **1000Hz 高回报率**：注入用 `INJECT_INPUT_EVENT_MODE_ASYNC`，并用 `PendingMoves` 把同一触点两次 flush 之间的位移累加成一条 MOVE。**总位移不丢、中间采样点丢弃**，所以注入吞吐不足时是降采样而不是积压；`EventInjectorImpl` 的单线程队列保证 DOWN / MOVE / UP 不乱序。
 - 宏的 50ms 点击与拟人化抖动循环（100–220ms 随机）不在这条路径上，和高回报率互不影响。
+- **光标模式的可视化**：屏幕上显示的是一个 26dp 的半透明触摸指示圈（描边 + 中心点），不再是箭头图标，视觉上更接近「手指触点」。光标本身只做显示，点击坐标仍由 `pointerOffset` 计算。
 
 ### 3.2 鼠标按键数量的硬限制（G502 等）
 
@@ -152,7 +153,7 @@ KEY_F13 ... KEY_F24                → 额外键被当成键盘键（可绑定�
 
 ### 3.4 预设导入导出
 
-预设（键鼠布局 + 键位绑定 + 切换热键 + 宏）支持两种方式带走：
+预设（键鼠布局 + 键位绑定 + 宏）支持两种方式带走：
 
 | 方式 | 入口 | 说明 |
 |---|---|---|
@@ -170,7 +171,8 @@ KEY_F13 ... KEY_F24                → 额外键被当成键盘键（可绑定�
 
 | 维度 | 行为 |
 |---|---|
-| 落点分布 | 圆内均匀采样（`EventHandler.jitterOffset()`），半径上限为 `强度 × 40px`；强度 0 时返回零偏移 |
+| 落点分布（普通按键） | 圆内均匀采样（`EventHandler.jitterOffset()`），半径上限为 `强度 × 40px`；强度 0 时返回零偏移 |
+| 落点分布（WASD） | 绕摇杆中心**旋转 ±(2°–12°)** 并允许半径 ±2%–8% 变化，**半径不低于原值的 97%**（`jitterTarget()`）。各向同性偏移会把触点拉回摇杆死区，导致强度调高后角色完全不动 |
 | WASD 持键 | 每 100–220ms 随机间隔重掷，只发 MOVE（`JoystickMotion.jitter()`），**绝不 reanchor**（见 6.1） |
 | 普通按键持键 | HOLD / MIXED 同样随机间隔微抖，只对单点落位（`position == end`）生效；滑动类按键跳过，避免把触点拽回锚点 |
 | TAP 点击 | 按下与抬起之间在 25ms 处补一帧小幅位移（1.5–6px），不改变抬起时刻 |
@@ -215,7 +217,7 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
 2. **布局基准必须持久化**：每个 Profile 记住保存时的 `layoutScreenWidth/Height`；**加载/保存预设时不要用当前屏幕去覆盖已记录的基准**。无基准的历史数据目前按已知旧版本的 `2608×1200` 迁移；这是历史兼容假设，不适用于新数据。新布局保存时记录真实视口，后续如需支持其他旧设备，应单独设计迁移选择，不能擅自重解释已有数据。
 3. 加载及旋转时统一通过 `projectLayout()` 投影。普通按键按扣除按键尺寸后的可移动范围分别换算 X/Y，WASD 点按视口宽高比例换算；运行期布局使用自己的 `layoutViewport`，不能把旧坐标直接标为新基准。
 4. **游戏界面必须横屏**，禁止把预设做成竖屏。
-5. **交换对（`swapPairs`）只修改按钮的物理布局位置**，不改键位绑定与名称。参与交换的按钮需维护 `anchorPosition`：普通拖动时 `position` 与 `anchorPosition` 同步，交换时只改 `position`。
+5. **交换对（`swapPairs`）只修改按钮的物理布局位置**，不改键位绑定与名称。参与交换的按钮需维护 `anchorPosition`：普通拖动时 `position` 与 `anchorPosition` 同步，交换时只改 `position`。<br>交换后刷新坐标只能调用 `EventHandler.repositionItems()`，**禁止调用 `updateKeyMapping()`**——后者会 `eventInjector.clear()` 释放全部触点，按一次换位键就会把正在按着的 W / 开火松开。
 6. **拟人化必须零延迟**：只允许通过调整注入触点位置 / 轨迹 / 触点参数实现，**禁止**添加等待、渐进、缓冲逻辑。抖动循环的间隔随机 100–220ms（`EventHandler.humanizeScope`），它不阻塞按键响应路径。
 7. 拟人化需**独立开关 + 强度滑杆（0 表示关闭）**，且**全局生效**（对所有预设统一），不要做成按预设存储。
 8. 键位交换热键必须保留；「预设切换热键」已被要求删除，不要加回来。

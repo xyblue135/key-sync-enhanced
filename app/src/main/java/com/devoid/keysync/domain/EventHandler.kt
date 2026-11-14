@@ -200,6 +200,30 @@ class EventHandler(
     /** 抖动周期不能是固定值：固定 140ms 本身就是可提取的周期性信号。 */
     private fun nextJitterDelay(): Long = Random.nextLong(100L, 220L)
 
+    /**
+     * WASD 抖动的目标点。
+     *
+     * 摇杆方向点是「从中心向外推动的位移」。如果按各向同性随机偏移，强度一高就会
+     * 把触点拉回摇杆死区，游戏判定为没有推动 —— 表现为「强度往上调就完全不动」。
+     * 因此这里只旋转一个极小角度，并允许半径 ±2%~±8% 的变化，且绝不低于原距离的
+     * 97%，保证方向与推动量始终有效。
+     */
+    private fun jitterTarget(center: Offset, target: Offset): Offset {
+        val strength = humanizationStrength
+        if (strength <= 0f) return target
+        val delta = target - center
+        val length = delta.getDistance()
+        if (length <= 0.5f) return target
+        val maxAngle = (2f + 10f * strength) * (Math.PI.toFloat() / 180f)
+        val angle = (Random.nextFloat() * 2f - 1f) * maxAngle
+        val cosA = cos(angle)
+        val sinA = sin(angle)
+        val scale = (1f + (Random.nextFloat() * 2f - 1f) * (0.02f + 0.06f * strength))
+            .coerceAtLeast(0.97f)
+        val rotated = Offset(delta.x * cosA - delta.y * sinA, delta.x * sinA + delta.y * cosA)
+        return center + rotated * scale
+    }
+
     private fun stopWasdJitter() {
         wasdJitterJob?.cancel()
         wasdJitterJob = null
@@ -212,7 +236,8 @@ class EventHandler(
                 delay(nextJitterDelay())
                 if (!wasdHumanization) break
                 // 只拖 current 触点，绝不 reanchor（见 JoystickMotion.jitter）。
-                joystickMotion.jitter(pointerId, mask, map.position + jitterOffset())
+                val center = map.center ?: return@launch
+                joystickMotion.jitter(pointerId, mask, jitterTarget(center, map.position))
             }
         }
     }
@@ -593,7 +618,7 @@ class EventHandler(
             stopWasdJitter()
             return
         }
-        val target = if (wasdHumanization) entry.position + jitterOffset() else entry.position
+        val target = if (wasdHumanization) jitterTarget(entry.center!!, entry.position) else entry.position
         joystickMotion.update(pointerId, effectiveMask, entry.center!!, target)
         if (wasdHumanization) restartWasdJitter(pointerId, effectiveMask, entry) else stopWasdJitter()
     }
@@ -1052,6 +1077,42 @@ class EventHandler(
 
         if (walkKeyCode == null && lastWalkPosition != null) alloc(-10_005)
         alloc(KEYCODE_LMC)
+    }
+
+    /**
+     * 只刷新按键的注入坐标，不重建映射。
+     *
+     * 交换对只改变按钮的屏幕位置。若这里调用 [updateKeyMapping]，它会
+     * `eventInjector.clear()` 释放所有触点并重新分配 pointer id —— 按一次
+     * 换位键就会把正在按着的 W / 开火强制松开。此方法只覆盖坐标，pointer id、
+     * 手势状态与触点全部保持不变，因此反复按换位 / 还原键是幂等的。
+     */
+    fun repositionItems(items: List<DraggableItem>) {
+        items.forEach { item ->
+            when (item) {
+                is DraggableItem.VariableKey -> {
+                    val k = item.keyCode ?: return@forEach
+                    val center = item.touchCenter ?: item.position + Offset(item.size / 2f, item.size / 2f)
+                    keyMap[k]?.let { keyMap[k] = it.copy(position = center, end = center) }
+                }
+
+                is DraggableItem.FixedKey -> {
+                    val k = item.keyCode
+                    val center = item.touchCenter ?: item.position + Offset(item.size / 2f, item.size / 2f)
+                    keyMap[k]?.let { keyMap[k] = it.copy(position = center, end = center) }
+                }
+
+                is DraggableItem.CancelableKey -> {
+                    val k = item.keyCode ?: return@forEach
+                    val center = item.touchCenter ?: item.position + Offset(item.size / 2f, item.size / 2f)
+                    val cancel = item.cancelTouchCenter ?: item.cancelPosition + Offset(item.size / 2f, item.size / 2f)
+                    keyMap[k]?.let { keyMap[k] = it.copy(position = center, end = center) }
+                    cancelKeyMap[k]?.let { cancelKeyMap[k] = it.copy(position = cancel, end = cancel) }
+                }
+
+                is DraggableItem.WASDGroup -> Unit
+            }
+        }
     }
 
     fun clear() {

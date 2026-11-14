@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -38,6 +39,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,6 +54,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,6 +63,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.KeyEvent
@@ -1364,6 +1368,10 @@ private fun SwapPairsDialog(
     var bItemId by remember { mutableStateOf<Int?>(null) }
     var swapOn by remember { mutableStateOf<Int?>(null) }
     var swapOff by remember { mutableStateOf<Int?>(null) }
+    var capturing by remember { mutableStateOf<SwapKeyTarget?>(null) }
+    val focusRequester = remember { FocusRequester() }
+    // WASD 组没有可交换的单点，直接从候选里去掉，避免出现"选了没反应"的空档。
+    val pickable = profile.items.filterNot { it is DraggableItem.WASDGroup }
 
     fun itemLabel(id: Int): String {
         val item = profile.items.firstOrNull { it.id == id } ?: return "按钮#$id(不存在)"
@@ -1380,7 +1388,32 @@ private fun SwapPairsDialog(
         onDismissRequest = onDismiss,
         title = { Text("双键交换对") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // 在对话框根节点统一捕获按键：不再依赖某个 Text 的焦点，鼠标点一下
+            // 输入框后按任意键都能生效，也不会因为列表变长被挤出可视区。
+            LaunchedEffect(Unit) { focusRequester.requestFocus() }
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState())
+                    .focusRequester(focusRequester)
+                    .focusable()
+                    .onPreviewKeyEvent { event ->
+                        val target = capturing ?: return@onPreviewKeyEvent false
+                        val native = event.nativeKeyEvent
+                        if (native.action == NativeKeyEvent.ACTION_DOWN && native.repeatCount == 0) {
+                            val code = native.keyCode
+                            if (code > NativeKeyEvent.KEYCODE_UNKNOWN) {
+                                when (target) {
+                                    SwapKeyTarget.On -> swapOn = code
+                                    SwapKeyTarget.Off -> swapOff = code
+                                }
+                            }
+                            capturing = null
+                        }
+                        true
+                    },
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Text(
                     "按下「换位键」时，A / B 两按钮的布局位置互换；按「还原键」各自回到默认位置。只改位置，不动键位绑定。",
                     style = MaterialTheme.typography.labelMedium,
@@ -1393,7 +1426,7 @@ private fun SwapPairsDialog(
                     pairs.forEach { pair ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                "${itemLabel(pair.aItemId)} ↔ ${itemLabel(pair.bItemId)}　换${pair.swapOnKeyCode.keyCodeToString()} / 回${pair.swapOffKeyCode.keyCodeToString()}",
+                                "${itemLabel(pair.aItemId)} ↔ ${itemLabel(pair.bItemId)}　换${pair.swapOnKeyCode.keyCodeToString().removePrefix("KEYCODE_")} / 回${pair.swapOffKeyCode.keyCodeToString().removePrefix("KEYCODE_")}",
                                 modifier = Modifier.weight(1f),
                                 style = MaterialTheme.typography.bodySmall
                             )
@@ -1405,34 +1438,31 @@ private fun SwapPairsDialog(
                 }
                 HorizontalDivider()
                 Text("添加交换对", style = MaterialTheme.typography.titleSmall)
-                ItemIdPicker(label = "A 按钮", items = profile.items, selected = aItemId,
+                ItemChipRow(label = "A 按钮", items = pickable, selected = aItemId,
                     onPick = { aItemId = it })
-                ItemIdPicker(label = "B 按钮", items = profile.items, selected = bItemId,
+                ItemChipRow(label = "B 按钮", items = pickable, selected = bItemId,
                     onPick = { bItemId = it })
-                KeyConfigTextField(
+                SwapKeyRow(
                     title = "换位键（按此键交换）",
-                    value = swapOn?.keyCodeToString().orEmpty(),
-                    onKeyEvent = { event ->
-                        if (event.nativeKeyEvent.action == NativeKeyEvent.ACTION_DOWN) {
-                            val code = event.nativeKeyEvent.keyCode
-                            if (code > NativeKeyEvent.KEYCODE_UNKNOWN) swapOn = code
-                        }
-                        true
+                    code = swapOn,
+                    capturing = capturing == SwapKeyTarget.On,
+                    onStart = {
+                        capturing = SwapKeyTarget.On
+                        focusRequester.requestFocus()
                     }
                 )
-                KeyConfigTextField(
+                SwapKeyRow(
                     title = "还原键（按此键还原）",
-                    value = swapOff?.keyCodeToString().orEmpty(),
-                    onKeyEvent = { event ->
-                        if (event.nativeKeyEvent.action == NativeKeyEvent.ACTION_DOWN) {
-                            val code = event.nativeKeyEvent.keyCode
-                            if (code > NativeKeyEvent.KEYCODE_UNKNOWN) swapOff = code
-                        }
-                        true
+                    code = swapOff,
+                    capturing = capturing == SwapKeyTarget.Off,
+                    onStart = {
+                        capturing = SwapKeyTarget.Off
+                        focusRequester.requestFocus()
                     }
                 )
                 TextButton(
-                    enabled = aItemId != null && bItemId != null && swapOn != null && swapOff != null,
+                    enabled = aItemId != null && bItemId != null && aItemId != bItemId &&
+                        swapOn != null && swapOff != null,
                     onClick = {
                         pairs = pairs + SwapPair(aItemId = aItemId!!, bItemId = bItemId!!,
                             swapOnKeyCode = swapOn!!, swapOffKeyCode = swapOff!!)
@@ -1446,29 +1476,57 @@ private fun SwapPairsDialog(
     )
 }
 
-/** 从预设的按钮列表里选一个成员（A 或 B）。 */
+/** 交换对的按键捕获目标。 */
+private enum class SwapKeyTarget { On, Off }
+
+/**
+ * 从预设的按钮列表里选一个成员（A 或 B）。
+ *
+ * 用横向滚动的 Chip 取代 DropdownMenu：对话框内的下拉菜单会被窗口裁剪，且
+ * 按钮一多就有成员点不到（表现为"有空位点不了"）。
+ */
 @Composable
-private fun ItemIdPicker(
+private fun ItemChipRow(
     label: String,
     items: List<DraggableItem>,
     selected: Int?,
     onPick: (Int) -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(text = label, style = MaterialTheme.typography.bodyMedium)
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            items.forEach { item ->
+                FilterChip(
+                    selected = selected == item.id,
+                    onClick = { onPick(item.id) },
+                    label = { Text(SwapItemLabel.of(items, item.id)) }
+                )
+            }
+        }
+    }
+}
+
+/** 换位键 / 还原键的捕获按钮。点击后由对话框根节点接管下一次按键。 */
+@Composable
+private fun SwapKeyRow(
+    title: String,
+    code: Int?,
+    capturing: Boolean,
+    onStart: () -> Unit,
+) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(text = label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        Box {
-            Button(onClick = { expanded = true }) {
-                Text(SwapItemLabel.of(items, selected))
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                items.forEach { item ->
-                    DropdownMenuItem(
-                        text = { Text(SwapItemLabel.of(items, item.id)) },
-                        onClick = { expanded = false; onPick(item.id) }
-                    )
+        Text(text = title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Button(onClick = onStart) {
+            Text(
+                when {
+                    capturing -> "请按键…"
+                    code != null -> code.keyCodeToString().removePrefix("KEYCODE_")
+                    else -> "未设置"
                 }
-            }
+            )
         }
     }
 }
