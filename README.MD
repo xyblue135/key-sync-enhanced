@@ -13,7 +13,7 @@
 | namespace / applicationId | `com.devoid.keysync` |
 | compileSdk / targetSdk | 36 |
 | minSdk | 29 |
-| versionCode / versionName | 27 / `1.51-android16` |
+| versionCode / versionName | 28 / `1.52-android16` |
 | debug 变体 | applicationId 后缀 `.fpsdebug`，versionName 后缀 `-debug` |
 | Kotlin / Java | 17 |
 
@@ -194,6 +194,14 @@ KEY_F13 ... KEY_F24                → 额外键被当成键盘键（可绑定�
 - 只改位置、不动绑定；刷新坐标走 `EventHandler.repositionItems()`，不会释放正在按的触点。
 - 开关位置：设置页 → 预设行的溢出菜单 →「R ↔ 右键（X 换位 / 1 还原）」。
 - 换位键本身仍会透传给游戏（与旧交换对一致）。
+
+**2-3-4 连点**（`Profile.tapSequence234Enabled`，默认开启）：按一次 `3` 依次点击 `2 → 3 → 4`，用于一键切换武器组。
+
+- 三个触点是 45ms 按下 / 110ms 间隔，串行执行；重复按 3 不会叠加成多条序列。
+- 三个按钮缺任何一个就不接管，`3` 回落到原本的单键映射，避免"按了没反应"。
+- 开关位置同快捷换位：设置页 → 预设行溢出菜单 →「按 3 依次点 2/3/4」。
+
+**编辑条可拖动**：编辑态操作条（`＋ / 显隐 / 提示 / 完成`）左侧新增 `⠿` 手柄，按住即可把整条移到不遮挡目标位置的地方。手柄使用独立拖动手势，不会和按钮点击冲突。
 
 **横竖屏**：`projectLayout()` 检测基准与当前视口朝向是否一致。交叉时整体旋转 90°（横→竖顺时针、竖→横逆时针，两者互为逆运算），而不是把 X/Y 各自拉伸——后者会把横屏布局直接"搬"到竖屏，左右两侧按钮全部错位。同朝向的不同分辨率仍按轴独立缩放。
 

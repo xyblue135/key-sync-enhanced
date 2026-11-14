@@ -714,7 +714,9 @@ fun EditToolbar(
     onAddItem: (DraggableItemType) -> Unit,
 ) {
     var itemsMenuVisible by remember { mutableStateOf(false) }
-    Box(modifier) {
+    // 编辑条会挡住想摆放的位置，因此允许直接拖动（按 ⠿ 手柄拖动，避免和按钮点击冲突）。
+    var dragOffset by remember { mutableStateOf(Offset.Zero) }
+    Box(modifier.offset { IntOffset(dragOffset.x.roundToInt(), dragOffset.y.roundToInt()) }) {
         Row(
             modifier = Modifier
                 .clip(CircleShape.copy(CornerSize(10)))
@@ -722,6 +724,19 @@ fun EditToolbar(
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, drag ->
+                            change.consume()
+                            dragOffset += drag
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("⠿", color = MaterialTheme.colorScheme.onSurface)
+            }
             IconButton(onClick = { itemsMenuVisible = !itemsMenuVisible }) {
                 Icon(
                     Icons.Rounded.Add,

@@ -231,6 +231,9 @@ class MainActivity : ComponentActivity() {
                             onSetProfileQuickSwap = { profileId, enabled ->
                                 viewModel.setQuickSwap(profileId, enabled)
                             },
+                            onSetProfileTapSequence = { profileId, enabled ->
+                                viewModel.setTapSequence234(profileId, enabled)
+                            },
                             wasdHumanization = wasdHumanization,
                             keyHumanization = keyHumanization,
                             humanizationStrength = humanizationStrength,

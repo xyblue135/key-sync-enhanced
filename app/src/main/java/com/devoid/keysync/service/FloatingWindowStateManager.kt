@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.Resources
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -44,6 +45,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -595,6 +598,43 @@ class FloatingWindowStateManager @Inject constructor(
             if (it.id == profileId) it.copy(quickSwapEnabled = enabled) else it
         }
         scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
+    }
+
+    /** 预设级「按 3 依次点 2/3/4」开关，默认开启。 */
+    fun setTapSequence234(profileId: String, enabled: Boolean) {
+        _profiles.value = _profiles.value.map {
+            if (it.id == profileId) it.copy(tapSequence234Enabled = enabled) else it
+        }
+        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
+    }
+
+    private var tapSequence234Job: Job? = null
+
+    /**
+     * 按 3 时依次点击 2 → 3 → 4。
+     *
+     * 三个触点都走正常的按键映射（`eventHandler.handleKeyEvent`），所以用户把 2/3/4
+     * 绑到哪个位置就点哪里。整个过程串行执行，重复按 3 不会叠加成多条序列。
+     */
+    private fun runTapSequence234(keyCode: Int): Boolean {
+        if (keyCode != KeyEvent.KEYCODE_3) return false
+        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
+        if (!profile.tapSequence234Enabled) return false
+        // 三个按钮缺一就不接管，让 3 走原本的单键映射，避免按了没反应。
+        val targets = listOf(KeyEvent.KEYCODE_2, KeyEvent.KEYCODE_3, KeyEvent.KEYCODE_4)
+        val items = _containerItems.value
+        if (targets.any { code -> items.none { it.boundKeyCode() == code } }) return false
+        if (tapSequence234Job?.isActive == true) return true
+        tapSequence234Job = scope.launch {
+            targets.forEach { code ->
+                val now = SystemClock.uptimeMillis()
+                eventHandler.handleKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
+                delay(45)
+                eventHandler.handleKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
+                delay(110)
+            }
+        }
+        return true
     }
 
     /**
@@ -1160,6 +1200,8 @@ class FloatingWindowStateManager @Inject constructor(
         // key still flows to the game mapping untouched.
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
             !eventHandler.isMacroTrigger(keyEvent.keyCode)) {
+            // 预设级 2-3-4 连点负责整段注入，命中时吞掉原始 3，避免再点一次。
+            if (runTapSequence234(keyEvent.keyCode)) return true
             if (!applySwap(keyEvent.keyCode)) applyQuickSwap(keyEvent.keyCode)
         }
         return eventHandler.handleKeyEvent(keyEvent)

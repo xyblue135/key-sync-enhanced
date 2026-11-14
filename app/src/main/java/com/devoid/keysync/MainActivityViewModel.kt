@@ -215,6 +215,10 @@ class MainActivityViewModel @Inject constructor(
         stateManager.setQuickSwap(profileId, enabled)
     }
 
+    fun setTapSequence234(profileId: String, enabled: Boolean) {
+        stateManager.setTapSequence234(profileId, enabled)
+    }
+
     fun setWasdHumanization(enabled: Boolean) = stateManager.setWasdHumanization(enabled)
     fun setKeyHumanization(enabled: Boolean) = stateManager.setKeyHumanization(enabled)
     fun setHumanizationStrength(value: Float) = stateManager.setHumanizationStrength(value)

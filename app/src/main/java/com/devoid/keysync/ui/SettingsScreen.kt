@@ -111,6 +111,7 @@ fun SettingsScreen(
     onExportProfile: (String) -> String? = { null },
     onImportProfile: (String) -> String? = { null },
     onSetProfileQuickSwap: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
+    onSetProfileTapSequence: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
     onSetProfileMacros: (String, List<ClickMacro>) -> Unit = { _, _ -> },
     overlayOpacity: Float = 0.5f,
     onSetOverlayOpacity: (Float) -> Unit = {},
@@ -234,6 +235,7 @@ fun SettingsScreen(
                     onExport = onExportProfile,
                     onImport = onImportProfile,
                     onSetQuickSwap = onSetProfileQuickSwap,
+                    onSetTapSequence = onSetProfileTapSequence,
                     onSetMacros = onSetProfileMacros,
                 )
                 Card {
@@ -797,6 +799,7 @@ fun ProfileManagerCard(
     onExport: (String) -> String?,
     onImport: (String) -> String?,
     onSetQuickSwap: (String, Boolean) -> Unit,
+    onSetTapSequence: (String, Boolean) -> Unit,
     onSetMacros: (String, List<ClickMacro>) -> Unit,
 ) {
     var showNewDialog by remember { mutableStateOf(false) }
@@ -919,6 +922,9 @@ fun ProfileManagerCard(
                         onExport = { exportText = onExport(profile.id) },
                         onToggleQuickSwap = {
                             onSetQuickSwap(profile.id, !profile.quickSwapEnabled)
+                        },
+                        onToggleTapSequence = {
+                            onSetTapSequence(profile.id, !profile.tapSequence234Enabled)
                         },
                         onSetMacros = { macroTarget = profile },
                         onDelete = { deleteTarget = profile }
@@ -1092,6 +1098,7 @@ private fun ProfileRow(
     onDuplicate: () -> Unit,
     onExport: () -> Unit,
     onToggleQuickSwap: () -> Unit,
+    onToggleTapSequence: () -> Unit,
     onSetMacros: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -1182,6 +1189,18 @@ private fun ProfileRow(
                     onClick = {
                         onMenuDismiss()
                         onToggleQuickSwap()
+                    }
+                )
+                DropdownMenuItem(
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("按 3 依次点 2/3/4", modifier = Modifier.weight(1f))
+                            Switch(checked = profile.tapSequence234Enabled, onCheckedChange = null)
+                        }
+                    },
+                    onClick = {
+                        onMenuDismiss()
+                        onToggleTapSequence()
                     }
                 )
                 DropdownMenuItem(
