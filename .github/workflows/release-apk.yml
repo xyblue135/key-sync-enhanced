@@ -84,16 +84,38 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v5
+        with:
+          # 需要完整 tag 历史，才能算出上一个版本到本次 tag 的提交范围。
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           name: release-apk-v${{ needs.build.outputs.version_name }}
+      - name: Build release notes from commits
+        run: |
+          PREV=$(git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>/dev/null || true)
+          {
+            echo "## v${{ needs.build.outputs.version_name }} 改动"
+            echo
+            if [ -n "$PREV" ]; then
+              echo "变更范围：\`$PREV\` → \`${{ github.ref_name }}\`"
+              echo
+              git log --no-merges --pretty=format:'- %s%n%n%b' "$PREV".."${{ github.ref_name }}"
+            else
+              git log -1 --pretty=format:'- %s%n%n%b' "${{ github.ref_name }}"
+            fi
+            echo
+            echo "---"
+            echo "APK 为已签名 release 包，可直接覆盖安装。"
+          } > release-notes.md
+          cat release-notes.md
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.build.outputs.version_name }}
           target_commitish: ${{ github.sha }}
           name: Release v${{ needs.build.outputs.version_name }}
-          # 每个版本的 Release 页面自动列出本次改动（提交标题 + 正文）。
-          generate_release_notes: true
+          # 用提交标题 + 正文生成版本说明，确保每个版本都记录改了什么。
+          body_path: release-notes.md
           files: app-release.apk
           fail_on_unmatched_files: true
