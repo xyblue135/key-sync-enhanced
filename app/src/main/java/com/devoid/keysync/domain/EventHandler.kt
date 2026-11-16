@@ -169,8 +169,13 @@ class EventHandler(
     var wasdHumanization = false
     @Volatile
     var keyHumanization = false
+
+    /** 偏移强度，1–100（100 = 最大值）。内部统一用 [strengthFactor] 换算成 0–1。 */
     @Volatile
-    var humanizationStrength = 0f
+    var humanizationStrength = 50f
+
+    private val strengthFactor: Float
+        get() = (humanizationStrength / 100f).coerceIn(0f, 1f)
 
     /**
      * 抖动间隔（ms）。以前固定 100–220ms，几乎每帧都在动，实际用起来会干扰瞄准；
@@ -182,7 +187,7 @@ class EventHandler(
     fun setHumanization(wasd: Boolean, keys: Boolean, strength: Float) {
         wasdHumanization = wasd
         keyHumanization = keys
-        humanizationStrength = strength.coerceIn(0f, 1f)
+        humanizationStrength = strength.coerceIn(1f, 100f)
         // 触点压力/接触面积与位置抖动同源：任一路开启即让触点参数不再是固定值。
         eventInjector.setHumanizeContact(wasd || keys)
         if (!keys) stopAllKeyJitter()
@@ -200,9 +205,8 @@ class EventHandler(
 
     /** 拟人化抖动偏移（px）。强度 0 时返回零偏移。 */
     private fun jitterOffset(): Offset {
-        // 强度系数已按用户反馈削减为原来的 1/5（40px → 8px），
-        // 满强度时的最大偏移只有 8px，不再影响瞄准与走位。
-        val radius = humanizationStrength * 8f
+        // 强度 1–100 换算成 0–1；满强度时最大偏移 8px。
+        val radius = strengthFactor * 8f
         if (radius <= 0f) return Offset.Zero
         // 圆内均匀采样：真实手指落点集中在目标中心附近，方形分布会让四个角
         // 概率与中心相同，统计上比圆分布更容易被识别。
@@ -227,18 +231,19 @@ class EventHandler(
      * 97%，保证方向与推动量始终有效。
      */
     private fun jitterTarget(center: Offset, target: Offset): Offset {
-        val strength = humanizationStrength
-        if (strength <= 0f) return target
+        val strength = strengthFactor
+        if (strength <= 0.001f) return target
         val delta = target - center
         val length = delta.getDistance()
         if (length <= 0.5f) return target
-        val maxAngle = (0.4f + 2f * strength) * (Math.PI.toFloat() / 180f)
+        // 满强度也只旋转 ±1.2°：摇杆方向点的微小旋转就足以打破机械角度，
+        // 再大就会让玩家按住 W 时明显跑偏。
+        val maxAngle = (1.2f * strength) * (Math.PI.toFloat() / 180f)
         val angle = (Random.nextFloat() * 2f - 1f) * maxAngle
         val cosA = cos(angle)
         val sinA = sin(angle)
-        // 半径扰动同样削减到原来的 1/5（±0.4%~±1.2%），方向与推动量保持稳定。
-        val scale = (1f + (Random.nextFloat() * 2f - 1f) * (0.004f + 0.012f * strength))
-            .coerceAtLeast(0.97f)
+        // 半径最多收缩 1%，且不低于原距离的 98.5%，避免掉进游戏摇杆的慢走/死区。
+        val scale = (1f - Random.nextFloat() * 0.01f * strength).coerceAtLeast(0.985f)
         val rotated = Offset(delta.x * cosA - delta.y * sinA, delta.x * sinA + delta.y * cosA)
         return center + rotated * scale
     }
@@ -248,24 +253,27 @@ class EventHandler(
         wasdJitterJob = null
     }
 
-    // 方向落点偏置：每次方向切换采样一次（模拟拇指落点略偏离正轴），
-    // 方向不变时保持，避免每帧乱跳。只影响注入点，不改摇杆几何。
-    private var wasdBiasMask = 0
-    private var wasdBiasAngleDeg = 0f
-    private var wasdBiasRadius = 1f
+    // 方向落点偏置由 biasedDirection() 在换向时采样，这里只保留记录以便调试。
+    // （无状态依赖，删除字段后行为不变。）
 
     /**
      * 给离散的 8 向方向点加上一次性角度/半径偏置，让每次按下的方向不再精确落在
      * 0°/45°/90°，消除「永远正北/正东北」这种机械特征。
      */
     private fun biasedDirection(center: Offset, point: Offset): Offset {
+        val strength = strengthFactor
+        if (strength <= 0.001f) return point
         val delta = point - center
         if (delta.getDistance() <= 0.5f) return point
-        val rad = wasdBiasAngleDeg * (Math.PI.toFloat() / 180f)
+        // 偏置幅度跟随强度：满强度也只有 ±1.5°，半径最多 -1.2%，
+        // 不会把 W 的推动量压到游戏的慢走/死区里。
+        val maxBiasDeg = 1.5f * strength
+        val rad = (Random.nextFloat() * 2f - 1f) * maxBiasDeg * (Math.PI.toFloat() / 180f)
+        val radius = 1f - Random.nextFloat() * 0.012f * strength
         val cosA = cos(rad)
         val sinA = sin(rad)
         val rotated = Offset(delta.x * cosA - delta.y * sinA, delta.x * sinA + delta.y * cosA)
-        return center + rotated * wasdBiasRadius
+        return center + rotated * radius
     }
 
     private fun restartWasdJitter(pointerId: Int, mask: Int, map: KeyMap) {
@@ -290,13 +298,13 @@ class EventHandler(
      */
     private fun startKeyJitter(pointerId: Int, map: KeyMap) {
         stopKeyJitter(pointerId)
-        if (!keyHumanization || humanizationStrength <= 0f) return
+        if (!keyHumanization || strengthFactor <= 0.001f) return
         if (map.end != map.position) return
         val anchor = map.position
         keyJitterJobs[pointerId] = humanizeScope.launch {
             while (isActive) {
                 delay(nextJitterDelay())
-                if (!keyHumanization || humanizationStrength <= 0f) break
+                if (!keyHumanization || strengthFactor <= 0.001f) break
                 eventInjector.transFormGesture(pointerId, anchor + jitterOffset())
             }
         }
@@ -321,9 +329,9 @@ class EventHandler(
 
     /** TAP 按下与抬起之间补一帧小幅位移：真实手指不会在两次采样之间完全静止。 */
     private fun tapWiggle(pointerId: Int, map: KeyMap) {
-        if (!keyHumanization || humanizationStrength <= 0f) return
-        // 与 jitterOffset 同步削减到原来的 1/5。
-        val max = 0.3f + humanizationStrength * 0.9f
+        if (!keyHumanization || strengthFactor <= 0.001f) return
+        // 与 jitterOffset 同一尺度：满强度 1.2px 以内。
+        val max = 0.3f + strengthFactor * 0.9f
         val dx = (Random.nextFloat() * 2f - 1f) * max
         val dy = (Random.nextFloat() * 2f - 1f) * max
         eventInjector.transFormGesture(pointerId, map.position + Offset(dx, dy))
@@ -331,7 +339,7 @@ class EventHandler(
 
     /** 普通按键的触点位置加随机抖动（仅当「其他按键拟人化」开启时）。 */
     private fun humanizedMap(map: KeyMap): KeyMap {
-        if (!keyHumanization || humanizationStrength <= 0f) return map
+        if (!keyHumanization || strengthFactor <= 0.001f) return map
         val j = jitterOffset()
         return map.copy(position = map.position + j, end = map.end?.plus(j))
     }
@@ -659,12 +667,7 @@ class EventHandler(
             return
         }
         val target = if (wasdHumanization) {
-            // 先加一次性的方向偏置，再叠加低频微抖。
-            if (effectiveMask != wasdBiasMask) {
-                wasdBiasMask = effectiveMask
-                wasdBiasAngleDeg = (Random.nextFloat() * 2f - 1f) * 5f
-                wasdBiasRadius = 0.94f + Random.nextFloat() * 0.06f
-            }
+            // 每次换向时由 biasedDirection 重新采样偏置；再叠加低频微抖。
             jitterTarget(entry.center!!, biasedDirection(entry.center!!, entry.position))
         } else entry.position
         joystickMotion.update(pointerId, effectiveMask, entry.center!!, target)
@@ -1057,7 +1060,6 @@ class EventHandler(
         // eventInjector.clear() above lifted the joystick contact, so the
         // Reset the joystick transition tracker after cancelling its contact.
         wasdMask = 0
-        wasdBiasMask = 0
         joystickMotion.reset()
         stopWasdJitter()
         stopAllKeyJitter()
@@ -1182,7 +1184,6 @@ class EventHandler(
         mappingPressed.clear()
         cancelToggle.clear()
         wasdMask = 0
-        wasdBiasMask = 0
         joystickMotion.reset()
         stopWasdJitter()
         stopAllKeyJitter()

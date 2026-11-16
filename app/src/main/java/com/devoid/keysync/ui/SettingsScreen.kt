@@ -600,7 +600,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            "给注入的触控位置加随机抖动，避免被识别成机械死板的操作。全局生效，强度为 0 时关闭。",
+                            "给注入的触控位置加随机抖动，避免被识别成机械死板的操作。全局生效，强度最低 1，最高 100。",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -617,14 +617,24 @@ fun SettingsScreen(
                             Switch(checked = keyHumanization, onCheckedChange = onSetKeyHumanization)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("强度", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                            Text("${(humanizationStrength * 100).roundToInt()}")
+                            Text(
+                                "偏移强度（1–100）",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text("${humanizationStrength.roundToInt()} / 100")
                         }
                         Slider(
-                            value = humanizationStrength,
-                            valueRange = 0f..1f,
-                            steps = 9,
-                            onValueChange = onSetHumanizationStrength
+                            value = humanizationStrength.coerceIn(1f, 100f),
+                            valueRange = 1f..100f,
+                            steps = 98,
+                            onValueChange = { onSetHumanizationStrength(it.roundToInt().toFloat()) }
+                        )
+                        Text(
+                            "默认 50。WASD 的角度扰动最多 ±1.2°、半径最多 -1.2%（不低于 98.5%），" +
+                                "调高也不会把走位压进慢走/死区。",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(

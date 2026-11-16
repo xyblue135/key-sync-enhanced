@@ -13,6 +13,7 @@ import android.view.WindowManager
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.core.view.WindowInsetsCompat
+import kotlin.math.roundToInt
 import com.devoid.keysync.data.local.DataStoreManager
 import com.devoid.keysync.data.local.ProfilesLoad
 import com.devoid.keysync.model.AppConfig
@@ -88,7 +89,8 @@ class FloatingWindowStateManager @Inject constructor(
     // 按键拟人化（随机偏移）：全局生效、对所有预设统一，不随预设存储。
     val wasdHumanization = MutableStateFlow(false)
     val keyHumanization = MutableStateFlow(false)
-    val humanizationStrength = MutableStateFlow(0f)
+    /** 偏移强度 1–100（100 = 最大）。 */
+    val humanizationStrength = MutableStateFlow(50f)
     /** 随机偏移间隔（ms），默认 1000（约每秒一次）。 */
     val humanizationInterval = MutableStateFlow(1000L)
 
@@ -261,8 +263,14 @@ class FloatingWindowStateManager @Inject constructor(
                 dataStoreManager.getBoolean(DataStoreManager.WASD_HUMANIZATION).first() ?: false
             keyHumanization.value =
                 dataStoreManager.getBoolean(DataStoreManager.KEY_HUMANIZATION).first() ?: false
-            humanizationStrength.value =
-                dataStoreManager.getFloat(DataStoreManager.HUMANIZATION_STRENGTH).first() ?: 0f
+            // 强度已改为 1–100；旧版本存的是 0–1 的 float，这里做一次迁移。
+            val scaled = dataStoreManager.getInt(DataStoreManager.HUMANIZATION_STRENGTH_SCALE).first()
+            humanizationStrength.value = if (scaled != null) {
+                scaled.coerceIn(1, 100).toFloat()
+            } else {
+                val legacy = dataStoreManager.getFloat(DataStoreManager.HUMANIZATION_STRENGTH).first() ?: 0.5f
+                (legacy * 100f).coerceIn(1f, 100f)
+            }
             humanizationInterval.value =
                 (dataStoreManager.getInt(DataStoreManager.HUMANIZATION_INTERVAL_MS).first()
                     ?: EventHandler.DEFAULT_HUMANIZATION_INTERVAL_MS.toInt()).toLong()
@@ -1154,9 +1162,14 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     fun setHumanizationStrength(value: Float) {
-        humanizationStrength.value = value
+        val clamped = value.coerceIn(1f, 100f)
+        humanizationStrength.value = clamped
         syncHumanization()
-        scope.launch { dataStoreManager.save(DataStoreManager.HUMANIZATION_STRENGTH, value) }
+        scope.launch {
+            dataStoreManager.save(
+                DataStoreManager.HUMANIZATION_STRENGTH_SCALE,
+                clamped.roundToInt()            )
+        }
     }
 
     /** 随机偏移间隔（ms）：默认 1000，约每秒扰动一次。 */
