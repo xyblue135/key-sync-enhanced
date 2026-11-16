@@ -783,9 +783,13 @@ class EventHandler(
         }
         val pointerId = pointerIds[keyCode] ?: return false
 
-        if (!shootingMode && button != MotionEvent.BUTTON_BACK && button != MotionEvent.BUTTON_FORWARD) {
-            simulateNativeClick(pointerId = pointerId, pressed = pressed)
-            return true
+        if (!shootingMode) {
+            // 光标模式（鼠标已切出瞄准）：左右键不再注入到游戏。
+            // 之前会在光标处模拟一次原生点击，光标恰好停在开火/右键按钮上时
+            // 会误开火，官方表现应为「鼠标切出后不触发任何游戏按键」。
+            if (button == MotionEvent.BUTTON_PRIMARY || button == MotionEvent.BUTTON_SECONDARY) {
+                return true
+            }
         }
 
         if (keyCode !in mouseHoldKeys || keyTouchMode[keyCode] == TouchMode.WHEEL) {
@@ -846,12 +850,7 @@ class EventHandler(
         }
 
         // 非射击模式：鼠标移动只是移动光标（光标位置已由 FloatingWindowStateManager
-        // 的 _mousePointerOffset 跟踪），不拖动 LMC 触点。旧实现无条件调用
-        // updatePointerPosition(LMC)，一旦用户按住左键（点击后未及时松开）再滑鼠标，
-        // LMC 触点就被拖出屏幕 → 游戏收到越界多指事件 → 重置所有触点（WASD 断触）。
-        if (MotionEvent.BUTTON_PRIMARY in heldMouseButtons) {
-            pointerIds[KEYCODE_LMC]?.let { eventInjector.transFormGesture(it, mousePointerPosition) }
-        }
+        // 的 _mousePointerOffset 跟踪），不拖动任何触点，也不注入点击。
         return true
     }
 
@@ -891,10 +890,23 @@ class EventHandler(
 
     /* ---------- shooting mode ---------- */
 
+    /** 释放所有仍按住的鼠标键对应的触点（切出射击模式时调用）。 */
+    private fun releaseHeldMouseMappings() {
+        heldMouseButtons.toList().forEach { button ->
+            heldMouseButtons.remove(button)
+            val key = mouseButtonKeyCode(button) ?: return@forEach
+            val pointerId = pointerIds[key] ?: return@forEach
+            handleKeyUp(key, pointerId)
+        }
+    }
+
     private fun toggleShootingMode() {
         stopWheel()
         val newState = !shootingMode
         if (!newState) {
+            // 退出射击模式时释放所有鼠标键对应的触点。否则「按住左键时切出鼠标」
+            // 会让开火触点一直保持按下，表现为切出后仍在持续开火。
+            releaseHeldMouseMappings()
             val center = clampAimToBounds(keyMap[shootingModeKeyCode]?.position ?: aimCenter)
             mousePointerPosition = center
             onCursorRecenter?.invoke(center)
@@ -922,28 +934,6 @@ class EventHandler(
         }
     }
 
-
-    private val cursorDownAt = mutableMapOf<Int, Long>()
-    private val cursorGeneration = mutableMapOf<Int, Int>()
-
-    private fun simulateNativeClick(
-        pointerId: Int,
-        position: Offset = mousePointerPosition,
-        pressed: Boolean
-    ) {
-        if (pressed) {
-            cursorGeneration[pointerId] = (cursorGeneration[pointerId] ?: 0) + 1
-            cursorDownAt[pointerId] = SystemClock.uptimeMillis()
-            eventInjector.injectPointer(pointerId, position)
-        } else {
-            val start = cursorDownAt.remove(pointerId) ?: return
-            val token = cursorGeneration[pointerId]
-            val delay = (60L - (SystemClock.uptimeMillis() - start)).coerceAtLeast(0)
-            mainHandler.postDelayed({
-                if (cursorGeneration[pointerId] == token) eventInjector.releasePointer(pointerId)
-            }, delay)
-        }
-    }
 
     /* ---------- mapping ---------- */
 
@@ -1030,8 +1020,6 @@ class EventHandler(
         macroRunner.cancel()
         scrollPulse.reset()
         releaseSwitch.reset()
-        cursorDownAt.clear()
-        cursorGeneration.keys.toList().forEach { cursorGeneration[it] = cursorGeneration.getValue(it) + 1 }
         walkToggle.interrupt()
         MappingConflictDetector.detect(items).forEach {
             Log.w("EventHandler", "Mapping conflict: ${it.message}")
@@ -1170,8 +1158,6 @@ class EventHandler(
         macroRunner.cancel()
         scrollPulse.reset()
         releaseSwitch.reset()
-        cursorDownAt.clear()
-        cursorGeneration.keys.toList().forEach { cursorGeneration[it] = cursorGeneration.getValue(it) + 1 }
         walkToggle.interrupt()
         heldMouseButtons.clear()
         normalHandlers.values.filterIsInstance<TapModeTouchHandler>()

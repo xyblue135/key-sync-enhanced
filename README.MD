@@ -13,7 +13,7 @@
 | namespace / applicationId | `com.devoid.keysync` |
 | compileSdk / targetSdk | 36 |
 | minSdk | 29 |
-| versionCode / versionName | 34 / `1.58-android16` |
+| versionCode / versionName | 35 / `1.59-android16` |
 | debug 变体 | applicationId 后缀 `.fpsdebug`，versionName 后缀 `-debug` |
 | Kotlin / Java | 17 |
 
@@ -92,7 +92,7 @@
 
 1. `FloatingBubbleService` 对 ComposeView 请求 **pointer capture**，用 `setOnCapturedPointerListener` + `setOnGenericMotionListener` 收事件。
 2. **相对鼠标**（`SOURCE_MOUSE_RELATIVE`）直接把 `event.x / event.y` 当作增量；非相对源先取 `AXIS_RELATIVE_X/Y`，再回退到相邻 `rawX/rawY` 的差值。绝对坐标只用来算差值，不能直接当位移。
-3. `EventHandler.handlePointerMove()` 分流：轮盘激活时转轮盘；射击模式乘 `pointerSensitivity` 转视角；光标模式 1:1 移动光标，且**只有按住左键时才拖动 LMC 触点**（否则触点会被拖出屏幕，导致游戏重置全部触点、WASD 断触）。
+3. `EventHandler.handlePointerMove()` 分流：轮盘激活时转轮盘；射击模式乘 `pointerSensitivity` 转视角；光标模式 1:1 移动光标，**不拖动任何触点、也不注入点击**。
 4. 注入走 `EventInjectorImpl` → `ShizukuSystemServerAPi`（见第 1 节）。
 
 支持范围：
@@ -108,6 +108,7 @@
 - **滚轮**：`ScrollTracker` 累计小数增量（高分辨率滚轮 / 触控板），方向反转时先归零，单次累计限制 ±16；只有满一格才产生一次点击。轮盘打开时滚轮优先控制轮盘，不再触发普通绑定。
 - **1000Hz 高回报率**：注入用 `INJECT_INPUT_EVENT_MODE_ASYNC`，并用 `PendingMoves` 把同一触点两次 flush 之间的位移累加成一条 MOVE。**总位移不丢、中间采样点丢弃**，所以注入吞吐不足时是降采样而不是积压；`EventInjectorImpl` 的单线程队列保证 DOWN / MOVE / UP 不乱序。
 - 宏的 50ms 点击与拟人化抖动循环（默认 1000ms，可调）不在这条路径上，和高回报率互不影响。
+- **光标模式的按键语义**：光标模式（非射击模式）下左键与右键**不触发任何游戏绑定**。旧实现会在光标处模拟一次原生点击，光标恰好停在开火/右键按钮上时会误开火；现在切出鼠标就等于「不操作游戏」，中键/侧键仍按各自绑定处理。
 - **光标模式的可视化**：屏幕上显示的是一个 26dp 的半透明触摸指示圈（描边 + 中心点），不再是箭头图标，视觉上更接近「手指触点」。光标本身只做显示，点击坐标仍由 `pointerOffset` 计算。
 
 ### 3.2 鼠标按键数量的硬限制（G502 等）
