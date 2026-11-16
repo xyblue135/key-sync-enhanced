@@ -98,6 +98,7 @@ class MainActivityViewModel @Inject constructor(
     val wasdHumanization: StateFlow<Boolean> = stateManager.wasdHumanization
     val keyHumanization: StateFlow<Boolean> = stateManager.keyHumanization
     val humanizationStrength: StateFlow<Float> = stateManager.humanizationStrength
+    val humanizationInterval: StateFlow<Long> = stateManager.humanizationInterval
     /** 悬浮窗透明度（全局设置），设置页用；改动立即持久化。 */
     val overlayOpacity: StateFlow<Float> = stateManager.overlayOpacity
     /** 顶部状态提示条（预设名 · 模式 · 最近输入）的显隐；全局设置，立即持久化。 */
@@ -222,6 +223,7 @@ class MainActivityViewModel @Inject constructor(
     fun setWasdHumanization(enabled: Boolean) = stateManager.setWasdHumanization(enabled)
     fun setKeyHumanization(enabled: Boolean) = stateManager.setKeyHumanization(enabled)
     fun setHumanizationStrength(value: Float) = stateManager.setHumanizationStrength(value)
+    fun setHumanizationInterval(intervalMs: Long) = stateManager.setHumanizationInterval(intervalMs)
     fun setOverlayOpacity(value: Float) = stateManager.saveOverlayOpacity(value)
     fun setStatusBarVisible(visible: Boolean) = stateManager.setStatusBarVisible(visible)
     fun setFeatureTier(tier: FeatureTier) = stateManager.setFeatureTier(tier)

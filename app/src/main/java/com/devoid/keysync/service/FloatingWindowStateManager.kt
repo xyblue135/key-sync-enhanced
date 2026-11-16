@@ -89,6 +89,8 @@ class FloatingWindowStateManager @Inject constructor(
     val wasdHumanization = MutableStateFlow(false)
     val keyHumanization = MutableStateFlow(false)
     val humanizationStrength = MutableStateFlow(0f)
+    /** 随机偏移间隔（ms），默认 1000（约每秒一次）。 */
+    val humanizationInterval = MutableStateFlow(1000L)
 
     // 悬浮窗按键的显示/隐藏开关（一键切换，不影响功能）。
     private val _keysVisible = MutableStateFlow(true)
@@ -261,6 +263,9 @@ class FloatingWindowStateManager @Inject constructor(
                 dataStoreManager.getBoolean(DataStoreManager.KEY_HUMANIZATION).first() ?: false
             humanizationStrength.value =
                 dataStoreManager.getFloat(DataStoreManager.HUMANIZATION_STRENGTH).first() ?: 0f
+            humanizationInterval.value =
+                (dataStoreManager.getInt(DataStoreManager.HUMANIZATION_INTERVAL_MS).first()
+                    ?: EventHandler.DEFAULT_HUMANIZATION_INTERVAL_MS.toInt()).toLong()
             // 顶部提示条是持久化开关：默认显示，用户关掉后下次启动仍然隐藏。
             _statusBarVisible.value =
                 dataStoreManager.getBoolean(DataStoreManager.STATUS_BAR_VISIBLE).first() ?: true
@@ -1014,6 +1019,7 @@ class FloatingWindowStateManager @Inject constructor(
             keyHumanization.value,
             humanizationStrength.value
         )
+        eventHandler.setHumanizationInterval(humanizationInterval.value)
     }
 
     fun setWasdHumanization(enabled: Boolean) {
@@ -1032,6 +1038,16 @@ class FloatingWindowStateManager @Inject constructor(
         humanizationStrength.value = value
         syncHumanization()
         scope.launch { dataStoreManager.save(DataStoreManager.HUMANIZATION_STRENGTH, value) }
+    }
+
+    /** 随机偏移间隔（ms）：默认 1000，约每秒扰动一次。 */
+    fun setHumanizationInterval(intervalMs: Long) {
+        val clamped = intervalMs.coerceIn(200L, 3000L)
+        humanizationInterval.value = clamped
+        syncHumanization()
+        scope.launch {
+            dataStoreManager.save(DataStoreManager.HUMANIZATION_INTERVAL_MS, clamped.toInt())
+        }
     }
 
     /* ----------------- profile CRUD ----------------- */

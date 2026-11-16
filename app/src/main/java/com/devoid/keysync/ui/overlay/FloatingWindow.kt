@@ -134,6 +134,10 @@ fun ItemsContainer(
     var configuringFixedKey by remember { mutableStateOf<DraggableItem.FixedKey?>(null) }
     var configuringVariableKey by remember { mutableStateOf<DraggableItem.VariableKey?>(null) }
 
+    // 任何配置弹框打开时都禁用底层按钮的拖动，避免弹框里的手势把按钮挪走。
+    val draggingEnabled = configuringWasd == null &&
+        configuringFixedKey == null && configuringVariableKey == null
+
     // 新建「按钮」后自动弹出绑定框：StateManager 会发出 pendingBindId 信号，
     // 这里捕获后直接打开对应按钮的按键捕获对话框，避免留下一个显示 "?" 的空按钮。
     LaunchedEffect(pendingBindId) {
@@ -180,6 +184,7 @@ fun ItemsContainer(
                             scale = scale,
                             id = item.id,
                             offset = position,
+                            enabled = draggingEnabled,
                             onScreenCenter = { item.touchCenter = it; onItemMeasured(item) },
                             onOffsetChange = {
                                 val target = clampToViewport(
@@ -221,6 +226,7 @@ fun ItemsContainer(
                             scale = scale,
                             id = item.id,
                             offset = cancelableKeyPosition,
+                            enabled = draggingEnabled,
                             onScreenCenter = { item.cancelTouchCenter = it; onItemMeasured(item) },
                             onOffsetChange = {
                                 val target = clampToViewport(
@@ -244,6 +250,7 @@ fun ItemsContainer(
                     scale = scale,
                     id = item.id,
                     offset = position,
+                    enabled = draggingEnabled,
                     onScreenCenter = { item.touchCenter = it; onItemMeasured(item) },
                     onOffsetChange = {
                         val target = clampToViewport(
@@ -684,6 +691,7 @@ fun DraggableItem(
     id: Int,
     offset: Offset,
     scale: Float,
+    enabled: Boolean = true,
     onOffsetChange: (Offset) -> Unit,
     onScreenCenter: (Offset) -> Unit = {},
     content: @Composable () -> Unit
@@ -703,7 +711,10 @@ fun DraggableItem(
             onScreenCenter(coordinates.localToScreen(
                 Offset(coordinates.size.width / 2f, coordinates.size.height / 2f)))
         }
-        .pointerInput(id, scale) {
+        .pointerInput(id, scale, enabled) {
+            // 配置对话框打开时禁用拖动：此时屏幕上的手势属于对话框，
+            // 绝不能让底层按钮跟着位移。
+            if (!enabled) return@pointerInput
             detectDragGestures(onDragEnd = {
             }) { change, dragAmount ->
                 change.consume()
@@ -732,9 +743,14 @@ fun EditToolbar(
     var itemsMenuVisible by remember { mutableStateOf(false) }
     // 编辑条会挡住想摆放的位置，因此允许直接拖动（按 ⠿ 手柄拖动，避免和按钮点击冲突）。
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
-    Box(modifier.offset { IntOffset(dragOffset.x.roundToInt(), dragOffset.y.roundToInt()) }) {
+    // 根节点必须撑满父容器：下拉菜单是本 Box 的子节点，wrap-content 时菜单展开会
+    // 把 Box 撑大，而 Box 在父级又按 TopEnd 对齐，结果整条工具栏（含 ⠿ 手柄）
+    // 被挤到左边——就是「重新打开配置菜单，按钮被顶到一边」。撑满后工具栏与菜单
+    // 各自按 TopEnd 定位，菜单的尺寸变化不再影响工具栏位置。
+    Box(modifier.fillMaxSize().offset { IntOffset(dragOffset.x.roundToInt(), dragOffset.y.roundToInt()) }) {
         Row(
             modifier = Modifier
+                .align(Alignment.TopEnd)
                 .clip(CircleShape.copy(CornerSize(10)))
                 .background(MaterialTheme.colorScheme.surface)
                 .padding(horizontal = 4.dp),

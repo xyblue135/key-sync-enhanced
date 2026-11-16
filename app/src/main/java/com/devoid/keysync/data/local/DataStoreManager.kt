@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.devoid.keysync.model.AppConfig
@@ -93,6 +94,8 @@ class DataStoreManager internal constructor(
         val WASD_HUMANIZATION = booleanPreferencesKey("wasd_humanization")
         val KEY_HUMANIZATION = booleanPreferencesKey("key_humanization")
         val HUMANIZATION_STRENGTH = floatPreferencesKey("humanization_strength")
+        /** 随机偏移间隔（ms），默认 1000；全局键，与拟人化开关一起生效。 */
+        val HUMANIZATION_INTERVAL_MS = intPreferencesKey("humanization_interval_ms")
         val KEYS_CONFIG = stringPreferencesKey("keys_config")
 
         /** All user-defined keymap presets. */

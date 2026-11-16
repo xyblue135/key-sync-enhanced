@@ -123,9 +123,11 @@ fun SettingsScreen(
     wasdHumanization: Boolean = false,
     keyHumanization: Boolean = false,
     humanizationStrength: Float = 0f,
+    humanizationInterval: Long = 1000L,
     onSetWasdHumanization: (Boolean) -> Unit = {},
     onSetKeyHumanization: (Boolean) -> Unit = {},
     onSetHumanizationStrength: (Float) -> Unit = {},
+    onSetHumanizationInterval: (Long) -> Unit = {},
     onNavigateBack: () -> Unit = {},
     onNavigateAbout: () -> Unit = {}
 ) {
@@ -619,6 +621,29 @@ fun SettingsScreen(
                             valueRange = 0f..1f,
                             steps = 9,
                             onValueChange = onSetHumanizationStrength
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "随机偏移间隔",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                if (humanizationInterval >= 1000L)
+                                    "${humanizationInterval / 1000f} 秒"
+                                else "${humanizationInterval} ms"
+                            )
+                        }
+                        Slider(
+                            value = humanizationInterval.toFloat().coerceIn(200f, 3000f),
+                            valueRange = 200f..3000f,
+                            steps = 27,
+                            onValueChange = { onSetHumanizationInterval(it.roundToInt().toLong()) }
+                        )
+                        Text(
+                            "间隔越大偏移越少。默认 1000ms（约每秒一次），按下与按住期间都会按这个间隔轻微扰动。",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }

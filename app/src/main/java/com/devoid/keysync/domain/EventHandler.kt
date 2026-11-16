@@ -172,6 +172,13 @@ class EventHandler(
     @Volatile
     var humanizationStrength = 0f
 
+    /**
+     * 抖动间隔（ms）。以前固定 100–220ms，几乎每帧都在动，实际用起来会干扰瞄准；
+     * 现在改为可配置，默认 1000ms（约每秒一次），只在按住期间偶尔扰动一次。
+     */
+    @Volatile
+    var humanizationIntervalMs = DEFAULT_HUMANIZATION_INTERVAL_MS
+
     fun setHumanization(wasd: Boolean, keys: Boolean, strength: Float) {
         wasdHumanization = wasd
         keyHumanization = keys
@@ -181,14 +188,21 @@ class EventHandler(
         if (!keys) stopAllKeyJitter()
     }
 
-    // 持键期间低频率重掷抖动（周期随机 100–220ms），在完全静止的方向上也产生自然的轨迹扰动。
+    fun setHumanizationInterval(intervalMs: Long) {
+        humanizationIntervalMs = intervalMs.coerceIn(MIN_HUMANIZATION_INTERVAL_MS, MAX_HUMANIZATION_INTERVAL_MS)
+    }
+
+    // 持键期间低频率重掷抖动。间隔可配置（默认 1s），并带 ±20% 随机，
+    // 避免固定周期本身成为可提取的规律。
     private val humanizeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var wasdJitterJob: Job? = null
     private val keyJitterJobs = HashMap<Int, Job>(16)
 
     /** 拟人化抖动偏移（px）。强度 0 时返回零偏移。 */
     private fun jitterOffset(): Offset {
-        val radius = humanizationStrength * 40f
+        // 强度系数已按用户反馈削减为原来的 1/5（40px → 8px），
+        // 满强度时的最大偏移只有 8px，不再影响瞄准与走位。
+        val radius = humanizationStrength * 8f
         if (radius <= 0f) return Offset.Zero
         // 圆内均匀采样：真实手指落点集中在目标中心附近，方形分布会让四个角
         // 概率与中心相同，统计上比圆分布更容易被识别。
@@ -197,8 +211,12 @@ class EventHandler(
         return Offset(r * cos(angle), r * sin(angle))
     }
 
-    /** 抖动周期不能是固定值：固定 140ms 本身就是可提取的周期性信号。 */
-    private fun nextJitterDelay(): Long = Random.nextLong(100L, 220L)
+    /** 抖动周期可配置，并在 ±20% 内随机，避免固定间隔形成周期性信号。 */
+    private fun nextJitterDelay(): Long {
+        val base = humanizationIntervalMs
+            .coerceIn(MIN_HUMANIZATION_INTERVAL_MS, MAX_HUMANIZATION_INTERVAL_MS)
+        return (base * (0.8f + Random.nextFloat() * 0.4f)).toLong().coerceAtLeast(50L)
+    }
 
     /**
      * WASD 抖动的目标点。
@@ -214,11 +232,12 @@ class EventHandler(
         val delta = target - center
         val length = delta.getDistance()
         if (length <= 0.5f) return target
-        val maxAngle = (2f + 10f * strength) * (Math.PI.toFloat() / 180f)
+        val maxAngle = (0.4f + 2f * strength) * (Math.PI.toFloat() / 180f)
         val angle = (Random.nextFloat() * 2f - 1f) * maxAngle
         val cosA = cos(angle)
         val sinA = sin(angle)
-        val scale = (1f + (Random.nextFloat() * 2f - 1f) * (0.02f + 0.06f * strength))
+        // 半径扰动同样削减到原来的 1/5（±0.4%~±1.2%），方向与推动量保持稳定。
+        val scale = (1f + (Random.nextFloat() * 2f - 1f) * (0.004f + 0.012f * strength))
             .coerceAtLeast(0.97f)
         val rotated = Offset(delta.x * cosA - delta.y * sinA, delta.x * sinA + delta.y * cosA)
         return center + rotated * scale
@@ -283,7 +302,8 @@ class EventHandler(
     /** TAP 按下与抬起之间补一帧小幅位移：真实手指不会在两次采样之间完全静止。 */
     private fun tapWiggle(pointerId: Int, map: KeyMap) {
         if (!keyHumanization || humanizationStrength <= 0f) return
-        val max = 1.5f + humanizationStrength * 4.5f
+        // 与 jitterOffset 同步削减到原来的 1/5。
+        val max = 0.3f + humanizationStrength * 0.9f
         val dx = (Random.nextFloat() * 2f - 1f) * max
         val dy = (Random.nextFloat() * 2f - 1f) * max
         eventInjector.transFormGesture(pointerId, map.position + Offset(dx, dy))
@@ -1143,5 +1163,12 @@ class EventHandler(
         _shootingModeFlow.value = false
         aimPosition = Offset.Zero
         aimCenter = Offset.Zero
+    }
+
+    companion object {
+        /** 随机偏移间隔：默认 1000ms（约每秒一次），可调范围 200–3000ms。 */
+        const val DEFAULT_HUMANIZATION_INTERVAL_MS = 1000L
+        const val MIN_HUMANIZATION_INTERVAL_MS = 200L
+        const val MAX_HUMANIZATION_INTERVAL_MS = 3000L
     }
 }

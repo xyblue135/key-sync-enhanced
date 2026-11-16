@@ -104,6 +104,14 @@ README 讲「怎么用、怎么改」，这里只讲「哪里会炸、为什么�
 - **注意**：`customSizeDp` 是渲染尺寸，`size` 仍是测量后的像素宽度（注入用的触点靠它算）。改尺寸后 `onSizeChanged` 刷新 `size`、`onGloballyPositioned` 重新上报 `touchCenter`，所以不要自己手算触点中心。
 - **注意**：`DraggableItem` 是可变对象，改完字段必须 `_containerItems.value = _containerItems.value.toList()` 换新列表实例，否则 Compose 不会重组，滑块看起来"没反应"。
 
+### 2.10 重新打开配置菜单会把工具条顶到一边 / 拟人化抖动太频繁
+
+- **工具条位移**：`EditToolbar` 的根 `Box` 是 wrap-content，`＋` 菜单是同一个 Box 的子节点；菜单展开后 Box 被撑大，而 Box 在父级按 `TopEnd` 对齐，于是整条工具栏（含 `⠿` 手柄）被挤到左边——表现就是「重新打开配置菜单，按钮被顶到一边」。修复：根节点改为 `fillMaxSize()`，工具条与菜单各自 `align(TopEnd)`，菜单尺寸不再影响工具条位置。
+- **附带防护**：任何配置对话框（`configuringFixedKey/VariableKey/Wasd`）打开时，`DraggableItem` 的 `enabled=false`，底层按钮不响应拖动。拖动手势绝不能穿透对话框。
+- **抖动强度**：`jitterOffset()` 半径 `40px → 8px`、`jitterTarget()` 角度 `(2+10s)° → (0.4+2s)°`、半径扰动 `±(2%+6s%) → ±(0.4%+1.2s%)`、TAP 位移 `(1.5+4.5s)px → (0.3+0.9s)px`，整体为原强度的 1/5。
+- **抖动频率**：原来固定 100–220ms；现在 `humanization_interval_ms`（默认 1000，200–3000ms）控制，实际间隔 ±20% 随机。新增「随机偏移间隔」滑杆。
+- **红线**：抖动仍只发 MOVE、绝不 reanchor（见 6.1）；调间隔不要引入阻塞式 delay 到按键响应路径。
+
 ### 2.6 交换对对话框：换位键无法录入 / 按钮选不到
 
 - **现象**：交换对对话框里 A/B 只能选到少数按钮，换位键、还原键点上去没反应；交换对一多（第 3、4 组）后，输入区域被挤出对话框，完全无法操作。
