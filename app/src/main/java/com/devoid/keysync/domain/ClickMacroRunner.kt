@@ -10,6 +10,8 @@ internal class ClickMacroRunner(
     private val schedule: (Long, () -> Unit) -> Unit,
     private val down: (Offset) -> Unit,
     private val up: () -> Unit,
+    /** 点击按住时长采样；测试可注入固定值。 */
+    private val sampleHoldMs: () -> Long = ::sampleMacroHoldDuration,
 ) {
     private var generation = 0L
     private var touching = false
@@ -31,7 +33,8 @@ internal class ClickMacroRunner(
             if (token != generation) return
             touching = true
             down(steps[index].screenPosition(viewport, origin))
-            schedule(50) {
+            // 宏的点击也按人手时长采样，不再固定 50ms。
+            schedule(sampleHoldMs().coerceIn(30L, 200L)) {
                 if (token == generation) {
                     touching = false
                     up()
@@ -53,3 +56,8 @@ internal class ClickMacroRunner(
         if (touching) { touching = false; up() }
     }
 }
+
+/** 宏点击按住时长：多数 45–75ms，约 15% 为 75–95ms。 */
+internal fun sampleMacroHoldDuration(): Long =
+    if (kotlin.random.Random.nextFloat() < 0.15f) kotlin.random.Random.nextLong(75L, 96L)
+    else kotlin.random.Random.nextLong(45L, 76L)

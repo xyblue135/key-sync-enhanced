@@ -16,6 +16,8 @@ class ClickMacroRunnerTest {
             schedule = { delay, action -> tasks += Task(now + delay, action) },
             down = { positions += it; events += "down@$now" },
             up = { events += "up@$now" },
+            // 时序断言需要确定性；真实采样的范围由 sampledHoldStaysHuman 覆盖。
+            sampleHoldMs = { 50L },
         )
         fun advance(to: Long) {
             while (tasks.any { it.at <= to }) {
@@ -119,5 +121,11 @@ class ClickMacroRunnerTest {
         f.press(f.macro.copy(steps = f.macro.steps.map { it.copy(delayAfterMs = 0) }))
         f.advance(100)
         assertEquals(listOf("down@0", "up@50", "down@50", "up@100"), f.events)
+    }
+
+    @Test fun sampledMacroHoldStaysInsideHumanRange() {
+        val samples = (1..200).map { sampleMacroHoldDuration() }
+        assertTrue(samples.all { it in 45L..95L })
+        assertTrue(samples.toSet().size > 1)
     }
 }

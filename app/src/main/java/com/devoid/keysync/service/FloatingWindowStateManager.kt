@@ -634,9 +634,15 @@ class FloatingWindowStateManager @Inject constructor(
             targets.forEach { code ->
                 val now = SystemClock.uptimeMillis()
                 eventHandler.handleKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
-                delay(45)
+                // 按下时长与间隔都采样，避免固定 45ms / 110ms 的机械节拍。
+                delay(kotlin.random.Random.nextLong(38L, 78L))
                 eventHandler.handleKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
-                delay(110)
+                delay(
+                    if (kotlin.random.Random.nextFloat() < 0.12f)
+                        kotlin.random.Random.nextLong(150L, 220L)
+                    else
+                        kotlin.random.Random.nextLong(90L, 150L)
+                )
             }
         }
         return true

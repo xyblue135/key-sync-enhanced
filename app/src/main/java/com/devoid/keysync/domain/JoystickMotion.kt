@@ -24,7 +24,17 @@ internal class JoystickMotion(
         val reanchor = lastMask != 0 && (
             (lastMask or mask) and sprintBit != 0 || lastPointer != pointer || lastCenter != center)
         if (reanchor) release(lastPointer)
-        if (lastMask == 0 || reanchor) start(pointer, center, target) else move(pointer, target)
+        if (lastMask == 0 || reanchor) {
+            start(pointer, center, target)
+        } else {
+            // 方向切换时先补一帧中点：真人的拇指是划过旧方向到新方向，不会瞬移。
+            // 只多发一条 MOVE，不引入等待，也不触发 reanchor。
+            if (lastMask != mask) {
+                val via = (lastTarget + target) / 2f
+                if (via != lastTarget && via != target) move(pointer, via)
+            }
+            move(pointer, target)
+        }
         lastMask = mask
         lastPointer = pointer
         lastCenter = center

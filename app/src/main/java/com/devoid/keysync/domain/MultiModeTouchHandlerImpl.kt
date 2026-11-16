@@ -24,7 +24,7 @@ class TapModeTouchHandler(
     private val eventInjector: EventInjector,
     private val midMove: ((Int, KeyMap) -> Unit)? = null,
 ) : MultiModeTouchHandler {
-    private val pulse = TapPulse { delay, action -> mainHandler.postDelayed({ action() }, delay) }
+    private val pulse = TapPulse(schedule = { delay, action -> mainHandler.postDelayed({ action() }, delay) })
     fun resetPendingActions() = pulse.reset()
 
     override fun handleTouchEvent(

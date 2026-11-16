@@ -78,7 +78,7 @@ class EventHandler(
     private var macros = emptyList<ClickMacro>()
     private var macroViewport = Offset.Zero
     private var macroOrigin = Offset.Zero
-    private val scrollPulse = TapPulse { delay, action -> mainHandler.postDelayed({ action() }, delay) }
+    private val scrollPulse = TapPulse(schedule = { delay, action -> mainHandler.postDelayed({ action() }, delay) })
 
     fun setMacros(value: List<ClickMacro>, viewport: Offset, origin: Offset) {
         macroRunner.cancel()
@@ -246,6 +246,26 @@ class EventHandler(
     private fun stopWasdJitter() {
         wasdJitterJob?.cancel()
         wasdJitterJob = null
+    }
+
+    // 方向落点偏置：每次方向切换采样一次（模拟拇指落点略偏离正轴），
+    // 方向不变时保持，避免每帧乱跳。只影响注入点，不改摇杆几何。
+    private var wasdBiasMask = 0
+    private var wasdBiasAngleDeg = 0f
+    private var wasdBiasRadius = 1f
+
+    /**
+     * 给离散的 8 向方向点加上一次性角度/半径偏置，让每次按下的方向不再精确落在
+     * 0°/45°/90°，消除「永远正北/正东北」这种机械特征。
+     */
+    private fun biasedDirection(center: Offset, point: Offset): Offset {
+        val delta = point - center
+        if (delta.getDistance() <= 0.5f) return point
+        val rad = wasdBiasAngleDeg * (Math.PI.toFloat() / 180f)
+        val cosA = cos(rad)
+        val sinA = sin(rad)
+        val rotated = Offset(delta.x * cosA - delta.y * sinA, delta.x * sinA + delta.y * cosA)
+        return center + rotated * wasdBiasRadius
     }
 
     private fun restartWasdJitter(pointerId: Int, mask: Int, map: KeyMap) {
@@ -638,7 +658,15 @@ class EventHandler(
             stopWasdJitter()
             return
         }
-        val target = if (wasdHumanization) jitterTarget(entry.center!!, entry.position) else entry.position
+        val target = if (wasdHumanization) {
+            // 先加一次性的方向偏置，再叠加低频微抖。
+            if (effectiveMask != wasdBiasMask) {
+                wasdBiasMask = effectiveMask
+                wasdBiasAngleDeg = (Random.nextFloat() * 2f - 1f) * 5f
+                wasdBiasRadius = 0.94f + Random.nextFloat() * 0.06f
+            }
+            jitterTarget(entry.center!!, biasedDirection(entry.center!!, entry.position))
+        } else entry.position
         joystickMotion.update(pointerId, effectiveMask, entry.center!!, target)
         if (wasdHumanization) restartWasdJitter(pointerId, effectiveMask, entry) else stopWasdJitter()
     }
@@ -1029,6 +1057,7 @@ class EventHandler(
         // eventInjector.clear() above lifted the joystick contact, so the
         // Reset the joystick transition tracker after cancelling its contact.
         wasdMask = 0
+        wasdBiasMask = 0
         joystickMotion.reset()
         stopWasdJitter()
         stopAllKeyJitter()
@@ -1153,6 +1182,7 @@ class EventHandler(
         mappingPressed.clear()
         cancelToggle.clear()
         wasdMask = 0
+        wasdBiasMask = 0
         joystickMotion.reset()
         stopWasdJitter()
         stopAllKeyJitter()
