@@ -63,8 +63,8 @@ android {
         applicationId = "com.devoid.keysync"
         minSdk = 29
         targetSdk = 36
-        versionCode = 36
-        versionName = "1.60-android16"
+        versionCode = 37
+        versionName = "1.61-android16"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

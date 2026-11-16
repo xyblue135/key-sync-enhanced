@@ -96,6 +96,8 @@ class DataStoreManager internal constructor(
         val HUMANIZATION_STRENGTH = floatPreferencesKey("humanization_strength")
         /** 偏移强度 1–100（新刻度）；旧 float 键仅用于迁移。 */
         val HUMANIZATION_STRENGTH_SCALE = intPreferencesKey("humanization_strength_scale")
+        /** WASD 方向晃动幅度 1–100（独立于整体强度）。 */
+        val WASD_SWAY = intPreferencesKey("wasd_sway")
         /** 随机偏移间隔（ms），默认 1000；全局键，与拟人化开关一起生效。 */
         val HUMANIZATION_INTERVAL_MS = intPreferencesKey("humanization_interval_ms")
         val KEYS_CONFIG = stringPreferencesKey("keys_config")

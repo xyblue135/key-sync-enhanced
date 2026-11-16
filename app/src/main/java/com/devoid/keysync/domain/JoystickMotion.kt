@@ -21,8 +21,11 @@ internal class JoystickMotion(
             return
         }
         if (lastMask == mask && lastPointer == pointer && lastCenter == center && lastTarget == target) return
-        val reanchor = lastMask != 0 && (
-            (lastMask or mask) and sprintBit != 0 || lastPointer != pointer || lastCenter != center)
+        // 只在「疾跑位发生变化」时重新起按：之前只要处于疾跑状态、任何换向都会
+        // release + 重新 DOWN，松 A / 加 A 这类普通换向也被当成疾跑切换，游戏会看到
+        // 摇杆瞬间回中再按下，表现为顿一下、方向甩到另一侧。普通换向只发 MOVE。
+        val sprintChanged = ((lastMask xor mask) and sprintBit) != 0
+        val reanchor = lastMask != 0 && (sprintChanged || lastPointer != pointer || lastCenter != center)
         if (reanchor) release(lastPointer)
         if (lastMask == 0 || reanchor) {
             start(pointer, center, target)

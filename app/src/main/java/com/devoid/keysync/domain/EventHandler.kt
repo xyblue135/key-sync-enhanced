@@ -174,8 +174,15 @@ class EventHandler(
     @Volatile
     var humanizationStrength = 50f
 
+    /** WASD 方向晃动幅度，1–100（100 = 最大 ±1.5°）。与整体强度分开，便于单独压小前进晃动。 */
+    @Volatile
+    var wasdSwayStrength = 50f
+
     private val strengthFactor: Float
         get() = (humanizationStrength / 100f).coerceIn(0f, 1f)
+
+    private val swayFactor: Float
+        get() = (wasdSwayStrength / 100f).coerceIn(0f, 1f)
 
     /**
      * 抖动间隔（ms）。以前固定 100–220ms，几乎每帧都在动，实际用起来会干扰瞄准；
@@ -184,10 +191,11 @@ class EventHandler(
     @Volatile
     var humanizationIntervalMs = DEFAULT_HUMANIZATION_INTERVAL_MS
 
-    fun setHumanization(wasd: Boolean, keys: Boolean, strength: Float) {
+    fun setHumanization(wasd: Boolean, keys: Boolean, strength: Float, sway: Float = wasdSwayStrength) {
         wasdHumanization = wasd
         keyHumanization = keys
         humanizationStrength = strength.coerceIn(1f, 100f)
+        wasdSwayStrength = sway.coerceIn(1f, 100f)
         // 触点压力/接触面积与位置抖动同源：任一路开启即让触点参数不再是固定值。
         eventInjector.setHumanizeContact(wasd || keys)
         if (!keys) stopAllKeyJitter()
@@ -231,19 +239,20 @@ class EventHandler(
      * 97%，保证方向与推动量始终有效。
      */
     private fun jitterTarget(center: Offset, target: Offset): Offset {
-        val strength = strengthFactor
-        if (strength <= 0.001f) return target
+        // WASD 晃动只看独立的「方向晃动」参数，不再跟着整体偏移强度放大，
+        // 这样前进时可以只留很小幅度的摆头。
+        val sway = swayFactor
+        if (sway <= 0.001f) return target
         val delta = target - center
         val length = delta.getDistance()
         if (length <= 0.5f) return target
-        // 满强度也只旋转 ±1.2°：摇杆方向点的微小旋转就足以打破机械角度，
-        // 再大就会让玩家按住 W 时明显跑偏。
-        val maxAngle = (1.2f * strength) * (Math.PI.toFloat() / 180f)
+        // 满幅度也只旋转 ±1.5°：足以打破机械角度，又不会让按住 W 时明显跑偏。
+        val maxAngle = (1.5f * sway) * (Math.PI.toFloat() / 180f)
         val angle = (Random.nextFloat() * 2f - 1f) * maxAngle
         val cosA = cos(angle)
         val sinA = sin(angle)
-        // 半径最多收缩 1%，且不低于原距离的 98.5%，避免掉进游戏摇杆的慢走/死区。
-        val scale = (1f - Random.nextFloat() * 0.01f * strength).coerceAtLeast(0.985f)
+        // 半径最多收缩 0.6%，且不低于原距离的 99%，避免掉进游戏摇杆的慢走/死区。
+        val scale = (1f - Random.nextFloat() * 0.006f * sway).coerceAtLeast(0.99f)
         val rotated = Offset(delta.x * cosA - delta.y * sinA, delta.x * sinA + delta.y * cosA)
         return center + rotated * scale
     }
@@ -261,15 +270,16 @@ class EventHandler(
      * 0°/45°/90°，消除「永远正北/正东北」这种机械特征。
      */
     private fun biasedDirection(center: Offset, point: Offset): Offset {
-        val strength = strengthFactor
-        if (strength <= 0.001f) return point
+        // 与 jitterTarget 共用「WASD 方向晃动」参数，保证调小后方向点也一起收敛。
+        val sway = swayFactor
+        if (sway <= 0.001f) return point
         val delta = point - center
         if (delta.getDistance() <= 0.5f) return point
-        // 偏置幅度跟随强度：满强度也只有 ±1.5°，半径最多 -1.2%，
+        // 满幅度也只有 ±1.2°，半径最多 -0.8%，
         // 不会把 W 的推动量压到游戏的慢走/死区里。
-        val maxBiasDeg = 1.5f * strength
+        val maxBiasDeg = 1.2f * sway
         val rad = (Random.nextFloat() * 2f - 1f) * maxBiasDeg * (Math.PI.toFloat() / 180f)
-        val radius = 1f - Random.nextFloat() * 0.012f * strength
+        val radius = 1f - Random.nextFloat() * 0.008f * sway
         val cosA = cos(rad)
         val sinA = sin(rad)
         val rotated = Offset(delta.x * cosA - delta.y * sinA, delta.x * sinA + delta.y * cosA)

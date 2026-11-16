@@ -207,6 +207,7 @@ class MainActivity : ComponentActivity() {
                         val keyHumanization by viewModel.keyHumanization.collectAsStateWithLifecycle()
                         val humanizationStrength by viewModel.humanizationStrength.collectAsStateWithLifecycle()
                         val humanizationInterval by viewModel.humanizationInterval.collectAsStateWithLifecycle()
+                        val wasdSway by viewModel.wasdSway.collectAsStateWithLifecycle()
                         val overlayOpacity by viewModel.overlayOpacity.collectAsStateWithLifecycle()
                         val statusBarVisible by viewModel.statusBarVisible.collectAsStateWithLifecycle()
                         val featureTier by viewModel.featureTier.collectAsStateWithLifecycle()
@@ -248,10 +249,12 @@ class MainActivity : ComponentActivity() {
                             keyHumanization = keyHumanization,
                             humanizationStrength = humanizationStrength,
                             humanizationInterval = humanizationInterval,
+                            wasdSway = wasdSway,
                             onSetWasdHumanization = viewModel::setWasdHumanization,
                             onSetKeyHumanization = viewModel::setKeyHumanization,
                             onSetHumanizationStrength = viewModel::setHumanizationStrength,
                             onSetHumanizationInterval = viewModel::setHumanizationInterval,
+                            onSetWasdSway = viewModel::setWasdSway,
                             overlayOpacity = overlayOpacity,
                             onSetOverlayOpacity = viewModel::setOverlayOpacity,
                             statusBarVisible = statusBarVisible,

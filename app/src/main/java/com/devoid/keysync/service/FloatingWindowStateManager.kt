@@ -91,6 +91,9 @@ class FloatingWindowStateManager @Inject constructor(
     val keyHumanization = MutableStateFlow(false)
     /** 偏移强度 1–100（100 = 最大）。 */
     val humanizationStrength = MutableStateFlow(50f)
+
+    /** WASD 方向晃动幅度 1–100，独立于整体强度。 */
+    val wasdSway = MutableStateFlow(50f)
     /** 随机偏移间隔（ms），默认 1000（约每秒一次）。 */
     val humanizationInterval = MutableStateFlow(1000L)
 
@@ -274,6 +277,9 @@ class FloatingWindowStateManager @Inject constructor(
             humanizationInterval.value =
                 (dataStoreManager.getInt(DataStoreManager.HUMANIZATION_INTERVAL_MS).first()
                     ?: EventHandler.DEFAULT_HUMANIZATION_INTERVAL_MS.toInt()).toLong()
+            wasdSway.value =
+                (dataStoreManager.getInt(DataStoreManager.WASD_SWAY).first() ?: 50)
+                    .coerceIn(1, 100).toFloat()
             // 顶部提示条是持久化开关：默认显示，用户关掉后下次启动仍然隐藏。
             _statusBarVisible.value =
                 dataStoreManager.getBoolean(DataStoreManager.STATUS_BAR_VISIBLE).first() ?: true
@@ -1153,7 +1159,8 @@ class FloatingWindowStateManager @Inject constructor(
         eventHandler.setHumanization(
             wasdHumanization.value,
             keyHumanization.value,
-            humanizationStrength.value
+            humanizationStrength.value,
+            wasdSway.value,
         )
         eventHandler.setHumanizationInterval(humanizationInterval.value)
     }
@@ -1179,6 +1186,14 @@ class FloatingWindowStateManager @Inject constructor(
                 DataStoreManager.HUMANIZATION_STRENGTH_SCALE,
                 clamped.roundToInt()            )
         }
+    }
+
+    /** WASD 方向晃动幅度（1–100），只影响摇杆的轻微摆头，不影响整体偏移强度。 */
+    fun setWasdSway(value: Float) {
+        val clamped = value.coerceIn(1f, 100f)
+        wasdSway.value = clamped
+        syncHumanization()
+        scope.launch { dataStoreManager.save(DataStoreManager.WASD_SWAY, clamped.roundToInt()) }
     }
 
     /** 随机偏移间隔（ms）：默认 1000，约每秒扰动一次。 */

@@ -16,21 +16,21 @@ class JoystickMotionTest {
             start = { id, c, p -> anchor = c; target = p; events.add("down:$id") },
             move = { id, p -> target = p; events.add("move:$id") })
     }
-    @Test fun repeatedLeftAndRightSprintAlwaysReanchorAndReturnStraight() {
+    @Test fun directionChangesDuringSprintMoveWithoutReanchor() {
+        // 疾跑中换向（W+A → W）只发 MOVE：旧的「每次换向都 release + DOWN」会让
+        // 游戏看到摇杆瞬间回中再按下，表现为松开 A 时顿一下、方向甩到另一侧。
         for (side in listOf(-1, 1)) {
             val rig = Rig()
             val forward = center + sprintOffset(1, 0, 220f, 120f)
             val diagonal = center + sprintOffset(1, side, 220f, 120f)
             rig.motion.update(3, 1 or sprint, center, forward)
-            repeat(100) {
-                rig.motion.update(3, 1 or (if (side < 0) 2 else 8) or sprint, center, diagonal)
-                assertEquals(center, rig.anchor)
-                // Model a game that lets its floating origin follow a far drag.
-                rig.anchor = center + Offset(side * 70f, 0f)
-                rig.motion.update(3, 1 or sprint, center, forward)
-                assertEquals(Offset(0f, -220f), rig.target - rig.anchor)
-                assertEquals(listOf("up:3", "down:3"), rig.events.takeLast(2))
-            }
+            rig.motion.update(3, 1 or (if (side < 0) 2 else 8) or sprint, center, diagonal)
+            assertEquals("move:3", rig.events.last())
+            assertFalse(rig.events.contains("up:3"))
+            rig.motion.update(3, 1 or sprint, center, forward)
+            assertEquals("move:3", rig.events.last())
+            assertFalse(rig.events.contains("up:3"))
+            assertEquals(forward, rig.target)
         }
     }
     @Test fun steadySprintDoesNotRestartAndOnlyJoystickIsReleased() {

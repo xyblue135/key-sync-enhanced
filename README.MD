@@ -13,7 +13,7 @@
 | namespace / applicationId | `com.devoid.keysync` |
 | compileSdk / targetSdk | 36 |
 | minSdk | 29 |
-| versionCode / versionName | 36 / `1.60-android16` |
+| versionCode / versionName | 37 / `1.61-android16` |
 | debug 变体 | applicationId 后缀 `.fpsdebug`，versionName 后缀 `-debug` |
 | Kotlin / Java | 17 |
 
@@ -173,8 +173,8 @@ KEY_F13 ... KEY_F24                → 额外键被当成键盘键（可绑定�
 | 维度 | 行为 |
 |---|---|
 | 落点分布（普通按键） | 圆内均匀采样（`EventHandler.jitterOffset()`），半径上限为 `强度% × 8px`；强度 1 时几乎为零 |
-| 落点分布（WASD） | 每一次换向按强度采样一次：角度 ≤ ±1.5°、半径 ≥ 98.8%（`biasedDirection()`）；再叠加 ≤ ±1.2° 的低频旋转与 ≥ 98.5% 的半径（`jitterTarget()`）。**满强度也不会压到游戏的慢走/死区**，按 W 不会走偏 |
-| 方向切换 | 换向时先发一帧旧方向与新方向的中点 MOVE，再发目标点（`JoystickMotion.update()`），像拇指划过而不是瞬移；不重新起按、不增加等待 |
+| 落点分布（WASD） | 每次换向采样一次偏置：角度 ≤ ±1.2°、半径 ≥ 99.2%（`biasedDirection()`）；按住期间按「WASD 方向晃动」参数做 ≤ ±1.5° 的缓慢摆头（`jitterTarget()`）。**满值也不会压到慢走/死区** |
+| 疾跑换向 | 只有「疾跑位变化（进出疾跑）」才 release + 重新 DOWN；W+A ↔ W 这类普通换向只发 MOVE（含一帧中点），不再回中、不再甩方向 |
 | WASD 持键 | 按「随机偏移间隔」重掷（默认 1000ms，可调 200–3000ms，实际间隔 ±20% 随机），只发 MOVE（`JoystickMotion.jitter()`），**绝不 reanchor**（见 6.1） |
 | 普通按键持键 | HOLD / MIXED 同样按该间隔微抖，只对单点落位（`position == end`）生效；滑动类按键跳过，避免把触点拽回锚点 |
 | TAP 点击 | 按住时长采样：多数 50–85ms，约 15% 为 85–125ms（`sampleTapHoldDuration()`）；中点补一帧 0.3–1.2px 位移 |
@@ -250,6 +250,7 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
 | `key_humanization` | Boolean | 其他按键拟人化开关（全局） |
 | `humanization_strength_scale` | Int | 拟人化强度 1–100，默认 50（全局） |
 | `humanization_strength` | Float | 旧版 0..1 强度，仅用于迁移到 `humanization_strength_scale` |
+| `wasd_sway` | Int | WASD 方向晃动幅度 1–100，默认 50（全局，独立于整体强度） |
 | `humanization_interval_ms` | Int | 随机偏移间隔 ms，默认 1000（全局） |
 
 模型（`model/`）：
@@ -271,7 +272,7 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
 4. **游戏界面优先横屏**。若确实需要竖屏使用，依赖 `projectLayout()` 的整体旋转，不要手工把横屏坐标改成竖屏坐标。
 5. **快捷换位（`quickSwapEnabled`）只修改按钮的物理布局位置**，不改键位绑定与名称；A/B 按当前绑定实时解析（R 与 `KEYCODE_RMC`），位置恢复用 `anchorPosition`。旧 `swapPairs` 数据仍兼容执行，但 UI 已不再提供手动配置。<br>交换后刷新坐标只能调用 `EventHandler.repositionItems()`，**禁止调用 `updateKeyMapping()`**——后者会 `eventInjector.clear()` 释放全部触点，按一次换位键就会把正在按着的 W / 开火松开。
 6. **拟人化必须零延迟**：只允许通过调整注入触点位置 / 轨迹 / 触点参数实现，**禁止**添加等待、渐进、缓冲逻辑。抖动循环的间隔由 `humanization_interval_ms` 决定（默认 1000ms，±20% 随机，`EventHandler.humanizeScope`），它不阻塞按键响应路径。
-7. 拟人化需**独立开关 + 强度滑杆（1–100）+ 偏移间隔滑杆（默认 1000ms）**，且**全局生效**（对所有预设统一），不要做成按预设存储。WASD 的角度/半径扰动必须随强度缩放，且半径不得低于 98.5%。
+7. 拟人化需**独立开关 + 强度滑杆（1–100）+ 偏移间隔滑杆（默认 1000ms）**，且**全局生效**（对所有预设统一），不要做成按预设存储。WASD 另有独立的「方向晃动」滑杆（1–100）；角度/半径扰动必须随参数缩放，半径不得低于 99%。
 8. 键位交换热键必须保留；「预设切换热键」已被要求删除，不要加回来。
 9. **全局功能配置放 `DataStoreManager`**（全局键），不要塞进 `Profile`。
 10. `projectLayout()` 的位置投影与按键尺寸是两回事：位置按每轴可用范围换算，尺寸由 Compose 实测，禁止反复缩放缓存尺寸导致按钮越变越小。以 `LayoutProjectionTest` 的往返、旋转和边界用例为准。

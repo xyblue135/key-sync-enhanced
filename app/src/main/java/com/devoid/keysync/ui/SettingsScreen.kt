@@ -127,10 +127,12 @@ fun SettingsScreen(
     keyHumanization: Boolean = false,
     humanizationStrength: Float = 0f,
     humanizationInterval: Long = 1000L,
+    wasdSway: Float = 50f,
     onSetWasdHumanization: (Boolean) -> Unit = {},
     onSetKeyHumanization: (Boolean) -> Unit = {},
     onSetHumanizationStrength: (Float) -> Unit = {},
     onSetHumanizationInterval: (Long) -> Unit = {},
+    onSetWasdSway: (Float) -> Unit = {},
     onNavigateBack: () -> Unit = {},
     onNavigateAbout: () -> Unit = {}
 ) {
@@ -633,8 +635,27 @@ fun SettingsScreen(
                             onValueChange = { onSetHumanizationStrength(it.roundToInt().toFloat()) }
                         )
                         Text(
-                            "默认 50。WASD 的角度扰动最多 ±1.2°、半径最多 -1.2%（不低于 98.5%），" +
-                                "调高也不会把走位压进慢走/死区。",
+                            "默认 50。普通按键落点最大 8px；WASD 的摆头由下面的独立滑杆控制。",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "WASD 方向晃动（1–100）",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text("${wasdSway.roundToInt()} / 100")
+                        }
+                        Slider(
+                            value = wasdSway.coerceIn(1f, 100f),
+                            valueRange = 1f..100f,
+                            steps = 98,
+                            onValueChange = { onSetWasdSway(it.roundToInt().toFloat()) }
+                        )
+                        Text(
+                            "只影响摇杆按住时的轻微摆头，和上面的整体偏移强度独立。" +
+                                "满值约 ±1.5°，默认 50；跑动时觉得方向飘就把它调小。",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

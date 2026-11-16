@@ -112,6 +112,14 @@ README 讲「怎么用、怎么改」，这里只讲「哪里会炸、为什么�
 - **抖动频率**：原来固定 100–220ms；现在 `humanization_interval_ms`（默认 1000，200–3000ms）控制，实际间隔 ±20% 随机。新增「随机偏移间隔」滑杆。
 - **红线**：抖动仍只发 MOVE、绝不 reanchor（见 6.1）；调间隔不要引入阻塞式 delay 到按键响应路径。
 
+### 2.17 疾跑中松开 A 方向甩到 D / 顿一下
+
+- 根因：`JoystickMotion.update()` 的 reanchor 条件是 `(lastMask or mask) and sprintBit != 0`——**只要在疾跑状态，任何换向都 release + 重新 DOWN**。松开 A 时游戏看到摇杆先回中再按下，表现为顿一下、方向短暂甩向另一侧。
+- 现在：只有 `(lastMask xor mask) and sprintBit`（进出疾跑）或 pointer/center 变化才 reanchor；普通换向只发 MOVE（先中点再目标）。
+- 同时把 WASD 的摆头幅度从整体强度里独立出来：`wasdSway`（1–100，默认 50，满值 ±1.5°），前进时的晃动可以单独调小。
+- 测试 `JoystickMotionTest.directionChangesDuringSprintMoveWithoutReanchor` 锁死「疾跑换向不得 release」。
+- **红线**：不要为了「浮动摇杆原点漂移」恢复每次换向都 reanchor，那会直接造成这个 bug。浮动原点的修正只在进出疾跑时做。
+
 ### 2.16 编辑条遮住右上角按钮 / 连点太慢
 
 - 编辑条虽然可拖动，但展开时仍占着右上角一条区域，挡在上层的 Row 会吃掉右上角按钮的触摸，看起来像「按钮被顶掉」。
