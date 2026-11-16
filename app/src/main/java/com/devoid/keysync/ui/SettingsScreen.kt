@@ -112,6 +112,7 @@ fun SettingsScreen(
     onImportProfile: (String) -> String? = { null },
     onSetProfileQuickSwap: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
     onSetProfileTapSequence: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
+    onSetProfileTapSequenceGap: (profileId: String, gapMs: Int) -> Unit = { _, _ -> },
     onSetProfileTabEsc: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
     onSetProfileStanceAssist: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
     onSetProfileMacros: (String, List<ClickMacro>) -> Unit = { _, _ -> },
@@ -240,6 +241,7 @@ fun SettingsScreen(
                     onImport = onImportProfile,
                     onSetQuickSwap = onSetProfileQuickSwap,
                     onSetTapSequence = onSetProfileTapSequence,
+                    onSetTapSequenceGap = onSetProfileTapSequenceGap,
                     onSetTabEsc = onSetProfileTabEsc,
                     onSetStanceAssist = onSetProfileStanceAssist,
                     onSetMacros = onSetProfileMacros,
@@ -839,6 +841,7 @@ fun ProfileManagerCard(
     onImport: (String) -> String?,
     onSetQuickSwap: (String, Boolean) -> Unit,
     onSetTapSequence: (String, Boolean) -> Unit,
+    onSetTapSequenceGap: (String, Int) -> Unit,
     onSetTabEsc: (String, Boolean) -> Unit,
     onSetStanceAssist: (String, Boolean) -> Unit,
     onSetMacros: (String, List<ClickMacro>) -> Unit,
@@ -966,6 +969,9 @@ fun ProfileManagerCard(
                         },
                         onToggleTapSequence = {
                             onSetTapSequence(profile.id, !profile.tapSequence234Enabled)
+                        },
+                        onSetTapSequenceGap = { gap ->
+                            onSetTapSequenceGap(profile.id, gap)
                         },
                         onToggleTabEsc = {
                             onSetTabEsc(profile.id, !profile.tabEscEnabled)
@@ -1146,6 +1152,7 @@ private fun ProfileRow(
     onExport: () -> Unit,
     onToggleQuickSwap: () -> Unit,
     onToggleTapSequence: () -> Unit,
+    onSetTapSequenceGap: (Int) -> Unit,
     onToggleTabEsc: () -> Unit,
     onToggleStanceAssist: () -> Unit,
     onSetMacros: () -> Unit,
@@ -1252,6 +1259,25 @@ private fun ProfileRow(
                         onToggleTapSequence()
                     }
                 )
+                if (profile.tapSequence234Enabled) {
+                    DropdownMenuItem(
+                        onClick = {},
+                        text = {
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("连点间隔", modifier = Modifier.weight(1f))
+                                    Text("${profile.tapSequence234GapMs} ms")
+                                }
+                                Slider(
+                                    value = profile.tapSequence234GapMs.toFloat().coerceIn(20f, 300f),
+                                    valueRange = 20f..300f,
+                                    steps = 27,
+                                    onValueChange = { onSetTapSequenceGap(it.roundToInt()) }
+                                )
+                            }
+                        }
+                    )
+                }
                 DropdownMenuItem(
                     text = {
                         Row(verticalAlignment = Alignment.CenterVertically) {

@@ -20,6 +20,8 @@ data class Profile(
     val quickSwapEnabled: Boolean = true,
     /** 按 3 时依次点击 2 → 3 → 4，用于一键切换武器组。默认开启。 */
     val tapSequence234Enabled: Boolean = true,
+    /** 2-3-4 连点之间每个触点的间隔（ms），越小越快。默认 60。 */
+    val tapSequence234GapMs: Int = 60,
     /** Tab 双击（2 秒内）改为点击 Tab + Esc 两个位置，之后 2 秒冷却。默认开启。 */
     val tabEscEnabled: Boolean = true,
     /** Shift 按下时取消最后按下的蹲/趴姿态（C / Z / Ctrl）。默认开启。 */

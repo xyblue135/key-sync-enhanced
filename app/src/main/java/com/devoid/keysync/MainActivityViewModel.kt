@@ -220,6 +220,10 @@ class MainActivityViewModel @Inject constructor(
         stateManager.setTapSequence234(profileId, enabled)
     }
 
+    fun setTapSequence234Gap(profileId: String, gapMs: Int) {
+        stateManager.setTapSequence234Gap(profileId, gapMs)
+    }
+
     fun setTabEsc(profileId: String, enabled: Boolean) {
         stateManager.setTabEsc(profileId, enabled)
     }

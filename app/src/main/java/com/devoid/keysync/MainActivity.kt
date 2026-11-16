@@ -235,6 +235,9 @@ class MainActivity : ComponentActivity() {
                             onSetProfileTapSequence = { profileId, enabled ->
                                 viewModel.setTapSequence234(profileId, enabled)
                             },
+                            onSetProfileTapSequenceGap = { profileId, gapMs ->
+                                viewModel.setTapSequence234Gap(profileId, gapMs)
+                            },
                             onSetProfileTabEsc = { profileId, enabled ->
                                 viewModel.setTabEsc(profileId, enabled)
                             },

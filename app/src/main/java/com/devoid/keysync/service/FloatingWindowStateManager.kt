@@ -625,6 +625,15 @@ class FloatingWindowStateManager @Inject constructor(
         scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
     }
 
+    /** 2-3-4 连点间距（ms），20–400，越小越快。 */
+    fun setTapSequence234Gap(profileId: String, gapMs: Int) {
+        val clamped = gapMs.coerceIn(20, 400)
+        _profiles.value = _profiles.value.map {
+            if (it.id == profileId) it.copy(tapSequence234GapMs = clamped) else it
+        }
+        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
+    }
+
     /** 预设级「Tab 双击 → Tab + Esc」开关，默认开启。 */
     fun setTabEsc(profileId: String, enabled: Boolean) {
         _profiles.value = _profiles.value.map {
@@ -751,19 +760,19 @@ class FloatingWindowStateManager @Inject constructor(
         val items = _containerItems.value
         if (targets.any { code -> items.none { it.boundKeyCode() == code } }) return false
         if (tapSequence234Job?.isActive == true) return true
+        // 间隔由预设决定（20–400ms），按住时长取间隔的一半左右，整体节奏随间隔缩放。
+        val baseGap = profile.tapSequence234GapMs.coerceIn(20, 400)
         tapSequence234Job = scope.launch {
             targets.forEach { code ->
                 val now = SystemClock.uptimeMillis()
                 eventHandler.handleKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
-                // 按下时长与间隔都采样，避免固定 45ms / 110ms 的机械节拍。
-                delay(kotlin.random.Random.nextLong(38L, 78L))
+                val hold = (baseGap / 2 + kotlin.random.Random.nextLong(-5L, 6L))
+                    .coerceIn(15L, 80L)
+                delay(hold)
                 eventHandler.handleKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
-                delay(
-                    if (kotlin.random.Random.nextFloat() < 0.12f)
-                        kotlin.random.Random.nextLong(150L, 220L)
-                    else
-                        kotlin.random.Random.nextLong(90L, 150L)
-                )
+                // 间隔本身也加 ±10% 抖动，避免固定节拍。
+                val jittered = (baseGap * (0.9f + kotlin.random.Random.nextFloat() * 0.2f)).toLong()
+                delay(jittered.coerceAtLeast(10L))
             }
         }
         return true

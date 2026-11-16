@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -743,11 +744,35 @@ fun EditToolbar(
     var itemsMenuVisible by remember { mutableStateOf(false) }
     // 编辑条会挡住想摆放的位置，因此允许直接拖动（按 ⠿ 手柄拖动，避免和按钮点击冲突）。
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
+    // 收起后只留一个 ⠿ 圆点，右上角按键区域可以正常拖动摆放。
+    var collapsed by remember { mutableStateOf(false) }
     // 根节点必须撑满父容器：下拉菜单是本 Box 的子节点，wrap-content 时菜单展开会
     // 把 Box 撑大，而 Box 在父级又按 TopEnd 对齐，结果整条工具栏（含 ⠿ 手柄）
     // 被挤到左边——就是「重新打开配置菜单，按钮被顶到一边」。撑满后工具栏与菜单
     // 各自按 TopEnd 定位，菜单的尺寸变化不再影响工具栏位置。
     Box(modifier.fillMaxSize().offset { IntOffset(dragOffset.x.roundToInt(), dragOffset.y.roundToInt()) }) {
+        if (collapsed) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surface)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, drag ->
+                            change.consume()
+                            dragOffset += drag
+                        }
+                    }
+                    .pointerInput(Unit) {
+                        detectTapGestures(onTap = { collapsed = false })
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("⠿", color = MaterialTheme.colorScheme.onSurface)
+            }
+        } else {
         Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
@@ -791,6 +816,9 @@ fun EditToolbar(
             TextButton(onClick = onToggleEditMode) {
                 Text(stringResource(R.string.overlay_done))
             }
+            TextButton(onClick = { collapsed = true }) {
+                Text("收起")
+            }
         }
         if (itemsMenuVisible) {
             Box(modifier = Modifier.align(Alignment.TopEnd).offset(y = 48.dp)) {
@@ -799,6 +827,7 @@ fun EditToolbar(
                     itemsMenuVisible = false
                 })
             }
+        }
         }
     }
 }
