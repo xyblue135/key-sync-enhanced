@@ -112,6 +112,13 @@ README 讲「怎么用、怎么改」，这里只讲「哪里会炸、为什么�
 - **抖动频率**：原来固定 100–220ms；现在 `humanization_interval_ms`（默认 1000，200–3000ms）控制，实际间隔 ±20% 随机。新增「随机偏移间隔」滑杆。
 - **红线**：抖动仍只发 MOVE、绝不 reanchor（见 6.1）；调间隔不要引入阻塞式 delay 到按键响应路径。
 
+### 2.20 光标模式按住鼠标无法拖动/滑动
+
+- 1.60 清理「光标模式拖动」分支时连带删掉了按住移动触点的逻辑，结果按住左键上下滑、拖列表都没反应。
+- 现在 `handlePointerMove()` 的非射击分支：只要 `cursorDownAt` 里还有按住的触点，就用 `transFormGesture(id, mousePointerPosition)` 把触点跟到光标位置；松开时才 release。
+- 触点位置每次 MOVE 都由 `FloatingWindowStateManager` 先写入 `mousePointerPosition`（含屏幕边界钳制），因此拖到边缘不会越界。
+- **红线**：非射击模式下的鼠标移动不能只更新视觉光标，必须同步移动已按住的触点，否则所有需要「按住拖动」的 UI 都会失效。
+
 ### 2.19 应用内自动更新
 
 - 查询沿用 `GitHubReleaseClient`，1.7 起额外解析 `assets` 里第一个 `.apk` 的直链与 `body` 说明；只有 tag 没有 Release 时没有直链，按钮退回「前往下载」。

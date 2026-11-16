@@ -13,7 +13,7 @@
 | namespace / applicationId | `com.devoid.keysync` |
 | compileSdk / targetSdk | 36 |
 | minSdk | 29 |
-| versionCode / versionName | 40 / `1.70-android16` |
+| versionCode / versionName | 41 / `1.71-android16` |
 | debug 变体 | applicationId 后缀 `.fpsdebug`，versionName 后缀 `-debug` |
 | Kotlin / Java | 17 |
 
@@ -109,6 +109,7 @@
 - **1000Hz 高回报率**：注入用 `INJECT_INPUT_EVENT_MODE_ASYNC`，并用 `PendingMoves` 把同一触点两次 flush 之间的位移累加成一条 MOVE。**总位移不丢、中间采样点丢弃**，所以注入吞吐不足时是降采样而不是积压；`EventInjectorImpl` 的单线程队列保证 DOWN / MOVE / UP 不乱序。
 - 宏的 50ms 点击与拟人化抖动循环（默认 1000ms，可调）不在这条路径上，和高回报率互不影响。
 - **光标模式的按键语义**：光标模式（非射击模式）下左键/右键在**光标所在位置**注入一次原生点击（≥60ms），点击会落到该坐标上实际存在的东西——包括映射按钮。
+- **按住拖动可用**：左键/右键保持按下时，触点会跟随光标一起移动，因此按住上下滑动、拖拽列表/滚动条都能正常工作；松开时才抬起触点。
 - **已知且有意保留的行为**：如果光标恰好停在开火/右键按钮的屏幕位置上，切出鼠标后点击会**真实触发开火/开镜**。注入只能携带坐标与按压，游戏无法区分「UI 点击」和「开火」，因此不做区域屏蔽；想避免误触就把光标移开再点。中键/侧键不受影响，仍按各自绑定处理。
 - **光标模式的可视化**：屏幕上显示的是一个 26dp 的半透明触摸指示圈（描边 + 中心点），不再是箭头图标，视觉上更接近「手指触点」。光标本身只做显示，点击坐标仍由 `pointerOffset` 计算。
 

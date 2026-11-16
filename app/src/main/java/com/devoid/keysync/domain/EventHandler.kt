@@ -861,8 +861,13 @@ class EventHandler(
             return true
         }
 
-        // 非射击模式：鼠标移动只是移动光标（光标位置已由 FloatingWindowStateManager
-        // 的 _mousePointerOffset 跟踪），不拖动任何触点，也不注入点击。
+        // 非射击模式：鼠标移动只是移动光标。若左/右键正按住不放，
+        // 就把按住的触点跟着光标一起拖动——按住上下滑动、拖拽列表都依赖这个。
+        if (cursorDownAt.isNotEmpty()) {
+            cursorDownAt.keys.toList().forEach { id ->
+                eventInjector.transFormGesture(id, mousePointerPosition)
+            }
+        }
         return true
     }
 
