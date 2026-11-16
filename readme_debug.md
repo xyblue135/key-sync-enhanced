@@ -112,6 +112,14 @@ README 讲「怎么用、怎么改」，这里只讲「哪里会炸、为什么�
 - **抖动频率**：原来固定 100–220ms；现在 `humanization_interval_ms`（默认 1000，200–3000ms）控制，实际间隔 ±20% 随机。新增「随机偏移间隔」滑杆。
 - **红线**：抖动仍只发 MOVE、绝不 reanchor（见 6.1）；调间隔不要引入阻塞式 delay 到按键响应路径。
 
+### 2.12 Tab 双击触发 Tab + Esc 的窗口与冷却
+
+- 判定窗口：两次 `ACTION_DOWN`（`repeatCount == 0`）间隔 ≤ 2000ms 视为双击；第一次 Tab 正常透传并记录时间。
+- 第二次 Tab 被吞掉（`runTabEscCombo` 返回 true），由协程串行注入 Tab → Esc，时序采样，避免固定节拍。
+- 触发后写 `tabComboCooldownUntil = now + 2000`；冷却期内的 Tab 直接放行且**不更新** `lastTabDownAt`，否则连按会再次命中窗口。
+- 与 2-3-4 连点一样：Tab / Esc 任一按钮缺失就 `return false`，不接管，避免按了没反应。
+- **红线**：组合注入必须走 `eventHandler.handleKeyEvent`（复用用户的触控模式与位置），不要另写一套注入；不要在 `onKeyEvent` 里阻塞等待。
+
 ### 2.11 8 向摇杆与固定点击节拍太机械
 
 - **WASD 方向**：注入点原来永远落在 8 个精确角度（0°/45°/90°…）。现在换向/按下时采样一次偏置：角度 ±5°、半径 0.94–1.00，方向不变期间保持（`biasedDirection()`），再叠加原有低频微抖。

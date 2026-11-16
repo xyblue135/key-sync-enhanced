@@ -220,6 +220,10 @@ class MainActivityViewModel @Inject constructor(
         stateManager.setTapSequence234(profileId, enabled)
     }
 
+    fun setTabEsc(profileId: String, enabled: Boolean) {
+        stateManager.setTabEsc(profileId, enabled)
+    }
+
     fun setWasdHumanization(enabled: Boolean) = stateManager.setWasdHumanization(enabled)
     fun setKeyHumanization(enabled: Boolean) = stateManager.setKeyHumanization(enabled)
     fun setHumanizationStrength(value: Float) = stateManager.setHumanizationStrength(value)

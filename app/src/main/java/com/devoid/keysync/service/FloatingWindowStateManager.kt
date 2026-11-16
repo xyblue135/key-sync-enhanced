@@ -423,6 +423,10 @@ class FloatingWindowStateManager @Inject constructor(
     private companion object {
         const val legacyLayoutScreenWidth = 2608
         const val legacyLayoutScreenHeight = 1200
+        /** Tab 双击判定窗口：两次按下间隔不超过该值才算双击。 */
+        const val TAB_COMBO_WINDOW_MS = 2000L
+        /** 触发 Tab+Esc 后的冷却，避免紧接着的 Tab 又被当成双击。 */
+        const val TAB_COMBO_COOLDOWN_MS = 2000L
     }
 
     /** 旧数据未记录分辨率时，统一假定为 legacy 基准，便于 applyActiveProfile 迁移。 */
@@ -611,6 +615,62 @@ class FloatingWindowStateManager @Inject constructor(
             if (it.id == profileId) it.copy(tapSequence234Enabled = enabled) else it
         }
         scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
+    }
+
+    /** 预设级「Tab 双击 → Tab + Esc」开关，默认开启。 */
+    fun setTabEsc(profileId: String, enabled: Boolean) {
+        _profiles.value = _profiles.value.map {
+            if (it.id == profileId) it.copy(tabEscEnabled = enabled) else it
+        }
+        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
+    }
+
+    private var tabEscJob: Job? = null
+    private var lastTabDownAt = 0L
+    private var tabComboCooldownUntil = 0L
+
+    /**
+     * Tab 双击：2 秒内第二次按 Tab 时，改为依次点击 Tab 位置与 Esc 位置。
+     *
+     * - 第一次按 Tab 走正常映射，并记下时间
+     * - 第二次按 Tab（窗口内）吞掉原始 Tab，主动注入 Tab → Esc
+     * - 触发后进入 2 秒冷却，冷却期内的 Tab 一律按普通 Tab 处理，避免连按误触发 Esc
+     * - Tab / Esc 任一按钮不存在就不接管，让 Tab 保持原行为
+     */
+    private fun runTabEscCombo(keyCode: Int): Boolean {
+        if (keyCode != KeyEvent.KEYCODE_TAB) return false
+        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
+        if (!profile.tabEscEnabled) return false
+        val now = SystemClock.uptimeMillis()
+        if (now < tabComboCooldownUntil) return false
+        val items = _containerItems.value
+        if (items.none { it.boundKeyCode() == KeyEvent.KEYCODE_TAB } ||
+            items.none { it.boundKeyCode() == KeyEvent.KEYCODE_ESCAPE }
+        ) return false
+        val withinWindow = lastTabDownAt != 0L && now - lastTabDownAt <= TAB_COMBO_WINDOW_MS
+        if (!withinWindow) {
+            lastTabDownAt = now
+            return false
+        }
+        lastTabDownAt = 0L
+        tabComboCooldownUntil = now + TAB_COMBO_COOLDOWN_MS
+        if (tabEscJob?.isActive != true) {
+            tabEscJob = scope.launch {
+                listOf(KeyEvent.KEYCODE_TAB, KeyEvent.KEYCODE_ESCAPE)
+                    .forEachIndexed { index, code ->
+                        val at = SystemClock.uptimeMillis()
+                        eventHandler.handleKeyEvent(
+                            KeyEvent(at, at, KeyEvent.ACTION_DOWN, code, 0)
+                        )
+                        delay(kotlin.random.Random.nextLong(40L, 80L))
+                        eventHandler.handleKeyEvent(
+                            KeyEvent(at, at, KeyEvent.ACTION_UP, code, 0)
+                        )
+                        if (index == 0) delay(kotlin.random.Random.nextLong(60L, 130L))
+                    }
+            }
+        }
+        return true
     }
 
     private var tapSequence234Job: Job? = null
@@ -1250,6 +1310,8 @@ class FloatingWindowStateManager @Inject constructor(
         // key still flows to the game mapping untouched.
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
             !eventHandler.isMacroTrigger(keyEvent.keyCode)) {
+            // Tab 双击负责整段 Tab+Esc 注入，命中时吞掉原始 Tab。
+            if (runTabEscCombo(keyEvent.keyCode)) return true
             // 预设级 2-3-4 连点负责整段注入，命中时吞掉原始 3，避免再点一次。
             if (runTapSequence234(keyEvent.keyCode)) return true
             if (!applySwap(keyEvent.keyCode)) applyQuickSwap(keyEvent.keyCode)

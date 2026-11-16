@@ -20,6 +20,8 @@ data class Profile(
     val quickSwapEnabled: Boolean = true,
     /** 按 3 时依次点击 2 → 3 → 4，用于一键切换武器组。默认开启。 */
     val tapSequence234Enabled: Boolean = true,
+    /** Tab 双击（2 秒内）改为点击 Tab + Esc 两个位置，之后 2 秒冷却。默认开启。 */
+    val tabEscEnabled: Boolean = true,
     /** Ordered independent click points, separate from ordinary key bindings. */
     val macros: List<ClickMacro> = emptyList(),
     /** Layout 保存时的屏幕分辨率（px）。加载时若与当前屏幕不同则把坐标/尺寸等比还原；0 = 未记录。 */

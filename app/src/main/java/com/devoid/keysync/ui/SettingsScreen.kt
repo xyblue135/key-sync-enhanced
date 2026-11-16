@@ -112,6 +112,7 @@ fun SettingsScreen(
     onImportProfile: (String) -> String? = { null },
     onSetProfileQuickSwap: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
     onSetProfileTapSequence: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
+    onSetProfileTabEsc: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
     onSetProfileMacros: (String, List<ClickMacro>) -> Unit = { _, _ -> },
     overlayOpacity: Float = 0.5f,
     onSetOverlayOpacity: (Float) -> Unit = {},
@@ -238,6 +239,7 @@ fun SettingsScreen(
                     onImport = onImportProfile,
                     onSetQuickSwap = onSetProfileQuickSwap,
                     onSetTapSequence = onSetProfileTapSequence,
+                    onSetTabEsc = onSetProfileTabEsc,
                     onSetMacros = onSetProfileMacros,
                 )
                 Card {
@@ -825,6 +827,7 @@ fun ProfileManagerCard(
     onImport: (String) -> String?,
     onSetQuickSwap: (String, Boolean) -> Unit,
     onSetTapSequence: (String, Boolean) -> Unit,
+    onSetTabEsc: (String, Boolean) -> Unit,
     onSetMacros: (String, List<ClickMacro>) -> Unit,
 ) {
     var showNewDialog by remember { mutableStateOf(false) }
@@ -950,6 +953,9 @@ fun ProfileManagerCard(
                         },
                         onToggleTapSequence = {
                             onSetTapSequence(profile.id, !profile.tapSequence234Enabled)
+                        },
+                        onToggleTabEsc = {
+                            onSetTabEsc(profile.id, !profile.tabEscEnabled)
                         },
                         onSetMacros = { macroTarget = profile },
                         onDelete = { deleteTarget = profile }
@@ -1124,6 +1130,7 @@ private fun ProfileRow(
     onExport: () -> Unit,
     onToggleQuickSwap: () -> Unit,
     onToggleTapSequence: () -> Unit,
+    onToggleTabEsc: () -> Unit,
     onSetMacros: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -1226,6 +1233,21 @@ private fun ProfileRow(
                     onClick = {
                         onMenuDismiss()
                         onToggleTapSequence()
+                    }
+                )
+                DropdownMenuItem(
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Tab 双击 → Tab + Esc（2 秒冷却）",
+                                modifier = Modifier.weight(1f)
+                            )
+                            Switch(checked = profile.tabEscEnabled, onCheckedChange = null)
+                        }
+                    },
+                    onClick = {
+                        onMenuDismiss()
+                        onToggleTabEsc()
                     }
                 )
                 DropdownMenuItem(
