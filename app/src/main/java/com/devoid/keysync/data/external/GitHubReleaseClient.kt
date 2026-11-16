@@ -29,7 +29,14 @@ object GitHubReleaseClient {
     private const val TIMEOUT_MS = 8000
 
     sealed interface Result {
-        data class Success(val tag: String, val htmlUrl: String) : Result
+        data class Success(
+            val tag: String,
+            val htmlUrl: String,
+            /** Release 里第一个 .apk 资源的直链；只有标签没有 Release 时为 null。 */
+            val apkUrl: String? = null,
+            val notes: String = "",
+        ) : Result
+
         data class Failure(val message: String) : Result
     }
 
@@ -42,7 +49,15 @@ object GitHubReleaseClient {
             val releaseTag = release?.get("tag_name")?.jsonPrimitive?.contentOrNull
             if (!releaseTag.isNullOrBlank()) {
                 val htmlUrl = release?.get("html_url")?.jsonPrimitive?.contentOrNull ?: RELEASES_URL
-                return@runCatching Result.Success(releaseTag, htmlUrl)
+                val assets = (release?.get("assets") as? JsonArray)?.map { it.jsonObject }
+                val apkUrl = assets
+                    ?.firstOrNull {
+                        it["name"]?.jsonPrimitive?.contentOrNull?.endsWith(".apk", true) == true
+                    }
+                    ?.get("browser_download_url")
+                    ?.jsonPrimitive?.contentOrNull
+                val notes = release?.get("body")?.jsonPrimitive?.contentOrNull.orEmpty()
+                return@runCatching Result.Success(releaseTag, htmlUrl, apkUrl, notes)
             }
 
             val tags = getJson(API_TAGS) as? JsonArray

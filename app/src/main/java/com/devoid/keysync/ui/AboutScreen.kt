@@ -57,6 +57,7 @@ fun AboutScreen(
     updateState: UpdateState = UpdateState.Idle,
     onCheckUpdate: () -> Unit = {},
     onOpenRelease: (String) -> Unit = {},
+    onInstall: () -> Unit = {},
 ) {
     Scaffold(modifier = modifier,
         topBar = {
@@ -106,6 +107,7 @@ fun AboutScreen(
                 state = updateState,
                 onCheckUpdate = onCheckUpdate,
                 onOpenRelease = onOpenRelease,
+                onInstall = onInstall,
             )
             Row(
                 modifier = Modifier
@@ -156,6 +158,7 @@ private fun UpdateSection(
     state: UpdateState,
     onCheckUpdate: () -> Unit,
     onOpenRelease: (String) -> Unit,
+    onInstall: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -182,9 +185,26 @@ private fun UpdateSection(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary
                 )
-                FilledTonalButton(onClick = { onOpenRelease(state.releaseUrl) }) {
-                    Text("前往下载")
+                if (!state.apkUrl.isNullOrBlank()) {
+                    FilledTonalButton(onClick = onInstall) {
+                        Text("下载并安装")
+                    }
+                } else {
+                    FilledTonalButton(onClick = { onOpenRelease(state.releaseUrl) }) {
+                        Text("前往下载")
+                    }
                 }
+            }
+            is UpdateState.Downloading -> {
+                Text(
+                    text = if (state.progress in 0..100) {
+                        "正在下载更新… ${state.progress}%"
+                    } else {
+                        "正在下载更新…"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
             is UpdateState.Failed -> Text(
                 text = "检查失败：${state.message}",
@@ -194,7 +214,7 @@ private fun UpdateSection(
         }
         FilledTonalButton(
             onClick = onCheckUpdate,
-            enabled = state != UpdateState.Checking
+            enabled = state != UpdateState.Checking && state !is UpdateState.Downloading
         ) {
             Text(if (state == UpdateState.Checking) "检查中…" else "检查更新")
         }

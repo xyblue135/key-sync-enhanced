@@ -25,6 +25,7 @@ import com.devoid.keysync.model.ClickMacro
 import com.devoid.keysync.model.FeatureTier
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.SwapPair
+import com.devoid.keysync.data.remote.ApkInstaller
 import com.devoid.keysync.model.UpdateState
 import com.devoid.keysync.service.FloatingBubbleService
 import com.devoid.keysync.service.FloatingWindowStateManager
@@ -108,8 +109,10 @@ class MainActivityViewModel @Inject constructor(
     val featureTier: StateFlow<FeatureTier> = stateManager.featureTier
 
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
-    /** 手动「检查更新」的状态；只在用户点击后变化，不自动轮询。 */
+    /** 「检查更新 / 下载并安装」的状态。 */
     val updateState = _updateState.asStateFlow()
+
+    private val apkInstaller = ApkInstaller(context)
 
     /**
      * Device/layout numbers for the home screen.
@@ -426,12 +429,48 @@ class MainActivityViewModel @Inject constructor(
                             current = current,
                             latest = VersionComparator.normalize(latest),
                             releaseUrl = result.htmlUrl,
+                            apkUrl = result.apkUrl,
+                            notes = result.notes,
                         )
                     } else {
                         UpdateState.UpToDate(current)
                     }
                 }
                 is GitHubReleaseClient.Result.Failure -> UpdateState.Failed(result.message)
+            }
+        }
+    }
+
+    /**
+     * 下载并安装检测到的新版本。
+     *
+     * 走系统 DownloadManager 下载 GitHub Release 里的 APK，再用 FileProvider 拉起安装器；
+     * 没有 APK 直链（只有标签）或未授予安装权限时，分别回退到 Release 页面与授权页。
+     */
+    fun downloadAndInstall() {
+        val available = _updateState.value as? UpdateState.Available ?: return
+        val apkUrl = available.apkUrl
+        if (apkUrl.isNullOrBlank()) {
+            openUrl(available.releaseUrl)
+            return
+        }
+        if (!apkInstaller.canInstall()) {
+            apkInstaller.openInstallPermission()
+            _updateState.value = UpdateState.Failed("请在系统设置里允许本应用安装应用，然后再点一次「下载并安装」")
+            return
+        }
+        _updateState.value = UpdateState.Downloading(-1)
+        viewModelScope.launch {
+            apkInstaller.download(available.latest, apkUrl) { progress ->
+                _updateState.value = UpdateState.Downloading(progress)
+            }.onSuccess { file ->
+                _updateState.value = available
+                runCatching { apkInstaller.install(file) }
+                    .onFailure {
+                        _updateState.value = UpdateState.Failed("无法启动安装：${it.message}")
+                    }
+            }.onFailure {
+                _updateState.value = UpdateState.Failed("下载失败：${it.message}")
             }
         }
     }

@@ -15,7 +15,13 @@ sealed interface UpdateState {
         val current: String,
         val latest: String,
         val releaseUrl: String,
+        /** Release 里的 APK 直链；null 表示只能去网页下载。 */
+        val apkUrl: String? = null,
+        val notes: String = "",
     ) : UpdateState
+
+    /** 正在下载 APK，[progress] 为 0–100（-1 表示拿不到总大小）。 */
+    data class Downloading(val progress: Int) : UpdateState
 
     data class Failed(val message: String) : UpdateState
 }

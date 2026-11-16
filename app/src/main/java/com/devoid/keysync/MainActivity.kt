@@ -26,14 +26,21 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.stringResource
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -44,6 +51,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.devoid.keysync.MainActivityViewModel.UiState
 import com.devoid.keysync.model.ThemePreference
+import com.devoid.keysync.model.UpdateState
 import com.devoid.keysync.service.FloatingBubbleService
 import com.devoid.keysync.ui.AboutScreen
 import com.devoid.keysync.ui.MainScreen
@@ -97,6 +105,11 @@ class MainActivity : ComponentActivity() {
             // notification (the only remaining control surface) stays hidden
             // until POST_NOTIFICATIONS is granted, so ask before starting it.
             var pendingLaunch by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+            // 启动时静默检查一次 GitHub Release；只有发现新版本才弹窗，不打扰。
+            val updateState by viewModel.updateState.collectAsStateWithLifecycle()
+            var updateDialogDismissed by rememberSaveable { mutableStateOf(false) }
+            LaunchedEffect(Unit) { viewModel.checkForUpdates() }
             val notificationPermissionLauncher = rememberLauncherForActivityResult(
                 ActivityResultContracts.RequestPermission()
             ) { granted ->
@@ -293,6 +306,7 @@ class MainActivity : ComponentActivity() {
                             updateState = updateState,
                             onCheckUpdate = viewModel::checkForUpdates,
                             onOpenRelease = viewModel::openUrl,
+                            onInstall = viewModel::downloadAndInstall,
                         )
                     }
                 }
@@ -304,6 +318,17 @@ class MainActivity : ComponentActivity() {
                     navController.navigate(route = target)
                     navigateTo.value = null
                 }
+
+                // 发现新版本时弹窗提示；下载中状态会切换到 Downloading，弹窗自动消失。
+                (updateState as? UpdateState.Available)
+                    ?.takeIf { !updateDialogDismissed }
+                    ?.let { info ->
+                        UpdateAvailableDialog(
+                            info = info,
+                            onInstall = { viewModel.downloadAndInstall() },
+                            onDismiss = { updateDialogDismissed = true },
+                        )
+                    }
             }
         }
     }
@@ -315,6 +340,29 @@ class MainActivity : ComponentActivity() {
                 navigateTo.value = SettingsScreen
             }
         }
+    }
+
+    @Composable
+    private fun UpdateAvailableDialog(
+        info: UpdateState.Available,
+        onInstall: () -> Unit,
+        onDismiss: () -> Unit,
+    ) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("发现新版本 ${info.latest}") },
+            text = {
+                Text(
+                    info.notes.take(700).ifBlank { "此版本没有填写更新说明。" }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = onInstall) { Text("下载并安装") }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) { Text("稍后") }
+            },
+        )
     }
 
     private fun showNotificationSettings(snackbarHostState: SnackbarHostState) {

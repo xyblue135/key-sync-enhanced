@@ -13,7 +13,7 @@
 | namespace / applicationId | `com.devoid.keysync` |
 | compileSdk / targetSdk | 36 |
 | minSdk | 29 |
-| versionCode / versionName | 39 / `1.63-android16` |
+| versionCode / versionName | 40 / `1.70-android16` |
 | debug 变体 | applicationId 后缀 `.fpsdebug`，versionName 后缀 `-debug` |
 | Kotlin / Java | 17 |
 
@@ -143,15 +143,18 @@ KEY_F13 ... KEY_F24                → 额外键被当成键盘键（可绑定�
 
 真机验收流程见 `docs/MOUSE_AND_MACROS.md`。
 
-### 3.3 检查更新（手动触发）
+### 3.3 应用内更新（自动检查 + 一键安装）
 
 更新源就是本仓库：`github.com/xyblue135/key-sync-enhanced`。
 
-- 入口在「关于」页的**检查更新**按钮；页面打开时**不会**自动请求，只有点击才发一次查询。
-- `data/external/GitHubReleaseClient.kt` 读取 `releases/latest`；仓库只打了标签、还没建 Release 时回退到 `tags` 的第一项。8 秒超时，无后台轮询、无自动下载。
-- `util/VersionComparator.kt` 只比较版本号核心（开头的点分数字），因此 `v1.48-android16` 与 `1.48` 视为同一版本，`-android16` / `-debug` 后缀里的数字不会造成误报。
-- 判定有更新时显示「前往下载」，跳转 Release 页面；失败时展示具体原因（HTTP 状态 / 超时 / 仓库暂无发布）。
-- 需要 `INTERNET` 权限；该权限只用于这一条手动查询。
+- **启动时自动检查一次**：`MainActivity` 的 `LaunchedEffect(Unit)` 调用 `viewModel.checkForUpdates()`；只有发现新版本才弹窗，已是最新或网络失败都静默，不打扰。
+- **弹窗内容**：新版本号 + Release 说明（截断 700 字），按钮「下载并安装」/「稍后」。「稍后」只隐藏本次弹窗，不会自动再弹。
+- **手动检查**：关于页「检查更新」按钮，状态机为 `Idle → Checking → Available / UpToDate / Failed`，下载中为 `Downloading(progress)`。
+- `data/external/GitHubReleaseClient.kt` 读取 `releases/latest`，解析 `tag_name`、`html_url`、`body` 与第一个 `.apk` 资源的 `browser_download_url`；只有标签没有 Release 时回退到 `tags` 第一项（此时没有 APK 直链，按钮退回「前往下载」）。
+- `util/VersionComparator.kt` 只比较版本号核心（开头的点分数字），`v1.70-android16` 与 `1.70` 视为同一版本。**版本号必须保持数值递增**：`1.7` 会被判定为低于 `1.63`，所以「1.7」要写成 `1.70`。
+- **下载与安装**：`data/remote/ApkInstaller.kt` 用系统 `DownloadManager` 下载（自动跟随后 302 跳转，通知栏有进度），保存到 `externalFilesDir/Download/updates/`；完成后通过 `FileProvider`（authority `${applicationId}.updates`，路径见 `res/xml/file_paths.xml`）拉起系统安装器。
+- **安装权限**：需要 `REQUEST_INSTALL_PACKAGES`；未授权时跳转本应用的「安装未知来源应用」页面，并提示用户允许后重试。
+- 需要 `INTERNET` 权限（查询与下载）；除启动检查与手动点击外，没有后台轮询。
 
 ### 3.4 预设导入导出
 

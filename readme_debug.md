@@ -112,6 +112,16 @@ README 讲「怎么用、怎么改」，这里只讲「哪里会炸、为什么�
 - **抖动频率**：原来固定 100–220ms；现在 `humanization_interval_ms`（默认 1000，200–3000ms）控制，实际间隔 ±20% 随机。新增「随机偏移间隔」滑杆。
 - **红线**：抖动仍只发 MOVE、绝不 reanchor（见 6.1）；调间隔不要引入阻塞式 delay 到按键响应路径。
 
+### 2.19 应用内自动更新
+
+- 查询沿用 `GitHubReleaseClient`，1.7 起额外解析 `assets` 里第一个 `.apk` 的直链与 `body` 说明；只有 tag 没有 Release 时没有直链，按钮退回「前往下载」。
+- 下载交给 `DownloadManager`（会跟随 GitHub 的 302 跳转，自己写 HttpURLConnection 容易漏掉重定向），保存到 `externalFilesDir/Download/updates/`。
+- FileProvider 的 `file_paths.xml` 必须写 `Download/updates/`，因为 `setDestinationInExternalFilesDir(context, DIRECTORY_DOWNLOADS, "updates/x.apk")` 的相对根是 `externalFilesDir`。
+- 必须声明 `REQUEST_INSTALL_PACKAGES`，否则 `canRequestPackageInstalls()` 永远 false、安装器拉不起来。
+- 版本比较只看 `-` 之前的点分数字（`1.70-android16` → `1.70`），否则 `android16` 里的 16 会被当成更高版本。
+- **坑**：`1.7` 数值上小于 `1.63`，发布 1.7 会让所有 1.63 用户判定为「已是最新」。要升到 1.7 时代号请写 `1.70`。
+- 自动检查只放在 `LaunchedEffect(Unit)`，失败静默；不要在 onResume/轮询里查，避免游戏过程中产生网络请求。
+
 ### 2.18 光标模式点击策略（已定稿：不做区域屏蔽）
 
 - 1.59 为了修「光标压在开火键上误开火」，把光标模式左右键全禁了 → 点不了屏幕。
