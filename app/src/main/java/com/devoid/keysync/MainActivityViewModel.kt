@@ -224,6 +224,10 @@ class MainActivityViewModel @Inject constructor(
         stateManager.setTabEsc(profileId, enabled)
     }
 
+    fun setStanceAssist(profileId: String, enabled: Boolean) {
+        stateManager.setStanceAssist(profileId, enabled)
+    }
+
     fun setWasdHumanization(enabled: Boolean) = stateManager.setWasdHumanization(enabled)
     fun setKeyHumanization(enabled: Boolean) = stateManager.setKeyHumanization(enabled)
     fun setHumanizationStrength(value: Float) = stateManager.setHumanizationStrength(value)

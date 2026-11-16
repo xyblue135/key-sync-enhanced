@@ -112,6 +112,14 @@ README 讲「怎么用、怎么改」，这里只讲「哪里会炸、为什么�
 - **抖动频率**：原来固定 100–220ms；现在 `humanization_interval_ms`（默认 1000，200–3000ms）控制，实际间隔 ±20% 随机。新增「随机偏移间隔」滑杆。
 - **红线**：抖动仍只发 MOVE、绝不 reanchor（见 6.1）；调间隔不要引入阻塞式 delay 到按键响应路径。
 
+### 2.13 Shift 取消蹲/趴的状态跟踪
+
+- 游戏里的蹲/趴是「点一次切换」，读不到真实状态，只能像 `WalkToggle` 一样跟踪**我们发起的姿态**：按 C/Z/Ctrl 记录，同一键再按清除。
+- Shift 只在 `stanceKeyCode != null` 时补点，绝不无条件点 C（否则会把站着的玩家点成趴下）。
+- 补点走 `eventHandler.handleKeyEvent`，不能直接操作 pointer（复用触控模式/位置）；姿态键或 Shift 没绑按钮就不介入。
+- 关闭开关时立即清空 `stanceKeyCode`，避免下次打开开关时用旧状态误点。
+- **红线**：不要在 Shift 的 WASD 疾跑逻辑里改 reanchor（见 6.1）；这里的补点是独立的短促 tap。
+
 ### 2.12 Tab 双击触发 Tab + Esc 的窗口与冷却
 
 - 判定窗口：两次 `ACTION_DOWN`（`repeatCount == 0`）间隔 ≤ 2000ms 视为双击；第一次 Tab 正常透传并记录时间。

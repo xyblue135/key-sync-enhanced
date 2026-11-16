@@ -625,6 +625,59 @@ class FloatingWindowStateManager @Inject constructor(
         scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
     }
 
+    /** 预设级「Shift 取消蹲/趴」开关，默认开启。 */
+    fun setStanceAssist(profileId: String, enabled: Boolean) {
+        _profiles.value = _profiles.value.map {
+            if (it.id == profileId) it.copy(stanceAssistEnabled = enabled) else it
+        }
+        if (profileId == _activeProfileId.value && !enabled) stanceKeyCode = null
+        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
+    }
+
+    /** 最后一次按下的姿态键（C / Z / Ctrl）；null 表示当前没有可取消的姿态。 */
+    private var stanceKeyCode: Int? = null
+    private var stanceTapJob: Job? = null
+
+    private val stanceKeys = setOf(
+        KeyEvent.KEYCODE_C,
+        KeyEvent.KEYCODE_Z,
+        KeyEvent.KEYCODE_CTRL_LEFT,
+        KeyEvent.KEYCODE_CTRL_RIGHT,
+    )
+
+    /**
+     * 蹲/趴与 Shift 的协调（与静步同理，只取消「我们自己点开的」姿态）。
+     *
+     * - 按 C（趴）/ Z / Ctrl（蹲）：记录最后一次姿态键；同一个键再按一次视为关闭
+     * - 按 Shift：若记录了姿态，补点一次同一个姿态键把它取消，然后开始跑
+     * - 姿态键或 Shift 没有绑定按钮时不介入，避免按了没反应
+     */
+    private fun trackStanceAssist(keyCode: Int) {
+        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value }
+        if (profile == null || !profile.stanceAssistEnabled) {
+            stanceKeyCode = null
+            return
+        }
+        val items = _containerItems.value
+        if (keyCode in stanceKeys) {
+            // 姿态键本身没绑按钮就无从点起，不记录。
+            if (items.none { it.boundKeyCode() == keyCode }) return
+            stanceKeyCode = if (stanceKeyCode == keyCode) null else keyCode
+            return
+        }
+        if (keyCode != KeyEvent.KEYCODE_SHIFT_LEFT && keyCode != KeyEvent.KEYCODE_SHIFT_RIGHT) return
+        val stance = stanceKeyCode ?: return
+        stanceKeyCode = null
+        if (stanceTapJob?.isActive == true) return
+        stanceTapJob = scope.launch {
+            val at = SystemClock.uptimeMillis()
+            eventHandler.handleKeyEvent(KeyEvent(at, at, KeyEvent.ACTION_DOWN, stance, 0))
+            // 快速补点，尽量在 Shift 生效前把姿态取消掉。
+            delay(kotlin.random.Random.nextLong(35L, 66L))
+            eventHandler.handleKeyEvent(KeyEvent(at, at, KeyEvent.ACTION_UP, stance, 0))
+        }
+    }
+
     private var tabEscJob: Job? = null
     private var lastTabDownAt = 0L
     private var tabComboCooldownUntil = 0L
@@ -1308,6 +1361,10 @@ class FloatingWindowStateManager @Inject constructor(
         }
         // Swap pair: on key press, swap the pair's layout positions; the same
         // key still flows to the game mapping untouched.
+        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0) {
+            // 蹲/趴与 Shift 的协调：只记录/补点姿态，原按键照常透传。
+            trackStanceAssist(keyEvent.keyCode)
+        }
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
             !eventHandler.isMacroTrigger(keyEvent.keyCode)) {
             // Tab 双击负责整段 Tab+Esc 注入，命中时吞掉原始 Tab。

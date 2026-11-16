@@ -113,6 +113,7 @@ fun SettingsScreen(
     onSetProfileQuickSwap: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
     onSetProfileTapSequence: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
     onSetProfileTabEsc: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
+    onSetProfileStanceAssist: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
     onSetProfileMacros: (String, List<ClickMacro>) -> Unit = { _, _ -> },
     overlayOpacity: Float = 0.5f,
     onSetOverlayOpacity: (Float) -> Unit = {},
@@ -240,6 +241,7 @@ fun SettingsScreen(
                     onSetQuickSwap = onSetProfileQuickSwap,
                     onSetTapSequence = onSetProfileTapSequence,
                     onSetTabEsc = onSetProfileTabEsc,
+                    onSetStanceAssist = onSetProfileStanceAssist,
                     onSetMacros = onSetProfileMacros,
                 )
                 Card {
@@ -828,6 +830,7 @@ fun ProfileManagerCard(
     onSetQuickSwap: (String, Boolean) -> Unit,
     onSetTapSequence: (String, Boolean) -> Unit,
     onSetTabEsc: (String, Boolean) -> Unit,
+    onSetStanceAssist: (String, Boolean) -> Unit,
     onSetMacros: (String, List<ClickMacro>) -> Unit,
 ) {
     var showNewDialog by remember { mutableStateOf(false) }
@@ -956,6 +959,9 @@ fun ProfileManagerCard(
                         },
                         onToggleTabEsc = {
                             onSetTabEsc(profile.id, !profile.tabEscEnabled)
+                        },
+                        onToggleStanceAssist = {
+                            onSetStanceAssist(profile.id, !profile.stanceAssistEnabled)
                         },
                         onSetMacros = { macroTarget = profile },
                         onDelete = { deleteTarget = profile }
@@ -1131,6 +1137,7 @@ private fun ProfileRow(
     onToggleQuickSwap: () -> Unit,
     onToggleTapSequence: () -> Unit,
     onToggleTabEsc: () -> Unit,
+    onToggleStanceAssist: () -> Unit,
     onSetMacros: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -1248,6 +1255,21 @@ private fun ProfileRow(
                     onClick = {
                         onMenuDismiss()
                         onToggleTabEsc()
+                    }
+                )
+                DropdownMenuItem(
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Shift 取消蹲/趴（C/Z/Ctrl）",
+                                modifier = Modifier.weight(1f)
+                            )
+                            Switch(checked = profile.stanceAssistEnabled, onCheckedChange = null)
+                        }
+                    },
+                    onClick = {
+                        onMenuDismiss()
+                        onToggleStanceAssist()
                     }
                 )
                 DropdownMenuItem(

@@ -238,6 +238,9 @@ class MainActivity : ComponentActivity() {
                             onSetProfileTabEsc = { profileId, enabled ->
                                 viewModel.setTabEsc(profileId, enabled)
                             },
+                            onSetProfileStanceAssist = { profileId, enabled ->
+                                viewModel.setStanceAssist(profileId, enabled)
+                            },
                             wasdHumanization = wasdHumanization,
                             keyHumanization = keyHumanization,
                             humanizationStrength = humanizationStrength,

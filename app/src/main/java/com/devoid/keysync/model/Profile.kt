@@ -22,6 +22,8 @@ data class Profile(
     val tapSequence234Enabled: Boolean = true,
     /** Tab 双击（2 秒内）改为点击 Tab + Esc 两个位置，之后 2 秒冷却。默认开启。 */
     val tabEscEnabled: Boolean = true,
+    /** Shift 按下时取消最后按下的蹲/趴姿态（C / Z / Ctrl）。默认开启。 */
+    val stanceAssistEnabled: Boolean = true,
     /** Ordered independent click points, separate from ordinary key bindings. */
     val macros: List<ClickMacro> = emptyList(),
     /** Layout 保存时的屏幕分辨率（px）。加载时若与当前屏幕不同则把坐标/尺寸等比还原；0 = 未记录。 */
