@@ -794,10 +794,13 @@ class EventHandler(
         val pointerId = pointerIds[keyCode] ?: return false
 
         if (!shootingMode) {
-            // 光标模式（鼠标已切出瞄准）：左右键不再注入到游戏。
-            // 之前会在光标处模拟一次原生点击，光标恰好停在开火/右键按钮上时
-            // 会误开火，官方表现应为「鼠标切出后不触发任何游戏按键」。
+            // 光标模式（鼠标已切出瞄准）：左键/右键只用于操作 UI。
+            // 光标落在任何已映射按钮（开火、右键、技能…）上时不注入，避免误触发；
+            // 其余区域恢复原生点击，保证切出鼠标后还能点游戏/系统界面。
             if (button == MotionEvent.BUTTON_PRIMARY || button == MotionEvent.BUTTON_SECONDARY) {
+                if (!isCursorOverMappedKey(mousePointerPosition)) {
+                    simulateNativeClick(pointerId = pointerId, pressed = pressed)
+                }
                 return true
             }
         }
@@ -945,6 +948,29 @@ class EventHandler(
     }
 
 
+    private val cursorDownAt = mutableMapOf<Int, Long>()
+    private val cursorGeneration = mutableMapOf<Int, Int>()
+
+    /** 光标模式下的原生点击：在光标处按下，松开后至少保持 60ms 再抬起。 */
+    private fun simulateNativeClick(
+        pointerId: Int,
+        position: Offset = mousePointerPosition,
+        pressed: Boolean
+    ) {
+        if (pressed) {
+            cursorGeneration[pointerId] = (cursorGeneration[pointerId] ?: 0) + 1
+            cursorDownAt[pointerId] = SystemClock.uptimeMillis()
+            eventInjector.injectPointer(pointerId, position)
+        } else {
+            val start = cursorDownAt.remove(pointerId) ?: return
+            val token = cursorGeneration[pointerId]
+            val delay = (60L - (SystemClock.uptimeMillis() - start)).coerceAtLeast(0)
+            mainHandler.postDelayed({
+                if (cursorGeneration[pointerId] == token) eventInjector.releasePointer(pointerId)
+            }, delay)
+        }
+    }
+
     /* ---------- mapping ---------- */
 
     /** Refresh measured coordinates without cancelling active WASD/aim contacts. */
@@ -965,6 +991,7 @@ class EventHandler(
         item.cancelTouchCenter?.let { center ->
             cancelKeyMap[key]?.let { cancelKeyMap[key] = it.copy(position = center, end = center) }
         }
+        refreshCursorBlockRects()
     }
 
     /**
@@ -1030,6 +1057,8 @@ class EventHandler(
         macroRunner.cancel()
         scrollPulse.reset()
         releaseSwitch.reset()
+        cursorDownAt.clear()
+        cursorGeneration.keys.toList().forEach { cursorGeneration[it] = cursorGeneration.getValue(it) + 1 }
         walkToggle.interrupt()
         MappingConflictDetector.detect(items).forEach {
             Log.w("EventHandler", "Mapping conflict: ${it.message}")
@@ -1126,7 +1155,50 @@ class EventHandler(
 
         if (walkKeyCode == null && lastWalkPosition != null) alloc(-10_005)
         alloc(KEYCODE_LMC)
+
+        refreshCursorBlockRects(items)
     }
+
+    private data class CursorBlock(val cx: Float, val cy: Float, val half: Float)
+
+    /** 所有已映射按钮在屏幕上的占用区域（光标模式点击时用来避开误触发）。 */
+    private var cursorBlockRects: List<CursorBlock> = emptyList()
+    private var cursorBlockItems: List<DraggableItem> = emptyList()
+
+    private fun refreshCursorBlockRects(items: List<DraggableItem>) {
+        cursorBlockItems = items.toList()
+        val rects = ArrayList<CursorBlock>(items.size * 2)
+        items.forEach { item ->
+            val size = when (item) {
+                is DraggableItem.VariableKey -> item.size
+                is DraggableItem.FixedKey -> item.size
+                is DraggableItem.CancelableKey -> item.size
+                is DraggableItem.WASDGroup -> 0
+            }
+            if (size <= 0) return@forEach
+            val half = size / 2f + 8f
+            val center = item.touchCenter
+                ?: item.position + Offset(size / 2f, size / 2f)
+            rects += CursorBlock(center.x, center.y, half)
+            if (item is DraggableItem.CancelableKey) {
+                val cancel = item.cancelTouchCenter
+                    ?: item.cancelPosition + Offset(size / 2f, size / 2f)
+                rects += CursorBlock(cancel.x, cancel.y, half)
+            }
+        }
+        cursorBlockRects = rects
+    }
+
+    /** 测量完成/旋转后刷新占用区域；没有条目时什么也不做。 */
+    private fun refreshCursorBlockRects() {
+        if (cursorBlockItems.isNotEmpty()) refreshCursorBlockRects(cursorBlockItems)
+    }
+
+    private fun isCursorOverMappedKey(position: Offset): Boolean =
+        cursorBlockRects.any { r ->
+            position.x >= r.cx - r.half && position.x <= r.cx + r.half &&
+                position.y >= r.cy - r.half && position.y <= r.cy + r.half
+        }
 
     /**
      * 只刷新按键的注入坐标，不重建映射。
@@ -1162,12 +1234,15 @@ class EventHandler(
                 is DraggableItem.WASDGroup -> Unit
             }
         }
+        refreshCursorBlockRects(items)
     }
 
     fun clear() {
         macroRunner.cancel()
         scrollPulse.reset()
         releaseSwitch.reset()
+        cursorDownAt.clear()
+        cursorGeneration.keys.toList().forEach { cursorGeneration[it] = cursorGeneration.getValue(it) + 1 }
         walkToggle.interrupt()
         heldMouseButtons.clear()
         normalHandlers.values.filterIsInstance<TapModeTouchHandler>()
