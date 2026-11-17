@@ -232,12 +232,14 @@
     <string name="notification_channel_overlay">按键悬浮窗</string>
     <string name="notification_channel_overlay_desc">显示 KeySync 运行状态与控制入口</string>
     <string name="notification_text_overlay_running">控制面板已就绪 · 点此进入设置</string>
+    <string name="notification_text_paused">已暂停映射 · 不拦截触控，可正常打字</string>
+    <string name="notification_action_add_key">添加按键</string>
+    <string name="notification_action_pause">暂停映射</string>
+    <string name="notification_action_resume">恢复映射</string>
     <string name="notification_action_edit">编辑布局</string>
     <string name="notification_action_exit_edit">退出编辑</string>
     <string name="notification_action_hide_keys">隐藏按键</string>
     <string name="notification_action_show_keys">显示按键</string>
-    <string name="notification_action_hide_status">隐藏提示</string>
-    <string name="notification_action_show_status">显示提示</string>
     <string name="notification_action_stop">关闭</string>
 
     <!-- 编辑态操作条 -->

@@ -126,6 +126,11 @@ class FloatingWindowStateManager @Inject constructor(
     private val _isEditMode = MutableStateFlow(false)
     val isEditMode = _isEditMode.asStateFlow()
 
+    // 暂停映射：不拦截触控、不注入任何事件，用于临时打字/操作其他界面。
+    // 只存在于本次服务生命周期内，不持久化——重启服务后默认恢复映射。
+    private val _mappingPaused = MutableStateFlow(false)
+    val mappingPaused = _mappingPaused.asStateFlow()
+
     private val _mousePointerOffset =
         MutableStateFlow(Offset(displayMetrics.widthPixels / 2f, displayMetrics.heightPixels / 2f))
     val pointerOffset = _mousePointerOffset.asStateFlow()
@@ -1337,6 +1342,44 @@ class FloatingWindowStateManager @Inject constructor(
     /** 一键切换悬浮窗按键的显示/隐藏。 */
     fun toggleKeysVisible() {
         _keysVisible.value = !_keysVisible.value
+    }
+
+    /**
+     * 暂停 / 恢复映射。
+     *
+     * 暂停时悬浮窗改为不可触摸并释放指针捕获，系统触控与键盘完全穿透到当前
+     * 应用，同时取消所有按下的触点；服务、悬浮窗和配置都保持不变，恢复时
+     * 无需重新授权或重新加键。用于临时打字、操作系统界面等场景。
+     */
+    fun toggleMappingPaused() {
+        setMappingPaused(!_mappingPaused.value)
+    }
+
+    fun setMappingPaused(paused: Boolean) {
+        if (_mappingPaused.value == paused) return
+        // 先落暂停标志：窗口监听是 combine(isEditMode, mappingPaused)，先置位
+        // 可以避免「退出编辑态」那一帧短暂地重新捕获指针（会吞掉一次点击）。
+        _mappingPaused.value = paused
+        if (paused) {
+            // 暂停意味着「完全不干扰」，编辑态也必须退出，否则全屏窗口仍可触摸。
+            if (_isEditMode.value) toggleEditMode()
+            // 松开所有已按下的虚拟手指/鼠标键，避免恢复后游戏里还卡着按住状态。
+            clearActivePointers()
+        } else {
+            // 暂停期间可能改过配置（例如通过设置页），恢复时重新同步键位。
+            eventHandler.updateKeyMapping(containerItems.value)
+        }
+    }
+
+    /**
+     * 通知栏「添加按键」：恢复映射 → 进入编辑态 → 新建一个待绑定的通用按钮。
+     * 入口在通知栏，所以这里顺便把隐藏的按键重新显示出来，否则新按钮看不见。
+     */
+    fun addKeyFromNotification() {
+        setMappingPaused(false)
+        if (!_keysVisible.value) _keysVisible.value = true
+        if (!_isEditMode.value) toggleEditMode()
+        addNewItem(DraggableItemType.KEY)
     }
 
     /**

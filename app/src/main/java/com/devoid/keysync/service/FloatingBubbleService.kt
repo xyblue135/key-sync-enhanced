@@ -109,7 +109,8 @@ class FloatingBubbleService : Service() {
         /** 通知栏 action：全部回投到本 Service，由 onStartCommand 分发。 */
         private const val ACTION_TOGGLE_EDIT = "com.devoid.keysync.action.TOGGLE_EDIT"
         private const val ACTION_TOGGLE_KEYS = "com.devoid.keysync.action.TOGGLE_KEYS"
-        private const val ACTION_TOGGLE_STATUS = "com.devoid.keysync.action.TOGGLE_STATUS"
+        private const val ACTION_TOGGLE_PAUSE = "com.devoid.keysync.action.TOGGLE_PAUSE"
+        private const val ACTION_ADD_KEY = "com.devoid.keysync.action.ADD_KEY"
         private const val ACTION_STOP = "com.devoid.keysync.action.STOP"
 
         private val _isRunning = MutableStateFlow(false)
@@ -141,7 +142,8 @@ class FloatingBubbleService : Service() {
         when (intent?.action) {
             ACTION_TOGGLE_EDIT -> stateManager.get().toggleEditMode()
             ACTION_TOGGLE_KEYS -> stateManager.get().toggleKeysVisible()
-            ACTION_TOGGLE_STATUS -> stateManager.get().toggleStatusBarVisible()
+            ACTION_TOGGLE_PAUSE -> stateManager.get().toggleMappingPaused()
+            ACTION_ADD_KEY -> stateManager.get().addKeyFromNotification()
         }
 
         _isRunning.value = true
@@ -191,25 +193,36 @@ class FloatingBubbleService : Service() {
             if (sm.keysVisible.value) R.string.notification_action_hide_keys
             else R.string.notification_action_show_keys
         )
-        val statusLabel = getString(
-            if (sm.statusBarVisible.value) R.string.notification_action_hide_status
-            else R.string.notification_action_show_status
+        val pauseLabel = getString(
+            if (sm.mappingPaused.value) R.string.notification_action_resume
+            else R.string.notification_action_pause
         )
         return NotificationCompat.Builder(this, CHANNEL_ID).apply {
             setSmallIcon(R.drawable.ic_launcher_foreground)
             setContentTitle(getString(R.string.app_name))
-            setContentText(getString(R.string.notification_text_overlay_running))
-            // 折叠态只放得下 3 个 action，第 4 个要靠展开才可见。
-            // BigTextStyle 让通知可展开，从而不会让「关闭」彻底消失。
+            setContentText(
+                getString(
+                    if (sm.mappingPaused.value) R.string.notification_text_paused
+                    else R.string.notification_text_overlay_running
+                )
+            )
+            // 折叠态只放得下 3 个 action，按使用频率排序：添加按键 / 暂停映射 /
+            // 隐藏按键。编辑布局与关闭放到展开态，其中「关闭」误触代价最大，
+            // 故意藏一层；「提示条」开关仍在编辑态的工具栏里。
             setStyle(NotificationCompat.BigTextStyle())
             setContentIntent(settingsPendingIntent())
             setOngoing(true)
             setSilent(true)
             setOnlyAlertOnce(true)
             setPriority(NotificationCompat.PRIORITY_LOW)
-            addAction(0, editLabel, servicePendingIntent(ACTION_TOGGLE_EDIT, 101))
+            addAction(
+                0,
+                getString(R.string.notification_action_add_key),
+                servicePendingIntent(ACTION_ADD_KEY, 105)
+            )
+            addAction(0, pauseLabel, servicePendingIntent(ACTION_TOGGLE_PAUSE, 106))
             addAction(0, keysLabel, servicePendingIntent(ACTION_TOGGLE_KEYS, 102))
-            addAction(0, statusLabel, servicePendingIntent(ACTION_TOGGLE_STATUS, 104))
+            addAction(0, editLabel, servicePendingIntent(ACTION_TOGGLE_EDIT, 101))
             addAction(0, getString(R.string.notification_action_stop), servicePendingIntent(ACTION_STOP, 103))
         }.build()
     }
@@ -255,8 +268,9 @@ class FloatingBubbleService : Service() {
             combine(
                 stateManager.get().isEditMode,
                 stateManager.get().keysVisible,
-                stateManager.get().statusBarVisible
-            ) { _, _, _ -> Unit }.collect {
+                stateManager.get().statusBarVisible,
+                stateManager.get().mappingPaused
+            ) { _, _, _, _ -> Unit }.collect {
                 // startForeground 跑过之后才投递，避免「先 notify 后 startForeground」。
                 if (!overlayInitialized) return@collect
                 if (android.os.Build.VERSION.SDK_INT >= 33 &&
@@ -325,38 +339,55 @@ class FloatingBubbleService : Service() {
             )
 
         scope.launch {
-            stateManager.get().isEditMode.collect { expanded ->
+            combine(
+                stateManager.get().isEditMode,
+                stateManager.get().mappingPaused
+            ) { edit, paused -> edit to paused }.collect { (expanded, paused) ->
                 itemsContainerLP.apply {
                     width = WindowManager.LayoutParams.MATCH_PARENT
                     height = WindowManager.LayoutParams.MATCH_PARENT
                 }
-                if (expanded) {
-                    itemsContainerLP.flags =
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                    stateManager.get().windowManager.updateViewLayout(
-                        containerView,
-                        itemsContainerLP
-                    )
-                    // 展开（编辑态）：先释放指针捕获（编辑态要能触摸拖动按钮），再等
-                    // updateViewLayout 生效后重新请求键盘焦点。顺序不能反——先
-                    // requestFocus 再 releasePointerCapture 会把刚请求到的焦点冲掉，
-                    // 导致 View 层 setOnKeyListener 收不到按键（按钮绑定一直是「+」）。
-                    // requestFocus 用 post 延后到 layout 更新之后，再补一次兜底。
-                    containerView?.releasePointerCapture()
-                    stateManager.get().clearActivePointers()
-                    containerView?.post { containerView?.requestFocus() }
-                    containerView?.postDelayed({ containerView?.requestFocus() }, 150)
-                    // 从通知栏进编辑态时通知栏正在收起，可能还要再抢一次焦点。
-                    containerView?.postDelayed({ containerView?.requestFocus() }, 500)
-                } else {
-                    itemsContainerLP.flags =
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                    stateManager.get().windowManager.updateViewLayout(
-                        containerView,
-                        itemsContainerLP
-                    )
-                    containerView?.requestFocus()
-                    containerView?.requestPointerCapture()
+                when {
+                    // 暂停映射：窗口完全不可触摸，触控与键盘穿透到当前应用，
+                    // 同时释放指针捕获——否则鼠标事件仍会被本窗口截走。
+                    paused -> {
+                        itemsContainerLP.flags =
+                            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        stateManager.get().windowManager.updateViewLayout(
+                            containerView,
+                            itemsContainerLP
+                        )
+                        containerView?.releasePointerCapture()
+                    }
+                    expanded -> {
+                        itemsContainerLP.flags =
+                            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        stateManager.get().windowManager.updateViewLayout(
+                            containerView,
+                            itemsContainerLP
+                        )
+                        // 展开（编辑态）：先释放指针捕获（编辑态要能触摸拖动按钮），再等
+                        // updateViewLayout 生效后重新请求键盘焦点。顺序不能反——先
+                        // requestFocus 再 releasePointerCapture 会把刚请求到的焦点冲掉，
+                        // 导致 View 层 setOnKeyListener 收不到按键（按钮绑定一直是「+」）。
+                        // requestFocus 用 post 延后到 layout 更新之后，再补一次兜底。
+                        containerView?.releasePointerCapture()
+                        stateManager.get().clearActivePointers()
+                        containerView?.post { containerView?.requestFocus() }
+                        containerView?.postDelayed({ containerView?.requestFocus() }, 150)
+                        // 从通知栏进编辑态时通知栏正在收起，可能还要再抢一次焦点。
+                        containerView?.postDelayed({ containerView?.requestFocus() }, 500)
+                    }
+                    else -> {
+                        itemsContainerLP.flags =
+                            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        stateManager.get().windowManager.updateViewLayout(
+                            containerView,
+                            itemsContainerLP
+                        )
+                        containerView?.requestFocus()
+                        containerView?.requestPointerCapture()
+                    }
                 }
             }
         }
@@ -403,6 +434,7 @@ class FloatingBubbleService : Service() {
                 val pointerOffset by stateManager.get().pointerOffset.collectAsState()
                 val keysConfig by stateManager.get().keysConfig.collectAsState()
                 val keysVisible by stateManager.get().keysVisible.collectAsState()
+                val mappingPaused by stateManager.get().mappingPaused.collectAsState()
                 val statusBarVisible by stateManager.get().statusBarVisible.collectAsState()
                 val featureTier by stateManager.get().featureTier.collectAsState()
                 val pendingBindId by stateManager.get().pendingVariableKeyBind.collectAsState()
@@ -414,7 +446,7 @@ class FloatingBubbleService : Service() {
                 val activeId by stateManager.get().activeProfileId.collectAsState()
                 Box {
                     // 光标：用半透明触摸指示圈代替箭头，视觉上更接近"手指触点"。
-                    if (!isEditMode && !isShootingMode && wheelCursor == null) {
+                    if (!isEditMode && !mappingPaused && !isShootingMode && wheelCursor == null) {
                         val diameter = 26.dp
                         val radiusPx = with(LocalDensity.current) { (diameter / 2).toPx() }
                         Box(
@@ -440,7 +472,8 @@ class FloatingBubbleService : Service() {
                     if (!isEditMode && itemsContainerOpacity == 0f)
                         return@Box//do not compose if user set overlay opacity to 0
                     // 一键隐藏按键：keysVisible 为 false 时不渲染按键容器。
-                    if (keysVisible) {
+                    // 暂停映射时同样不渲染——此时窗口不可触摸，留着按钮只会误导。
+                    if (keysVisible && !mappingPaused) {
                         ItemsContainer(
                             Modifier.alpha(if (isEditMode) 1f else itemsContainerOpacity),
                             appConfig = keysConfig,

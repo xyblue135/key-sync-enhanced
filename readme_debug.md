@@ -236,6 +236,14 @@ README 讲「怎么用、怎么改」，这里只讲「哪里会炸、为什么�
 - **根因**：`specialUse` 前台服务类型是 API 34 才有的，低版本传了会崩。
 - **修复**：按 `Build.VERSION.SDK_INT` 判断后再传。
 
+### 3.7 通知 action 排列与「暂停映射」
+
+- **折叠态只显示前 3 个 action**：`addAction` 的顺序即优先级。当前顺序是「添加按键 → 暂停映射 → 隐藏按键」，`编辑布局` 与 `关闭` 放展开态；`关闭` 故意藏一层防误触。
+- **暂停映射必须同时做四件事**：`FLAG_NOT_TOUCHABLE`、`releasePointerCapture()`、`clearActivePointers()`、退出编辑态。少了 `releasePointerCapture`，鼠标事件仍被悬浮窗截走，用户会发现「暂停了还是打不了字」；少了 `clearActivePointers` 会留下卡住的虚拟手指。
+- **暂停不持久化**：只存在于本次服务生命周期，重启服务自动恢复映射，避免忘记恢复。
+- **「添加按键」依赖编辑态**：`addNewItem(KEY)` 只设置 `_pendingVariableKeyBind`，绑定对话框的 `LaunchedEffect` 在 `ItemsContainer` 内，非编辑态不渲染。必须先 `toggleEditMode()` 再 `addNewItem()`，顺序不能反。
+- **暂停时不渲染按键**：窗口已 `NOT_TOUCHABLE`，再显示按钮只会误导；恢复时 `keysVisible` 保持原值。
+
 ---
 
 ## 4. 坐标与布局
