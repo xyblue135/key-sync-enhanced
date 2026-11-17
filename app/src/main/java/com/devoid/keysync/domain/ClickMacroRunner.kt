@@ -2,6 +2,7 @@ package com.devoid.keysync.domain
 
 import androidx.compose.ui.geometry.Offset
 import com.devoid.keysync.model.ClickMacro
+import com.devoid.keysync.model.intervalAfter
 import com.devoid.keysync.model.screenPosition
 import com.devoid.keysync.model.validateClickMacros
 
@@ -39,8 +40,10 @@ internal class ClickMacroRunner(
                     touching = false
                     up()
                     if (index == steps.lastIndex) running = false
-                    else if (steps[index].delayAfterMs == 0L) step(index + 1)
-                    else schedule(steps[index].delayAfterMs) { step(index + 1) }
+                    else {
+                        val delay = macro.intervalAfter(index)
+                        if (delay == 0L) step(index + 1) else schedule(delay) { step(index + 1) }
+                    }
                 }
             }
         }

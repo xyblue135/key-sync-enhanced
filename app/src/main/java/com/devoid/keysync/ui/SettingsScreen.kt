@@ -76,13 +76,11 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.constraintlayout.compose.ConstraintLayout
 import com.devoid.keysync.R
 import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.ClickMacro
-import com.devoid.keysync.model.FeatureTier
 import com.devoid.keysync.model.SwapPair
 import com.devoid.keysync.model.ThemePreference
 import com.devoid.keysync.model.TouchMode
@@ -111,17 +109,17 @@ fun SettingsScreen(
     onExportProfile: (String) -> String? = { null },
     onImportProfile: (String) -> String? = { null },
     onSetProfileQuickSwap: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
+    onSetProfileSwapPairs: (profileId: String, pairs: List<SwapPair>) -> Unit = { _, _ -> },
     onSetProfileTapSequence: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
     onSetProfileTapSequenceGap: (profileId: String, gapMs: Int) -> Unit = { _, _ -> },
     onSetProfileTabEsc: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
+    onSetProfileTabDebounce: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
     onSetProfileStanceAssist: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
     onSetProfileMacros: (String, List<ClickMacro>) -> Unit = { _, _ -> },
     overlayOpacity: Float = 0.5f,
     onSetOverlayOpacity: (Float) -> Unit = {},
     statusBarVisible: Boolean = true,
     onSetStatusBarVisible: (Boolean) -> Unit = {},
-    featureTier: FeatureTier = FeatureTier.FULL,
-    onSetFeatureTier: (FeatureTier) -> Unit = {},
     onStopOverlay: () -> Unit = {},
     wasdHumanization: Boolean = false,
     keyHumanization: Boolean = false,
@@ -228,11 +226,9 @@ fun SettingsScreen(
                 .verticalScroll(state = scrollState)
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                FeatureTierCard(tier = featureTier, onSelect = onSetFeatureTier)
                 ProfileManagerCard(
                     profiles = profiles,
                     activeProfileId = activeProfileId,
-                    advanced = featureTier == FeatureTier.FULL,
                     onCreate = onCreateProfile,
                     onExportAllProfiles = onExportAllProfiles,
                     onSwitch = onSwitchProfile,
@@ -241,10 +237,15 @@ fun SettingsScreen(
                     onDuplicate = onDuplicateProfile,
                     onExport = onExportProfile,
                     onImport = onImportProfile,
+                )
+                ProfileAssistCard(
+                    profile = profiles.firstOrNull { it.id == activeProfileId },
                     onSetQuickSwap = onSetProfileQuickSwap,
+                    onSetSwapPairs = onSetProfileSwapPairs,
                     onSetTapSequence = onSetProfileTapSequence,
                     onSetTapSequenceGap = onSetProfileTapSequenceGap,
                     onSetTabEsc = onSetProfileTabEsc,
+                    onSetTabDebounce = onSetProfileTabDebounce,
                     onSetStanceAssist = onSetProfileStanceAssist,
                     onSetMacros = onSetProfileMacros,
                 )
@@ -252,15 +253,20 @@ fun SettingsScreen(
                     Column(
                         Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {
+                        Text(
+                            text = "操作与显示",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 text = stringResource(R.string.settings_button_size),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .weight(1f),
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.primary
+                                    .weight(1f)
+                                    .padding(top = 8.dp),
+                                style = MaterialTheme.typography.titleMedium
                             )
                             Text(stringResource(R.string.settings_button_size_value, (newConfig.buttonScale * 100).roundToInt()))
                         }
@@ -274,15 +280,19 @@ fun SettingsScreen(
                             onValueChange = {
                                 newConfig = newConfig.copy(buttonScale = it)
                             })
+                        Text(
+                            "所有按钮一起缩放；单个按钮可在编辑态双击它单独调整。改动需点保存生效。",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 text = stringResource(R.string.slider_pointer_sensitivity),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .weight(1f),
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.primary
+                                style = MaterialTheme.typography.titleMedium
                             )
                             Text("${(newConfig.pointerSensitivity * 100).roundToInt()} %")
                         }
@@ -293,271 +303,19 @@ fun SettingsScreen(
                             onValueChange = {
                                 newConfig = newConfig.copy(pointerSensitivity = it)
                             })
-                    }
-                }
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                        ) {
-                            Text(
-                                stringResource(R.string.settings_delete_data),
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                modifier = Modifier.padding(top = 8.dp),
-                                text = stringResource(R.string.settings_delete_keymap),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(checked = newConfig.deleteDataOnRemove, onCheckedChange = {
-                            newConfig = newConfig.copy(deleteDataOnRemove = it)
-                        })
-                    }
-                }
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    var cancellableDropDownExpanded by remember { mutableStateOf(false) }
-                    var scopeDropDownExpanded by remember { mutableStateOf(false) }
-
-                    ConstraintLayout(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
-                        val (title,
-                            cancelTitle,
-                            cancelBody,
-                            cancelSelector,
-                            divider1,
-                            scopeTitle,
-                            scopeBody,
-                            scopeSelector) = createRefs()
                         Text(
-                            stringResource(R.string.settings_touch_mode),
-                            modifier = Modifier.constrainAs(title) {
-                                top.linkTo(parent.top)
-                                start.linkTo(parent.start)
-                            },
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            stringResource(R.string.settings_cancelable_button),
-                            modifier = Modifier
-                                .constrainAs(cancelTitle) {
-                                    top.linkTo(title.bottom)
-                                }
-                                .padding(top = 8.dp),
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                            modifier = Modifier
-                                .constrainAs(cancelBody) {
-                                    top.linkTo(cancelTitle.bottom)
-                                }
-                                .padding(top = 8.dp),
-                            text = stringResource(R.string.settings_touch_cancel),
+                            "跟随当前预设保存，切换预设会各自恢复；改动需点保存生效。",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        OutlinedCard(modifier = Modifier.constrainAs(cancelSelector) {
-                            bottom.linkTo(cancelBody.bottom)
-                            top.linkTo(cancelTitle.top)
-                            end.linkTo(parent.end)
-                        }, onClick = { cancellableDropDownExpanded = true }) {
-                            Row(
-                                modifier = Modifier
-                                    .padding(8.dp)
-                                    .widthIn(min = 60.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text(
-                                    newConfig.cancellableTouchMode.name.capitalizeFirst(),
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null)
-                            }
-                            DropdownMenu(
-                                expanded = cancellableDropDownExpanded,
-                                onDismissRequest = { cancellableDropDownExpanded = false }) {
-                                TouchMode.entries.filter { it != TouchMode.WHEEL }.forEach {
-                                    DropdownMenuItem(
-                                        text = { Text(it.name.capitalizeFirst()) },
-                                        onClick = {
-                                            newConfig = newConfig.copy(cancellableTouchMode = it)
-                                            cancellableDropDownExpanded = false
-                                        })
-                                }
-                            }
-                        }
-                        HorizontalDivider(
-                            Modifier
-                                .constrainAs(divider1) {
-                                    top.linkTo(cancelBody.bottom)
-                                }
-                                .padding(top = 8.dp))
-                        Text(
-                            stringResource(R.string.settings_scope),
-                            modifier = Modifier
-                                .constrainAs(scopeTitle) {
-                                    top.linkTo(divider1.bottom)
-                                }
-                                .padding(top = 8.dp),
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                            modifier = Modifier
-                                .constrainAs(scopeBody) {
-                                    top.linkTo(scopeTitle.bottom)
-                                }
-                                .padding(top = 8.dp),
-                            text = stringResource(R.string.settings_touch_scope),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        OutlinedCard(modifier = Modifier.constrainAs(scopeSelector) {
-                            bottom.linkTo(scopeBody.bottom)
-                            top.linkTo(scopeTitle.top)
-                            end.linkTo(parent.end)
-                        }, onClick = { scopeDropDownExpanded = true }) {
-                            Row(
-                                modifier = Modifier
-                                    .padding(8.dp)
-                                    .widthIn(min = 60.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text(
-                                    newConfig.normalBtnTouchMode.name.capitalizeFirst(),
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null)
-                            }
-                            DropdownMenu(
-                                expanded = scopeDropDownExpanded,
-                                onDismissRequest = { scopeDropDownExpanded = false }) {
-                                TouchMode.entries.filter { it != TouchMode.WHEEL }.forEach {
-                                    DropdownMenuItem(
-                                        text = { Text(it.name.capitalizeFirst()) },
-                                        onClick = {
-                                            newConfig = newConfig.copy(normalBtnTouchMode = it)
-                                            scopeDropDownExpanded = false
-                                        })
-                                }
-                            }
-                        }
-                    }
-
-
-                }
-
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    var dropDownExpanded by remember { mutableStateOf(false) }
-                    Row(
-                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                        ) {
-                            Text(
-                                stringResource(R.string.settings_theme),
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1
-                            )
-                            Text(
-                                modifier = Modifier.padding(top = 8.dp),
-                                text = stringResource(R.string.settings_theme_pref),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        OutlinedCard(onClick = { dropDownExpanded = true }) {
-                            Row(
-                                modifier = Modifier
-                                    .padding(8.dp)
-                                    .widthIn(min = 60.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text(
-                                    newConfig.themePreference.name.capitalizeFirst(),
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null)
-                            }
-                            DropdownMenu(
-                                expanded = dropDownExpanded,
-                                onDismissRequest = { dropDownExpanded = false }) {
-                                ThemePreference.entries.forEach {
-                                    DropdownMenuItem(
-                                        text = { Text(it.name.capitalizeFirst()) },
-                                        onClick = {
-                                            newConfig = newConfig.copy(themePreference = it)
-                                            dropDownExpanded = false
-                                        })
-                                }
-                            }
-                        }
-
-                    }
-                }
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                        ) {
-                            Text(
-                                stringResource(R.string.settings_screen_mirror_compat),
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1
-                            )
-                            Text(
-                                modifier = Modifier.padding(top = 8.dp),
-                                text = stringResource(R.string.settings_screen_mirror_compat_desc),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = newConfig.screenMirrorCompatMode,
-                            onCheckedChange = {
-                                newConfig = newConfig.copy(screenMirrorCompatMode = it)
-                            }
-                        )
-                    }
-                }
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 text = stringResource(R.string.slider_overlay_opacity),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .weight(1f),
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.primary
+                                style = MaterialTheme.typography.titleMedium
                             )
                             Text("${(overlayOpacity * 100).roundToInt()} %")
                         }
@@ -589,6 +347,114 @@ fun SettingsScreen(
                                 checked = statusBarVisible,
                                 onCheckedChange = onSetStatusBarVisible
                             )
+                        }
+                    }
+                }
+                Card {
+                    Column(
+                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "兼容与高级",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    stringResource(R.string.settings_screen_mirror_compat),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    text = stringResource(R.string.settings_screen_mirror_compat_desc),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = newConfig.screenMirrorCompatMode,
+                                onCheckedChange = {
+                                    newConfig = newConfig.copy(screenMirrorCompatMode = it)
+                                }
+                            )
+                        }
+                        HorizontalDivider()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    stringResource(R.string.settings_theme),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    text = stringResource(R.string.settings_theme_pref),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            ThemeSelector(
+                                value = newConfig.themePreference,
+                                onSelect = { newConfig = newConfig.copy(themePreference = it) }
+                            )
+                        }
+                        HorizontalDivider()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    stringResource(R.string.settings_cancelable_button),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    text = stringResource(R.string.settings_touch_cancel),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            TouchModeSelector(
+                                value = newConfig.cancellableTouchMode,
+                                onSelect = { newConfig = newConfig.copy(cancellableTouchMode = it) }
+                            )
+                        }
+                        HorizontalDivider()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    stringResource(R.string.settings_scope),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    text = stringResource(R.string.settings_touch_scope),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            TouchModeSelector(
+                                value = newConfig.normalBtnTouchMode,
+                                onSelect = { newConfig = newConfig.copy(normalBtnTouchMode = it) }
+                            )
+                        }
+                        HorizontalDivider()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    stringResource(R.string.settings_delete_data),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    text = stringResource(R.string.settings_delete_keymap),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(checked = newConfig.deleteDataOnRemove, onCheckedChange = {
+                                newConfig = newConfig.copy(deleteDataOnRemove = it)
+                            })
                         }
                     }
                 }
@@ -629,13 +495,14 @@ fun SettingsScreen(
                             Text("${humanizationStrength.roundToInt()} / 100")
                         }
                         Slider(
+                            enabled = wasdHumanization || keyHumanization,
                             value = humanizationStrength.coerceIn(1f, 100f),
                             valueRange = 1f..100f,
                             steps = 98,
                             onValueChange = { onSetHumanizationStrength(it.roundToInt().toFloat()) }
                         )
                         Text(
-                            "默认 50。普通按键落点最大 8px；WASD 的摆头由下面的独立滑杆控制。",
+                            "默认 50。普通按键落点最大 8px；WASD 摆头由下方独立滑杆控制。两个开关都关着时，下面三项不生效。",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -648,13 +515,14 @@ fun SettingsScreen(
                             Text("${wasdSway.roundToInt()} / 100")
                         }
                         Slider(
+                            enabled = wasdHumanization,
                             value = wasdSway.coerceIn(1f, 100f),
                             valueRange = 1f..100f,
                             steps = 98,
                             onValueChange = { onSetWasdSway(it.roundToInt().toFloat()) }
                         )
                         Text(
-                            "只影响摇杆按住时的轻微摆头，和上面的整体偏移强度独立。" +
+                            "只影响 WASD 摇杆按住时的轻微摆头，与整体偏移强度独立。" +
                                 "满值约 ±1.5°，默认 50；跑动时觉得方向飘就把它调小。",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -672,6 +540,7 @@ fun SettingsScreen(
                             )
                         }
                         Slider(
+                            enabled = wasdHumanization || keyHumanization,
                             value = humanizationInterval.toFloat().coerceIn(200f, 3000f),
                             valueRange = 200f..3000f,
                             steps = 27,
@@ -776,68 +645,226 @@ fun KeyConfigTextField(
 }
 
 /**
- * 基础 / 完整模式选择。只控制 UI 入口与宏是否参与分发，
- * 已保存的布局和宏数据在任何模式下都原样保留。
+ * 按键辅助：这些开关都跟随「当前预设」保存，与具体按键绑定无关。
+ * 之前散落在每个预设的溢出菜单里，现在集中到当前预设的独立卡片。
  */
 @Composable
-private fun FeatureTierCard(tier: FeatureTier, onSelect: (FeatureTier) -> Unit) {
+private fun ProfileAssistCard(
+    profile: Profile?,
+    onSetQuickSwap: (String, Boolean) -> Unit,
+    onSetSwapPairs: (String, List<SwapPair>) -> Unit,
+    onSetTapSequence: (String, Boolean) -> Unit,
+    onSetTapSequenceGap: (String, Int) -> Unit,
+    onSetTabEsc: (String, Boolean) -> Unit,
+    onSetTabDebounce: (String, Boolean) -> Unit,
+    onSetStanceAssist: (String, Boolean) -> Unit,
+    onSetMacros: (String, List<ClickMacro>) -> Unit,
+) {
+    var showSwapPairs by remember { mutableStateOf(false) }
+    var showMacros by remember { mutableStateOf(false) }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text(
-                "功能模式",
+                "按键辅助",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.primary
             )
+            if (profile == null) {
+                Text(
+                    "先在「预设」里选择一个预设，这些辅助会跟随该预设保存。",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                return@Column
+            }
             Text(
-                "基础模式只保留键鼠映射：宏会被停用、入口隐藏，预设导入导出也隐藏。已保存的布局与宏不会被删除，切回完整模式立即恢复。改动立即生效并保存。",
+                "当前预设：${profile.name}",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            FeatureTierOption(
-                tier = FeatureTier.BASIC,
-                current = tier,
-                title = "基础模式",
-                desc = "按键映射、悬浮窗、拟人化",
-                onSelect = onSelect
+            AssistSwitchRow(
+                title = "Tab 双击 → Tab + Esc（2 秒冷却）",
+                desc = "约 1 秒内连按两次 Tab 时，第二次改为点击 Tab + Esc。",
+                checked = profile.tabEscEnabled,
+                onToggle = { onSetTabEsc(profile.id, !profile.tabEscEnabled) }
             )
-            FeatureTierOption(
-                tier = FeatureTier.FULL,
-                current = tier,
-                title = "完整模式",
-                desc = "额外启用点击宏与预设导入导出",
-                onSelect = onSelect
+            AssistSwitchRow(
+                title = "Tab 防连按（1 秒内只接受一次）",
+                desc = "快速连按 Tab 时吞掉多余输入，避免双击判定失败或点到其他按钮。",
+                checked = profile.tabDebounceEnabled,
+                onToggle = { onSetTabDebounce(profile.id, !profile.tabDebounceEnabled) }
             )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            AssistSwitchRow(
+                title = "R ↔ 右键（X 换位 / 1 还原）",
+                desc = "按换位键让 R 与鼠标右键按钮交换位置，按还原键各自归位。只改位置，不动键位绑定。",
+                checked = profile.quickSwapEnabled,
+                onToggle = { onSetQuickSwap(profile.id, !profile.quickSwapEnabled) }
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("双键交换对", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "自定义 A/B 两个按钮的换位键与还原键。",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(onClick = { showSwapPairs = true }) {
+                    Text(if (profile.swapPairs.isEmpty()) "添加" else "编辑（${profile.swapPairs.size}）")
+                }
+            }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            AssistSwitchRow(
+                title = "按 3 依次点 2/3/4",
+                desc = "一键切换武器组：按 3 时依次点击 2 → 3 → 4 的位置。",
+                checked = profile.tapSequence234Enabled,
+                onToggle = { onSetTapSequence(profile.id, !profile.tapSequence234Enabled) }
+            )
+            if (profile.tapSequence234Enabled) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "连点间隔",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text("${profile.tapSequence234GapMs} ms", style = MaterialTheme.typography.bodyMedium)
+                }
+                Slider(
+                    value = profile.tapSequence234GapMs.toFloat().coerceIn(20f, 300f),
+                    valueRange = 20f..300f,
+                    steps = 27,
+                    onValueChange = { onSetTapSequenceGap(profile.id, it.roundToInt()) }
+                )
+            }
+            AssistSwitchRow(
+                title = "Shift 取消蹲/趴（C/Z/Ctrl）",
+                desc = "按下 Shift 时取消最后一次切换的蹲下 / 趴下姿态。",
+                checked = profile.stanceAssistEnabled,
+                onToggle = { onSetStanceAssist(profile.id, !profile.stanceAssistEnabled) }
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("点击宏（顺序点位）", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "按顺序依次点击屏幕上的点位，与普通键位绑定互不影响。",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(onClick = { showMacros = true }) {
+                    Text(if (profile.macros.isEmpty()) "添加" else "编辑（${profile.macros.size}）")
+                }
+            }
         }
+    }
+
+    if (profile == null) return
+    if (showSwapPairs) {
+        SwapPairsDialog(
+            profile = profile,
+            onDismiss = { showSwapPairs = false },
+            onSave = { onSetSwapPairs(profile.id, it) }
+        )
+    }
+    if (showMacros) {
+        ClickMacrosDialog(
+            profile = profile,
+            onDismiss = { showMacros = false },
+            onSave = { onSetMacros(profile.id, it) }
+        )
     }
 }
 
+/** 按键辅助里的一行开关：点整行或右侧 Switch 都能切换。 */
 @Composable
-private fun FeatureTierOption(
-    tier: FeatureTier,
-    current: FeatureTier,
+private fun AssistSwitchRow(
     title: String,
     desc: String,
-    onSelect: (FeatureTier) -> Unit
+    checked: Boolean,
+    onToggle: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onSelect(tier) }
+            .clickable { onToggle() }
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        RadioButton(selected = current == tier, onClick = { onSelect(tier) })
-        Column(Modifier.padding(start = 4.dp)) {
+        Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             Text(
                 desc,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+        Switch(checked = checked, onCheckedChange = { onToggle() })
+    }
+}
+
+/** 主题下拉选择器。 */
+@Composable
+private fun ThemeSelector(
+    value: ThemePreference,
+    onSelect: (ThemePreference) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    OutlinedCard(onClick = { expanded = true }) {
+        Row(
+            modifier = Modifier
+                .padding(8.dp)
+                .widthIn(min = 60.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(value.name.capitalizeFirst(), style = MaterialTheme.typography.titleMedium)
+            Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            ThemePreference.entries.forEach {
+                DropdownMenuItem(
+                    text = { Text(it.name.capitalizeFirst()) },
+                    onClick = {
+                        onSelect(it)
+                        expanded = false
+                    })
+            }
+        }
+    }
+}
+
+/** 触控方式下拉选择器（滚轮不在此处出现）。 */
+@Composable
+private fun TouchModeSelector(
+    value: TouchMode,
+    onSelect: (TouchMode) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    OutlinedCard(onClick = { expanded = true }) {
+        Row(
+            modifier = Modifier
+                .padding(8.dp)
+                .widthIn(min = 60.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(value.name.capitalizeFirst(), style = MaterialTheme.typography.titleMedium)
+            Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            TouchMode.entries.filter { it != TouchMode.WHEEL }.forEach {
+                DropdownMenuItem(
+                    text = { Text(it.name.capitalizeFirst()) },
+                    onClick = {
+                        onSelect(it)
+                        expanded = false
+                    })
+            }
         }
     }
 }
@@ -851,7 +878,6 @@ private fun FeatureTierOption(
 fun ProfileManagerCard(
     profiles: List<Profile>,
     activeProfileId: String?,
-    advanced: Boolean,
     onCreate: (String) -> Unit,
     onExportAllProfiles: () -> String,
     onSwitch: (String) -> Unit,
@@ -860,12 +886,6 @@ fun ProfileManagerCard(
     onDuplicate: (String) -> Unit,
     onExport: (String) -> String?,
     onImport: (String) -> String?,
-    onSetQuickSwap: (String, Boolean) -> Unit,
-    onSetTapSequence: (String, Boolean) -> Unit,
-    onSetTapSequenceGap: (String, Int) -> Unit,
-    onSetTabEsc: (String, Boolean) -> Unit,
-    onSetStanceAssist: (String, Boolean) -> Unit,
-    onSetMacros: (String, List<ClickMacro>) -> Unit,
 ) {
     var showNewDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
@@ -875,7 +895,6 @@ fun ProfileManagerCard(
     var deleteTarget by remember { mutableStateOf<Profile?>(null) }
     var menuProfile by remember { mutableStateOf<Profile?>(null) }
     var exportText by remember { mutableStateOf<String?>(null) }
-    var macroTarget by remember { mutableStateOf<Profile?>(null) }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -933,14 +952,6 @@ fun ProfileManagerCard(
                     fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.primary
                 )
-                if (advanced) {
-                    TextButton(onClick = { showImportDialog = true }) {
-                        Text(stringResource(R.string.profile_import))
-                    }
-                    TextButton(onClick = { importFromFileLauncher.launch(arrayOf("*/*")) }) {
-                        Text("从文件导入")
-                    }
-                }
                 FilledTonalButton(onClick = { showNewDialog = true }) {
                     Icon(Icons.Rounded.Add, contentDescription = null)
                     Spacer(Modifier.widthIn(4.dp))
@@ -952,12 +963,19 @@ fun ProfileManagerCard(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            if (advanced) {
-                Row {
-                    TextButton(onClick = { exportText = onExportAllProfiles() }) { Text("复制全部预设") }
-                    TextButton(onClick = { exportAllLauncher.launch("keysync-profiles.json") }) {
-                        Text("导出到文件")
-                    }
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                TextButton(onClick = { showImportDialog = true }) {
+                    Text(stringResource(R.string.profile_import))
+                }
+                TextButton(onClick = { importFromFileLauncher.launch(arrayOf("*/*")) }) {
+                    Text("从文件导入")
+                }
+                TextButton(onClick = { exportText = onExportAllProfiles() }) { Text("复制全部预设") }
+                TextButton(onClick = { exportAllLauncher.launch("keysync-profiles.json") }) {
+                    Text("导出到文件")
                 }
             }
             HorizontalDivider()
@@ -974,7 +992,6 @@ fun ProfileManagerCard(
                         profile = profile,
                         isActive = profile.id == activeProfileId,
                         canDelete = profiles.size > 1,
-                        advanced = advanced,
                         menuExpanded = menuProfile?.id == profile.id,
                         onMenuClick = { menuProfile = profile },
                         onMenuDismiss = { menuProfile = null },
@@ -985,22 +1002,6 @@ fun ProfileManagerCard(
                         },
                         onDuplicate = { onDuplicate(profile.id) },
                         onExport = { exportText = onExport(profile.id) },
-                        onToggleQuickSwap = {
-                            onSetQuickSwap(profile.id, !profile.quickSwapEnabled)
-                        },
-                        onToggleTapSequence = {
-                            onSetTapSequence(profile.id, !profile.tapSequence234Enabled)
-                        },
-                        onSetTapSequenceGap = { gap ->
-                            onSetTapSequenceGap(profile.id, gap)
-                        },
-                        onToggleTabEsc = {
-                            onSetTabEsc(profile.id, !profile.tabEscEnabled)
-                        },
-                        onToggleStanceAssist = {
-                            onSetStanceAssist(profile.id, !profile.stanceAssistEnabled)
-                        },
-                        onSetMacros = { macroTarget = profile },
                         onDelete = { deleteTarget = profile }
                     )
                 }
@@ -1146,10 +1147,6 @@ fun ProfileManagerCard(
     }
 
 
-    macroTarget?.let { target ->
-        ClickMacrosDialog(profile = profiles.firstOrNull { it.id == target.id } ?: target,
-            onDismiss = { macroTarget = null }, onSave = { onSetMacros(target.id, it) })
-    }
 }
 
 /**
@@ -1163,7 +1160,6 @@ private fun ProfileRow(
     profile: Profile,
     isActive: Boolean,
     canDelete: Boolean,
-    advanced: Boolean,
     menuExpanded: Boolean,
     onMenuClick: () -> Unit,
     onMenuDismiss: () -> Unit,
@@ -1171,12 +1167,6 @@ private fun ProfileRow(
     onRename: () -> Unit,
     onDuplicate: () -> Unit,
     onExport: () -> Unit,
-    onToggleQuickSwap: () -> Unit,
-    onToggleTapSequence: () -> Unit,
-    onSetTapSequenceGap: (Int) -> Unit,
-    onToggleTabEsc: () -> Unit,
-    onToggleStanceAssist: () -> Unit,
-    onSetMacros: () -> Unit,
     onDelete: () -> Unit
 ) {
     Row(
@@ -1226,6 +1216,15 @@ private fun ProfileRow(
                 expanded = menuExpanded,
                 onDismissRequest = onMenuDismiss
             ) {
+                if (!isActive) {
+                    DropdownMenuItem(
+                        text = { Text("切换到此预设") },
+                        onClick = {
+                            onMenuDismiss()
+                            onSwitch(profile.id)
+                        }
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.profile_manager_rename)) },
                     onClick = {
@@ -1240,93 +1239,11 @@ private fun ProfileRow(
                         onDuplicate()
                     }
                 )
-                if (advanced) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.profile_export)) },
-                        onClick = {
-                            onMenuDismiss()
-                            onExport()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("点击宏（顺序点位）") },
-                        onClick = { onMenuDismiss(); onSetMacros() }
-                    )
-                }
                 DropdownMenuItem(
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "R ↔ 右键（X 换位 / 1 还原）",
-                                modifier = Modifier.weight(1f)
-                            )
-                            Switch(checked = profile.quickSwapEnabled, onCheckedChange = null)
-                        }
-                    },
+                    text = { Text(stringResource(R.string.profile_export)) },
                     onClick = {
                         onMenuDismiss()
-                        onToggleQuickSwap()
-                    }
-                )
-                DropdownMenuItem(
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("按 3 依次点 2/3/4", modifier = Modifier.weight(1f))
-                            Switch(checked = profile.tapSequence234Enabled, onCheckedChange = null)
-                        }
-                    },
-                    onClick = {
-                        onMenuDismiss()
-                        onToggleTapSequence()
-                    }
-                )
-                if (profile.tapSequence234Enabled) {
-                    DropdownMenuItem(
-                        onClick = {},
-                        text = {
-                            Column {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("连点间隔", modifier = Modifier.weight(1f))
-                                    Text("${profile.tapSequence234GapMs} ms")
-                                }
-                                Slider(
-                                    value = profile.tapSequence234GapMs.toFloat().coerceIn(20f, 300f),
-                                    valueRange = 20f..300f,
-                                    steps = 27,
-                                    onValueChange = { onSetTapSequenceGap(it.roundToInt()) }
-                                )
-                            }
-                        }
-                    )
-                }
-                DropdownMenuItem(
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "Tab 双击 → Tab + Esc（2 秒冷却）",
-                                modifier = Modifier.weight(1f)
-                            )
-                            Switch(checked = profile.tabEscEnabled, onCheckedChange = null)
-                        }
-                    },
-                    onClick = {
-                        onMenuDismiss()
-                        onToggleTabEsc()
-                    }
-                )
-                DropdownMenuItem(
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "Shift 取消蹲/趴（C/Z/Ctrl）",
-                                modifier = Modifier.weight(1f)
-                            )
-                            Switch(checked = profile.stanceAssistEnabled, onCheckedChange = null)
-                        }
-                    },
-                    onClick = {
-                        onMenuDismiss()
-                        onToggleStanceAssist()
+                        onExport()
                     }
                 )
                 DropdownMenuItem(

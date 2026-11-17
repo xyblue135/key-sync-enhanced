@@ -123,6 +123,16 @@ class ClickMacroRunnerTest {
         assertEquals(listOf("down@0", "up@50", "down@50", "up@100"), f.events)
     }
 
+    @Test fun standardIntervalAppliesUniformlyAndIgnoresPerStepDelays() {
+        val f = Fixture()
+        val macro = f.macro.copy(customIntervals = false, standardIntervalMs = 300)
+        f.press(macro); f.release(macro)
+        f.advance(349)
+        assertEquals(listOf("down@0", "up@50"), f.events)
+        f.advance(350)
+        assertEquals(listOf("down@0", "up@50", "down@350"), f.events)
+    }
+
     @Test fun sampledMacroHoldStaysInsideHumanRange() {
         val samples = (1..200).map { sampleMacroHoldDuration() }
         assertTrue(samples.all { it in 45L..95L })

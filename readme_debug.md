@@ -105,12 +105,37 @@ README 讲「怎么用、怎么改」，这里只讲「哪里会炸、为什么�
 - **注意**：`DraggableItem` 是可变对象，改完字段必须 `_containerItems.value = _containerItems.value.toList()` 换新列表实例，否则 Compose 不会重组，滑块看起来"没反应"。
 
 ### 2.10 重新打开配置菜单会把工具条顶到一边 / 拟人化抖动太频繁
-
 - **工具条位移**：`EditToolbar` 的根 `Box` 是 wrap-content，`＋` 菜单是同一个 Box 的子节点；菜单展开后 Box 被撑大，而 Box 在父级按 `TopEnd` 对齐，于是整条工具栏（含 `⠿` 手柄）被挤到左边——表现就是「重新打开配置菜单，按钮被顶到一边」。修复：根节点改为 `fillMaxSize()`，工具条与菜单各自 `align(TopEnd)`，菜单尺寸不再影响工具条位置。
 - **附带防护**：任何配置对话框（`configuringFixedKey/VariableKey/Wasd`）打开时，`DraggableItem` 的 `enabled=false`，底层按钮不响应拖动。拖动手势绝不能穿透对话框。
 - **抖动强度**：`jitterOffset()` 半径 `40px → 8px`、`jitterTarget()` 角度 `(2+10s)° → (0.4+2s)°`、半径扰动 `±(2%+6s%) → ±(0.4%+1.2s%)`、TAP 位移 `(1.5+4.5s)px → (0.3+0.9s)px`，整体为原强度的 1/5。
 - **抖动频率**：原来固定 100–220ms；现在 `humanization_interval_ms`（默认 1000，200–3000ms）控制，实际间隔 ±20% 随机。新增「随机偏移间隔」滑杆。
 - **红线**：抖动仍只发 MOVE、绝不 reanchor（见 6.1）；调间隔不要引入阻塞式 delay 到按键响应路径。
+
+### 2.23 鼠标偶尔突然甩出 >180° 的大转向
+
+- **现象**：正常转视角时偶发一次巨大转向，人从看前面直接变成看背后，之后又恢复正常。
+- **根因**：不是游戏灵敏度问题，而是 `onMouseEvent()` 的绝对坐标回退路径。部分 ROM / 投屏端不提供 `AXIS_RELATIVE_X/Y`，只能拿 `rawX - lastMouseRawX` 当位移；一旦光标被系统回中、换了鼠标、悬浮窗重新捕获指针、或投屏端重新按下，`rawX` 会从完全不同的位置开始，单帧差值是几百像素。这个假位移再乘灵敏度（最高 3x）后注入，视角就被甩到背后。
+- **修复**：
+  - 新增 `MAX_MOUSE_DELTA_PER_EVENT = 240px`。绝对坐标路径上单帧差值超过它，视为断点：更新基准并丢弃这一帧，不注入。
+  - `ACTION_DOWN / ACTION_HOVER_ENTER / ACTION_CANCEL / ACTION_OUTSIDE` 主动把 `lastMouseRawX/Y` 置 `NaN`，新一段输入从 0 位移开始。
+  - 相对设备（`SOURCE_MOUSE_RELATIVE`）与触控板不受影响；射击模式下再对缩放后的位移做一次上限钳制。
+- **红线**：绝对坐标只能用来求差，不能直接当位置；任何时候都不要把跨输入的 `rawX` 差直接乘灵敏度送进注入器。
+
+### 2.22 点击宏支持标准间隔 / 自定义间隔
+
+- **需求**：类似罗技宏，既能统一设一个「标准延迟」，也能每个点位单独设间隔。
+- **数据**：`ClickMacro` 新增 `customIntervals`（默认 `true`）与 `standardIntervalMs`（默认 100）。默认值故意保持「自定义」，旧版本导出的宏没有这两个字段，升级后仍按每步 `delayAfterMs` 执行，节奏不变。
+- **执行**：`ClickMacroRunner` 改走 `ClickMacro.intervalAfter(index)`：自定义模式读每步延迟，标准模式统一读 `standardIntervalMs`；最后一步之后仍然不等待。
+- **校验**：`standardIntervalMs` 与每步延迟一样限制在 0–5000ms，导入非法值直接拒绝。
+- **UI**：宏编辑框新增「标准间隔 / 自定义间隔」两个 chip；标准模式只显示一个总间隔滑杆，自定义模式才显示每个点位的间隔滑杆。
+
+### 2.21 编辑态齿轮/删除图标过大且容易误删
+
+- **现象**：每个映射按钮右下角挂 32dp 齿轮、右上角挂「×」；按钮本身可以缩到 28dp，图标反而比按钮还大，视觉上很别扭；「×」离按钮太近，滑动时误触就把映射删掉。
+- **修复**：悬浮窗不再渲染任何齿轮/删除图标。**双击**按钮才打开对应设置框（绑定 / 点击模式 / 尺寸 / 滚轮半径 / 删除），删除只放在设置框底部（红色「删除按键」）；WASD 双击打开疾跑距离，删除同样在框内。
+- **实现**：`DraggableItem` 新增 `onDoubleTap`，用独立的 `pointerInput + detectTapGestures(onDoubleTap)`；拖动仍由 `detectDragGestures` 处理。手指移动超过 touch slop 后拖动会消费位移，tap 检测自动取消，二者不会互相打架。
+- **背包映射（`CancelableKey`）**：旧逻辑是「点按钮抢焦点 → 物理按键直接改绑定」，双击手势会被内部 `clickable` 消费。现在改成双击走 `KeyCaptureDialog`，新增 `FloatingWindowStateManager.updateCancelableKeyCode()` 统一写入；不要再给按钮内部加 `clickable`，否则双击收不到。
+- **红线**：`onDoubleTap` 只在编辑态传入非空；配置框打开时 `draggingEnabled=false`，双击与拖动同时禁用，避免手势穿透。
 
 ### 2.20 光标模式按住鼠标无法拖动/滑动
 

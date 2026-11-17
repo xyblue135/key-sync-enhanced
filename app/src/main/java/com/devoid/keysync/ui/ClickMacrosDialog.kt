@@ -49,7 +49,8 @@ fun ClickMacrosDialog(profile: Profile, onDismiss: () -> Unit, onSave: (List<Cli
                     val created = ClickMacro(UUID.randomUUID().toString(), "点击宏 ${macros.size + 1}",
                         KEYCODE_MOUSE_BACK, listOf(
                             MacroStep(UUID.randomUUID().toString(), 0.35f, 0.5f),
-                            MacroStep(UUID.randomUUID().toString(), 0.65f, 0.5f)))
+                            MacroStep(UUID.randomUUID().toString(), 0.65f, 0.5f)),
+                        customIntervals = false, standardIntervalMs = 100)
                     macros = macros + created
                     selected = created.id
                 }) { Text("＋ 新建宏") }
@@ -72,8 +73,39 @@ fun ClickMacrosDialog(profile: Profile, onDismiss: () -> Unit, onSave: (List<Cli
                             }
                             true
                         })
-                    Text("宏优先于同键普通映射。每次只运行一个宏，执行期间再次触发不会排队。每个点击保持 50 毫秒，下面的间隔从松开后计算。",
+                    Text("宏优先于同键普通映射。每次只运行一个宏，执行期间再次触发不会排队。每个点击保持 45–95 毫秒，间隔从松开后计算。",
                         style = MaterialTheme.typography.bodySmall)
+                    Text("间隔模式", style = MaterialTheme.typography.titleSmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = !current.customIntervals,
+                            onClick = { change(current.copy(customIntervals = false)) },
+                            label = { Text("标准间隔") }
+                        )
+                        FilterChip(
+                            selected = current.customIntervals,
+                            onClick = { change(current.copy(customIntervals = true)) },
+                            label = { Text("自定义间隔") }
+                        )
+                    }
+                    if (!current.customIntervals) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("标准间隔", Modifier.weight(1f))
+                            Text("${current.standardIntervalMs} 毫秒")
+                        }
+                        Slider(
+                            value = current.standardIntervalMs.toFloat().coerceIn(0f, 2000f),
+                            valueRange = 0f..2000f,
+                            steps = 39,
+                            onValueChange = {
+                                change(current.copy(standardIntervalMs = it.roundToInt().toLong()))
+                            })
+                        Text("所有位置之间统一等待这个时长，最后一步之后不再等待。",
+                            style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        Text("每个位置下方可单独设置到下一步的间隔。",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
                     current.steps.forEachIndexed { index, step ->
                         key(step.id) {
                             OutlinedCard(Modifier.fillMaxWidth()) {
@@ -90,7 +122,7 @@ fun ClickMacrosDialog(profile: Profile, onDismiss: () -> Unit, onSave: (List<Cli
                                             change(current.copy(steps = current.steps.filterNot { it.id == step.id }))
                                         }) { Text("删除位置") }
                                     }
-                                    if (index < current.steps.lastIndex) {
+                                    if (index < current.steps.lastIndex && current.customIntervals) {
                                         Text("到下一步的间隔：${step.delayAfterMs} 毫秒")
                                         Slider(step.delayAfterMs.toFloat(), onValueChange = { value ->
                                             change(current.copy(steps = current.steps.map {

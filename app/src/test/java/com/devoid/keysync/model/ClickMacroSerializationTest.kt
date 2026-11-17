@@ -47,6 +47,15 @@ class ClickMacroSerializationTest {
         }
     }
 
+    @Test fun oldMacroDataKeepsPerStepIntervals() {
+        // 旧版本导出的宏没有间隔模式字段：必须继续按每步 delayAfterMs 执行。
+        val legacy = """{"id":"m","name":"Old","triggerKeyCode":4,"enabled":true,
+            "steps":[{"id":"a","x":0.2,"y":0.3,"delayAfterMs":350}]}"""
+        val decoded = json.decodeFromString<ClickMacro>(legacy)
+        assertTrue(decoded.customIntervals)
+        assertEquals(350L, decoded.intervalAfter(0))
+    }
+
     @Test fun pointProjectionUsesViewportOriginAndClampsRightBottomEdge() {
         assertEquals(Offset(110f, 220f), MacroStep("point", 0.5f, 0.5f)
             .screenPosition(Offset(200f, 400f), Offset(10f, 20f)))

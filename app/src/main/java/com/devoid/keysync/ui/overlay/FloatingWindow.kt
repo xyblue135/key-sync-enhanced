@@ -7,7 +7,6 @@ import android.view.KeyEvent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.rememberScrollState
@@ -36,7 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ExitToApp
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Done
-import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,7 +50,6 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -63,16 +61,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.nativeKeyCode
-import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
@@ -122,6 +114,7 @@ fun ItemsContainer(
     onRemove: (Int) -> Unit,
     onUpdateKeyCode: (Int, Int, TouchMode?) -> Unit = { _, _, _ -> },
     onUpdateVariableKeyCode: (Int, Int, TouchMode?) -> Unit = { _, _, _ -> },
+    onUpdateCancelableKeyCode: (Int, Int, TouchMode?) -> Unit = { _, _, _ -> },
     onUpdateItemSize: (Int, Float) -> Unit = { _, _ -> },
     pendingBindId: Int? = null,
     onBindConsumed: () -> Unit = {},
@@ -134,10 +127,11 @@ fun ItemsContainer(
     var configuringWasd by remember { mutableStateOf<DraggableItem.WASDGroup?>(null) }
     var configuringFixedKey by remember { mutableStateOf<DraggableItem.FixedKey?>(null) }
     var configuringVariableKey by remember { mutableStateOf<DraggableItem.VariableKey?>(null) }
+    var configuringCancelableKey by remember { mutableStateOf<DraggableItem.CancelableKey?>(null) }
 
     // 任何配置弹框打开时都禁用底层按钮的拖动，避免弹框里的手势把按钮挪走。
-    val draggingEnabled = configuringWasd == null &&
-        configuringFixedKey == null && configuringVariableKey == null
+    val draggingEnabled = configuringWasd == null && configuringFixedKey == null &&
+        configuringVariableKey == null && configuringCancelableKey == null
 
     // 新建「按钮」后自动弹出绑定框：StateManager 会发出 pendingBindId 信号，
     // 这里捕获后直接打开对应按钮的按键捕获对话框，避免留下一个显示 "?" 的空按钮。
@@ -170,22 +164,15 @@ fun ItemsContainer(
                 if (item is DraggableItem.CancelableKey) {
                     if (item.type == DraggableItemType.BAG_MAP || item.type == DraggableItemType.BACKPACK) {
                         var cancelableKeyPosition by remember(item.id, item.cancelPosition) { mutableStateOf(item.cancelPosition) }
-                        var hasFocus by remember { mutableStateOf(false) }
-                        val keyFocusRequester = remember { FocusRequester() }
-                        var keyCode by remember(item.id, item.keyCode) { mutableStateOf(item.keyCode) }
-                        val text by remember(item.id) {
-                            derivedStateOf {
-                                keyCode?.let {
-                                    KeyEvent.keyCodeToString(it).replace("KEYCODE_", "")
-                                } ?: "?"
-                            }
-                        }
+                        val text = item.keyCode
+                            ?.let { KeyEvent.keyCodeToString(it).replace("KEYCODE_", "") } ?: "?"
 
                         DraggableItem(
                             scale = scale,
                             id = item.id,
                             offset = position,
                             enabled = draggingEnabled,
+                            onDoubleTap = if (editing) ({ configuringCancelableKey = item }) else null,
                             onScreenCenter = { item.touchCenter = it; onItemMeasured(item) },
                             onOffsetChange = {
                                 val target = clampToViewport(
@@ -200,28 +187,10 @@ fun ItemsContainer(
                             }
                         ) {
                             BagMapKey(
-                                modifier = Modifier
-                                    .onFocusChanged {
-                                        hasFocus = it.hasFocus
-                                    }
-                                    .onSizeChanged {
-                                        item.size = it.width
-                                    }
-                                    .onKeyEvent { keyEvent ->
-                                        val nativeKeyCode = keyEvent.key.nativeKeyCode
-                                        if (nativeKeyCode >= KeyEvent.KEYCODE_DPAD_UP && nativeKeyCode <= KeyEvent.KEYCODE_DPAD_CENTER)
-                                            return@onKeyEvent false
-                                        item.keyCode = nativeKeyCode
-                                        keyCode = nativeKeyCode
-                                        true
-                                    }
-                                    .focusRequester(keyFocusRequester)
-                                    .focusable(),
+                                modifier = Modifier.onSizeChanged { item.size = it.width },
                                 text = text,
-                                borderColor = if (hasFocus) Color.Cyan else MaterialTheme.colorScheme.primary,
-                                onClick = { keyFocusRequester.requestFocus() }) {
-                                onRemove(item.id)
-                            }
+                                borderColor = MaterialTheme.colorScheme.primary,
+                            )
                         }
                         DraggableItem(
                             scale = scale,
@@ -241,8 +210,8 @@ fun ItemsContainer(
                             }
                         ) {
                             CancelKey(
-                                borderColor = if (hasFocus) Color.Cyan else MaterialTheme.colorScheme.primary,
-                                onClick = { keyFocusRequester.requestFocus() }
+                                borderColor = MaterialTheme.colorScheme.primary,
+                                onClick = {}
                             )
                         }
                     }
@@ -252,6 +221,14 @@ fun ItemsContainer(
                     id = item.id,
                     offset = position,
                     enabled = draggingEnabled,
+                    onDoubleTap = if (editing) ({
+                        when (item) {
+                            is DraggableItem.VariableKey -> configuringVariableKey = item
+                            is DraggableItem.WASDGroup -> configuringWasd = item
+                            is DraggableItem.FixedKey -> configuringFixedKey = item
+                            else -> Unit
+                        }
+                    }) else null,
                     onScreenCenter = { item.touchCenter = it; onItemMeasured(item) },
                     onOffsetChange = {
                         val target = clampToViewport(
@@ -267,23 +244,18 @@ fun ItemsContainer(
                 ) {
                     when (item) {
                         is DraggableItem.VariableKey -> {
-                            // 通用「按钮」：齿轮对话框绑定按键 + 切换点击/按住模式，与固定键一致。
-                            // 未绑定前显示 "+"（点齿轮绑定），绑定后显示真实键名；按下时高亮。
+                            // 通用「按钮」：双击打开设置（绑定按键 / 点击模式 / 大小 / 删除）。
+                            // 未绑定前显示 "+"，绑定后显示真实键名；按下时高亮。
                             GenericFixedKey(
                                 modifier = Modifier.onSizeChanged { item.size = it.width },
-                                editable = editing,
                                 sizeDp = item.customSizeDp.dp,
                                 label = item.keyCode?.keyCodeToString()?.removePrefix("KEYCODE_") ?: "+",
                                 pressed = item.keyCode?.let { pressedKeys.contains(it) } ?: false,
-                                onRemove = { onRemove(item.id) },
-                                onConfigure = { configuringVariableKey = item }
                             )
                         }
 
                         is DraggableItem.WASDGroup -> {
-                            WASDKeysGroup(onRemove = {
-                                onRemove(item.id)
-                            }, modifier = Modifier
+                            WASDKeysGroup(modifier = Modifier
                                 .onGloballyPositioned { coordinates ->
                                     val layoutX = coordinates.positionOnScreen().x
                                     val layoutY = coordinates.positionOnScreen().y
@@ -306,7 +278,7 @@ fun ItemsContainer(
                                 val scaleAmount = scale + (dragAmount.y / 500)
                                 scale = max(min(scaleAmount, 1.4f), 0.6f)
                                 item.scale = scale
-                            }, onConfigure = { configuringWasd = item }, pressedKeys = pressedKeys, editable = editing)
+                            }, pressedKeys = pressedKeys, editable = editing)
                         }
 
                         is DraggableItem.FixedKey -> {
@@ -317,7 +289,6 @@ fun ItemsContainer(
                             // 硬编码字母与实际绑定键不一致（如 JUMP 显示 J 实为 SPACE）。
                             GenericFixedKey(
                                 modifier = Modifier.onSizeChanged { onSizeChangeListener(it) },
-                                editable = editing,
                                 sizeDp = item.customSizeDp.dp,
                                 label = if (item.type == DraggableItemType.WALK_TOGGLE)
                                     (if (walkEnabled) "静步 开" else "静步 关") else item.keyCode.keyCodeToString(),
@@ -329,8 +300,6 @@ fun ItemsContainer(
                                 },
                                 pressed = pressedKeys.contains(item.keyCode) ||
                                     (item.type == DraggableItemType.WALK_TOGGLE && walkEnabled),
-                                onRemove = { onRemove(item.id) },
-                                onConfigure = { configuringFixedKey = item }
                             )
                         }
 
@@ -354,13 +323,27 @@ fun ItemsContainer(
                     Text("A / D 横向（共用）：${side.roundToInt()} px")
                     Slider(value = side.coerceIn(10f, 1000f), onValueChange = { side = it }, valueRange = 10f..1000f)
                     Text("斜跑保留完整前向距离；只有 S 取消疾跑。保存后退出编辑生效。", style = MaterialTheme.typography.bodySmall)
-                    Row {
-                        TextButton(onClick = { configuringWasd = null }) { Text("取消") }
-                        TextButton(onClick = {
-                            target.sprintForwardDistance = forward
-                            target.sprintSideDistance = side
-                            configuringWasd = null
-                        }) { Text("保存") }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        TextButton(
+                            onClick = {
+                                onRemove(target.id)
+                                configuringWasd = null
+                            },
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            )
+                        ) { Text("删除按键") }
+                        Row {
+                            TextButton(onClick = { configuringWasd = null }) { Text("取消") }
+                            TextButton(onClick = {
+                                target.sprintForwardDistance = forward
+                                target.sprintSideDistance = side
+                                configuringWasd = null
+                            }) { Text("保存") }
+                        }
                     }
                 }
             }
@@ -374,7 +357,11 @@ fun ItemsContainer(
                         onUpdateKeyCode(target.id, newCode, target.touchMode)
                         configuringFixedKey = null
                     },
-                    onDismiss = { configuringFixedKey = null }
+                    onDismiss = { configuringFixedKey = null },
+                    onDelete = {
+                        onRemove(target.id)
+                        configuringFixedKey = null
+                    }
                 )
             } else {
                 KeyCaptureDialog(
@@ -392,7 +379,11 @@ fun ItemsContainer(
                     },
                     onDismiss = { configuringFixedKey = null },
                     onKeyCaptureChanged = onKeyCaptureChanged,
-                    onRequestFocus = onRequestFocus
+                    onRequestFocus = onRequestFocus,
+                    onDelete = {
+                        onRemove(target.id)
+                        configuringFixedKey = null
+                    }
                 )
             }
         }
@@ -411,7 +402,33 @@ fun ItemsContainer(
                 },
                 onDismiss = { configuringVariableKey = null },
                 onKeyCaptureChanged = onKeyCaptureChanged,
-                onRequestFocus = onRequestFocus
+                onRequestFocus = onRequestFocus,
+                onDelete = {
+                    onRemove(target.id)
+                    configuringVariableKey = null
+                }
+            )
+        }
+
+        configuringCancelableKey?.let { target ->
+            KeyCaptureDialog(
+                currentKeyCode = target.keyCode ?: KeyEvent.KEYCODE_UNKNOWN,
+                currentWheelRadius = target.wheelRadius,
+                onWheelRadiusChange = { target.wheelRadius = it },
+                currentSizeDp = target.customSizeDp,
+                onSizeDpChange = { onUpdateItemSize(target.id, it) },
+                currentTouchMode = target.touchMode,
+                onConfirm = { newCode, touchMode ->
+                    onUpdateCancelableKeyCode(target.id, newCode, touchMode)
+                    configuringCancelableKey = null
+                },
+                onDismiss = { configuringCancelableKey = null },
+                onKeyCaptureChanged = onKeyCaptureChanged,
+                onRequestFocus = onRequestFocus,
+                onDelete = {
+                    onRemove(target.id)
+                    configuringCancelableKey = null
+                }
             )
         }
     }
@@ -454,7 +471,8 @@ private fun InlineDialog(
 fun ShootingModeKeyDialog(
     currentKeyCode: Int,
     onConfirm: (Int) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onDelete: (() -> Unit)? = null
 ) {
     var selected by remember { mutableStateOf(currentKeyCode) }
     InlineDialog(onDismiss = onDismiss) {
@@ -502,13 +520,28 @@ fun ShootingModeKeyDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.End
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.key_rebind_cancel))
+            if (onDelete != null) {
+                TextButton(
+                    onClick = onDelete,
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("删除按键")
+                }
+            } else {
+                Spacer(Modifier.width(4.dp))
             }
-            TextButton(onClick = { onConfirm(selected) }) {
-                Text(stringResource(R.string.key_rebind_confirm))
+            Row {
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(R.string.key_rebind_cancel))
+                }
+                TextButton(onClick = { onConfirm(selected) }) {
+                    Text(stringResource(R.string.key_rebind_confirm))
+                }
             }
         }
     }
@@ -527,7 +560,9 @@ fun KeyCaptureDialog(
     onConfirm: (Int, TouchMode?) -> Unit,
     onDismiss: () -> Unit,
     onKeyCaptureChanged: (((Int) -> Unit)?) -> Unit = {},
-    onRequestFocus: () -> Unit = {}
+    onRequestFocus: () -> Unit = {},
+    /** 非空时在底部显示「删除按键」：删除入口从悬浮窗移进设置页，避免误触。 */
+    onDelete: (() -> Unit)? = null
 ) {
     var captured by remember { mutableStateOf<Int?>(null) }
     var selectedMode by remember { mutableStateOf(currentTouchMode) }
@@ -660,18 +695,33 @@ fun KeyCaptureDialog(
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = onDismiss) {
-                    Text(stringResource(R.string.key_rebind_cancel))
+                if (onDelete != null) {
+                    TextButton(
+                        onClick = onDelete,
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text("删除按键")
+                    }
+                } else {
+                    Spacer(Modifier.width(4.dp))
                 }
-                TextButton(
-                    enabled = !walkCustomization || (captured ?: currentKeyCode) !in setOf(
-                        KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT,
-                        KeyEvent.KEYCODE_W, KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_S, KeyEvent.KEYCODE_D),
-                    onClick = { onWheelRadiusChange(radius); onConfirm(captured ?: currentKeyCode, if (walkCustomization) TouchMode.TAP else selectedMode) }
-                ) {
-                    Text(stringResource(R.string.key_rebind_confirm))
+                Row {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.key_rebind_cancel))
+                    }
+                    TextButton(
+                        enabled = !walkCustomization || (captured ?: currentKeyCode) !in setOf(
+                            KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT,
+                            KeyEvent.KEYCODE_W, KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_S, KeyEvent.KEYCODE_D),
+                        onClick = { onWheelRadiusChange(radius); onConfirm(captured ?: currentKeyCode, if (walkCustomization) TouchMode.TAP else selectedMode) }
+                    ) {
+                        Text(stringResource(R.string.key_rebind_confirm))
+                    }
                 }
             }
         }
@@ -693,6 +743,7 @@ fun DraggableItem(
     offset: Offset,
     scale: Float,
     enabled: Boolean = true,
+    onDoubleTap: (() -> Unit)? = null,
     onOffsetChange: (Offset) -> Unit,
     onScreenCenter: (Offset) -> Unit = {},
     content: @Composable () -> Unit
@@ -700,6 +751,7 @@ fun DraggableItem(
     // pointerInput survives recomposition. Always invoke the latest callback:
     // callers may have replaced their position state after an earlier drag event.
     val currentOnOffsetChange by rememberUpdatedState(onOffsetChange)
+    val currentOnDoubleTap by rememberUpdatedState(onDoubleTap)
     Box(modifier
         .offset {
             IntOffset(
@@ -711,6 +763,13 @@ fun DraggableItem(
         .onGloballyPositioned { coordinates ->
             onScreenCenter(coordinates.localToScreen(
                 Offset(coordinates.size.width / 2f, coordinates.size.height / 2f)))
+        }
+        .pointerInput(id, enabled, onDoubleTap != null) {
+            // 编辑态双击才打开按钮设置：单击不再弹任何悬浮图标，
+            // 避免齿轮/删除按钮挡住映射或误触删除。
+            if (!enabled) return@pointerInput
+            val callback = currentOnDoubleTap ?: return@pointerInput
+            detectTapGestures(onDoubleTap = { callback() })
         }
         .pointerInput(id, scale, enabled) {
             // 配置对话框打开时禁用拖动：此时屏幕上的手势属于对话框，

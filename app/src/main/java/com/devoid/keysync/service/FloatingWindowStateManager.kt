@@ -13,6 +13,7 @@ import android.view.WindowManager
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.core.view.WindowInsetsCompat
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import com.devoid.keysync.data.local.DataStoreManager
 import com.devoid.keysync.data.local.ProfilesLoad
@@ -24,7 +25,6 @@ import com.devoid.keysync.domain.ScrollTracker
 import com.devoid.keysync.domain.mouseButtonKeyCode
 import com.devoid.keysync.domain.mouseKeyAlias
 import com.devoid.keysync.model.ClickMacro
-import com.devoid.keysync.model.FeatureTier
 import com.devoid.keysync.model.validateClickMacros
 import com.devoid.keysync.util.keyCodeToString
 import com.devoid.keysync.domain.EventHandler
@@ -106,11 +106,6 @@ class FloatingWindowStateManager @Inject constructor(
     // 用户关掉它通常是想一直关着，而不是每次重启服务都要再关一次。
     private val _statusBarVisible = MutableStateFlow(true)
     val statusBarVisible = _statusBarVisible.asStateFlow()
-
-    // 功能模式：基础模式只保留键鼠映射本身，隐藏并停用宏与预设导入导出。
-    // 只影响 UI 与宏分发，不改写已保存的 Profile，切回完整模式立即恢复。
-    private val _featureTier = MutableStateFlow(FeatureTier.FULL)
-    val featureTier: StateFlow<FeatureTier> = _featureTier.asStateFlow()
 
     private val _appConfig = MutableStateFlow(AppConfig.Default)
     val keysConfig = _appConfig.asStateFlow()
@@ -288,12 +283,7 @@ class FloatingWindowStateManager @Inject constructor(
             // 顶部提示条是持久化开关：默认显示，用户关掉后下次启动仍然隐藏。
             _statusBarVisible.value =
                 dataStoreManager.getBoolean(DataStoreManager.STATUS_BAR_VISIBLE).first() ?: true
-            // 功能模式默认完整：缺失/读不出时不能静默降级成基础模式。
-            _featureTier.value = FeatureTier.fromStorage(
-                dataStoreManager.getString(DataStoreManager.FEATURE_TIER).first()
-            )
-            // 两条 init 协程的完成顺序不确定：若预设先加载完，这里要把刚读到的模式补应用一次。
-            syncMacros()
+            // 两条 init 协程的完成顺序不确定：若预设先加载完，这里要把刚读到的拟人化设置补应用一次。
             syncHumanization()
         }
         // Load profiles + active id. Run migration if this is the first run.
@@ -446,6 +436,13 @@ class FloatingWindowStateManager @Inject constructor(
         const val TAB_COMBO_WINDOW_MS = 2000L
         /** 触发 Tab+Esc 后的冷却，避免紧接着的 Tab 又被当成双击。 */
         const val TAB_COMBO_COOLDOWN_MS = 2000L
+        /** Tab 防连按：两次有效 Tab 按下之间的最小间隔。 */
+        const val TAB_REPEAT_GUARD_MS = 1000L
+        /**
+         * 单帧鼠标位移上限（像素）。正常人手一帧的位移远低于此值；
+         * 超过它基本只可能来自光标回中、换设备或窗口重捕获造成的坐标跳变。
+         */
+        const val MAX_MOUSE_DELTA_PER_EVENT = 240f
     }
 
     /** 旧数据未记录分辨率时，统一假定为 legacy 基准，便于 applyActiveProfile 迁移。 */
@@ -555,9 +552,7 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     private fun syncMacros() {
-        // 基础模式下宏不参与键位分发；宏数据本身保留，切回完整模式后 syncMacros 会重新挂载。
-        val macros = if (_featureTier.value == FeatureTier.BASIC) emptyList()
-        else activeProfile()?.macros.orEmpty()
+        val macros = activeProfile()?.macros.orEmpty()
         eventHandler.setMacros(macros,
             overlayViewport ?: currentScreenSize(), overlayOrigin ?: Offset.Zero)
     }
@@ -653,6 +648,16 @@ class FloatingWindowStateManager @Inject constructor(
         scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
     }
 
+    /** 预设级「Tab 防连按（1 秒一次）」开关，默认开启。 */
+    fun setTabDebounce(profileId: String, enabled: Boolean) {
+        _profiles.value = _profiles.value.map {
+            if (it.id == profileId) it.copy(tabDebounceEnabled = enabled) else it
+        }
+        lastAcceptedTabAt = 0L
+        swallowedTabDown = false
+        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
+    }
+
     /** 预设级「Shift 取消蹲/趴」开关，默认开启。 */
     fun setStanceAssist(profileId: String, enabled: Boolean) {
         _profiles.value = _profiles.value.map {
@@ -709,6 +714,49 @@ class FloatingWindowStateManager @Inject constructor(
     private var tabEscJob: Job? = null
     private var lastTabDownAt = 0L
     private var tabComboCooldownUntil = 0L
+
+    // Tab 防连按：记录最后一次被接受的 Tab 按下时间，以及本次 Tab 是否已被吞掉。
+    // 被吞掉的 DOWN 必须连同 UP 一起吞，否则 UP 仍会走映射，可能出现残留状态。
+    private var lastAcceptedTabAt = 0L
+    private var swallowedTabDown = false
+
+    /**
+     * Tab 防连按（预设级子开关）。
+     *
+     * 开启后，距上一次有效 Tab 不足 [TAB_REPEAT_GUARD_MS] 的重复 Tab 整段吞掉：
+     * - 快速连按 Tab 时，多余的按下不会落到游戏里（避免点到别的东西）
+     * - 第二次有效 Tab 必然间隔 ≥ 1 秒，正好落在双击判定窗口内，组合更容易成功
+     *
+     * 只拦截 Tab，其他按键不受影响；长按产生的重复事件跟随首次判定。
+     */
+    private fun guardTabRepeat(keyEvent: KeyEvent): Boolean {
+        if (keyEvent.keyCode != KeyEvent.KEYCODE_TAB) return false
+        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
+        if (!profile.tabDebounceEnabled) {
+            swallowedTabDown = false
+            return false
+        }
+        return when (keyEvent.action) {
+            KeyEvent.ACTION_DOWN -> {
+                if (keyEvent.repeatCount > 0) {
+                    swallowedTabDown
+                } else {
+                    val now = SystemClock.uptimeMillis()
+                    val tooSoon = lastAcceptedTabAt != 0L &&
+                        now - lastAcceptedTabAt < TAB_REPEAT_GUARD_MS
+                    swallowedTabDown = tooSoon
+                    if (!tooSoon) lastAcceptedTabAt = now
+                    tooSoon
+                }
+            }
+            KeyEvent.ACTION_UP -> {
+                val swallowed = swallowedTabDown
+                swallowedTabDown = false
+                swallowed
+            }
+            else -> false
+        }
+    }
 
     /**
      * Tab 双击：2 秒内第二次按 Tab 时，改为依次点击 Tab 位置与 Esc 位置。
@@ -956,6 +1004,21 @@ class FloatingWindowStateManager @Inject constructor(
     fun updateVariableKeyCode(itemId: Int, newKeyCode: Int, touchMode: TouchMode?) {
         val updated = _containerItems.value.map { item ->
             if (item is DraggableItem.VariableKey && item.id == itemId) {
+                item.copy(keyCode = newKeyCode, touchMode = touchMode).withMeasuredPositionFrom(item)
+            } else item
+        }
+        _containerItems.value = updated
+        eventHandler.updateKeyMapping(updated)
+        persistActiveProfile()
+    }
+
+    /**
+     * 更新背包映射（CancelableKey）的物理按键与触摸模式。
+     * 与固定键/通用按钮一致：写入后立即重新分发键位并持久化。
+     */
+    fun updateCancelableKeyCode(itemId: Int, newKeyCode: Int, touchMode: TouchMode?) {
+        val updated = _containerItems.value.map { item ->
+            if (item is DraggableItem.CancelableKey && item.id == itemId) {
                 item.copy(keyCode = newKeyCode, touchMode = touchMode).withMeasuredPositionFrom(item)
             } else item
         }
@@ -1396,17 +1459,6 @@ class FloatingWindowStateManager @Inject constructor(
         scope.launch { dataStoreManager.save(DataStoreManager.STATUS_BAR_VISIBLE, visible) }
     }
 
-    /**
-     * 切换基础 / 完整模式。立即持久化；切到基础模式时宏从键位分发中摘除，
-     * 但 Profile 里的宏数据原样保留，切回完整模式会自动重新挂载。
-     */
-    fun setFeatureTier(tier: FeatureTier) {
-        if (_featureTier.value == tier) return
-        _featureTier.value = tier
-        syncMacros()
-        scope.launch { dataStoreManager.save(DataStoreManager.FEATURE_TIER, tier.storageValue) }
-    }
-
     fun onKeyEvent(keyEvent: KeyEvent): Boolean {
         mouseKeyAlias(keyEvent.keyCode, keyEvent.source)?.let { button ->
             if (keyEvent.action != KeyEvent.ACTION_DOWN && keyEvent.action != KeyEvent.ACTION_UP) return true
@@ -1432,6 +1484,9 @@ class FloatingWindowStateManager @Inject constructor(
             }
             return false
         }
+        // Tab 防连按：必须在更新任何 UI 状态和映射之前拦截，
+        // 否则被吞掉的 Tab 仍会点亮按钮、刷新最近输入。
+        if (guardTabRepeat(keyEvent)) return true
         _lastInputLabel.value = keyEvent.keyCode.keyCodeToString() +
             if (keyEvent.action == KeyEvent.ACTION_DOWN) " 按下" else " 松开"
         // 非编辑态：同步物理按键的按下/抬起状态，供悬浮窗按钮显示「按下」高亮。
@@ -1475,6 +1530,18 @@ class FloatingWindowStateManager @Inject constructor(
         }
         val screen = currentScreenSize()
         eventHandler.screenSize = screen
+        // 新的一段输入开始时清掉上一段的绝对坐标基准：换鼠标、光标被系统回中、
+        // 悬浮窗重新捕获指针后，rawX/rawY 会从一个完全不同的位置开始，
+        // 继续和旧值相减会得到几百像素的假位移，视角因此瞬间甩到背后。
+        when (motionEvent.actionMasked) {
+            MotionEvent.ACTION_DOWN,
+            MotionEvent.ACTION_HOVER_ENTER,
+            MotionEvent.ACTION_CANCEL,
+            MotionEvent.ACTION_OUTSIDE -> {
+                lastMouseRawX = Float.NaN
+                lastMouseRawY = Float.NaN
+            }
+        }
         eventHandler.mousePointerPosition = (pointerOffset.value + (overlayOrigin ?: Offset.Zero)).let {
             Offset(it.x.coerceIn(0f, screen.x - 1f), it.y.coerceIn(0f, screen.y - 1f))
         }
@@ -1484,6 +1551,10 @@ class FloatingWindowStateManager @Inject constructor(
             MotionEvent.ACTION_MOVE, MotionEvent.ACTION_HOVER_MOVE -> {
                 // Captured mouse X/Y already contain deltas. Never differentiate them.
                 val relativeMouse = motionEvent.isFromSource(InputDevice.SOURCE_MOUSE_RELATIVE)
+                val axisX = if (relativeMouse) 0f else motionEvent.getAxisValue(MotionEvent.AXIS_RELATIVE_X)
+                val axisY = if (relativeMouse) 0f else motionEvent.getAxisValue(MotionEvent.AXIS_RELATIVE_Y)
+                val relativeAxes = !relativeMouse &&
+                    (motionEvent.isFromSource(InputDevice.SOURCE_TOUCHPAD) || axisX != 0f || axisY != 0f)
                 val dx: Float
                 val dy: Float
                 if (relativeMouse) {
@@ -1492,10 +1563,6 @@ class FloatingWindowStateManager @Inject constructor(
                     lastMouseRawX = Float.NaN
                     lastMouseRawY = Float.NaN
                 } else {
-                    val axisX = motionEvent.getAxisValue(MotionEvent.AXIS_RELATIVE_X)
-                    val axisY = motionEvent.getAxisValue(MotionEvent.AXIS_RELATIVE_Y)
-                    val relativeAxes = motionEvent.isFromSource(InputDevice.SOURCE_TOUCHPAD) ||
-                        axisX != 0f || axisY != 0f
                     dx = if (relativeAxes) axisX else if (lastMouseRawX.isNaN()) 0f else motionEvent.rawX - lastMouseRawX
                     dy = if (relativeAxes) axisY else if (lastMouseRawY.isNaN()) 0f else motionEvent.rawY - lastMouseRawY
                     lastMouseRawX = motionEvent.rawX
@@ -1504,9 +1571,23 @@ class FloatingWindowStateManager @Inject constructor(
 
                 val rawOffset = Offset(dx, dy)
                 if (eventHandler.isWheelActive) return eventHandler.handlePointerMove(rawOffset)
+                // 绝对坐标回退路径在光标回中、换设备、窗口重捕获或投屏端重新按下时
+                // 会跳几百像素；超过阈值说明是断点而不是人手一帧的真实位移，
+                // 丢掉这一帧并重建基准，避免视角被瞬间甩到背后。
+                if (!relativeMouse && !relativeAxes &&
+                    (abs(dx) > MAX_MOUSE_DELTA_PER_EVENT || abs(dy) > MAX_MOUSE_DELTA_PER_EVENT)
+                ) {
+                    lastMouseRawX = motionEvent.rawX
+                    lastMouseRawY = motionEvent.rawY
+                    return true
+                }
                 if (isShootingMode.value) {
+                    val clamped = Offset(
+                        dx.coerceIn(-MAX_MOUSE_DELTA_PER_EVENT, MAX_MOUSE_DELTA_PER_EVENT),
+                        dy.coerceIn(-MAX_MOUSE_DELTA_PER_EVENT, MAX_MOUSE_DELTA_PER_EVENT)
+                    )
                     // 射击模式：灵敏度作用在瞄准转视角上。
-                    return eventHandler.handlePointerMove(rawOffset * sensitivity)
+                    return eventHandler.handlePointerMove(clamped * sensitivity)
                 }
                 // 非射击模式：鼠标指针 1:1 跟手移动（不乘灵敏度）。
                 val position = _mousePointerOffset.value + rawOffset

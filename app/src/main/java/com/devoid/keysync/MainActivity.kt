@@ -223,7 +223,6 @@ class MainActivity : ComponentActivity() {
                         val wasdSway by viewModel.wasdSway.collectAsStateWithLifecycle()
                         val overlayOpacity by viewModel.overlayOpacity.collectAsStateWithLifecycle()
                         val statusBarVisible by viewModel.statusBarVisible.collectAsStateWithLifecycle()
-                        val featureTier by viewModel.featureTier.collectAsStateWithLifecycle()
                         // Collected so a change applied outside the save button
                         // (the profile-switch master switch) is reflected
                         // instead of being overwritten by a stale newConfig.
@@ -246,6 +245,9 @@ class MainActivity : ComponentActivity() {
                             onSetProfileQuickSwap = { profileId, enabled ->
                                 viewModel.setQuickSwap(profileId, enabled)
                             },
+                            onSetProfileSwapPairs = { profileId, pairs ->
+                                viewModel.setSwapPairs(profileId, pairs)
+                            },
                             onSetProfileTapSequence = { profileId, enabled ->
                                 viewModel.setTapSequence234(profileId, enabled)
                             },
@@ -254,6 +256,9 @@ class MainActivity : ComponentActivity() {
                             },
                             onSetProfileTabEsc = { profileId, enabled ->
                                 viewModel.setTabEsc(profileId, enabled)
+                            },
+                            onSetProfileTabDebounce = { profileId, enabled ->
+                                viewModel.setTabDebounce(profileId, enabled)
                             },
                             onSetProfileStanceAssist = { profileId, enabled ->
                                 viewModel.setStanceAssist(profileId, enabled)
@@ -272,8 +277,6 @@ class MainActivity : ComponentActivity() {
                             onSetOverlayOpacity = viewModel::setOverlayOpacity,
                             statusBarVisible = statusBarVisible,
                             onSetStatusBarVisible = viewModel::setStatusBarVisible,
-                            featureTier = featureTier,
-                            onSetFeatureTier = viewModel::setFeatureTier,
                             onStopOverlay = {
                                 stopService(
                                     Intent(

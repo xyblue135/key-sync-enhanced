@@ -24,6 +24,8 @@ data class Profile(
     val tapSequence234GapMs: Int = 60,
     /** Tab 双击（2 秒内）改为点击 Tab + Esc 两个位置，之后 2 秒冷却。默认开启。 */
     val tabEscEnabled: Boolean = true,
+    /** Tab 防连按：开启后 1 秒内的重复 Tab 直接吞掉，避免手速过快时多余的 Tab 落到游戏里。默认开启。 */
+    val tabDebounceEnabled: Boolean = true,
     /** Shift 按下时取消最后按下的蹲/趴姿态（C / Z / Ctrl）。默认开启。 */
     val stanceAssistEnabled: Boolean = true,
     /** Ordered independent click points, separate from ordinary key bindings. */

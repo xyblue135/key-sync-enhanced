@@ -16,9 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,7 +43,7 @@ import com.devoid.keysync.R
 fun CircularTextField(
     value: String,
     borderColor: Color = MaterialTheme.colorScheme.secondary,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -54,7 +51,7 @@ fun CircularTextField(
             .size(50.dp)
             .clip(CircleShape)
             .border(width = 1.dp, color = borderColor, CircleShape)
-            .clickable(onClick = onClick)
+            .clickable(enabled = onClick != null, onClick = { onClick?.invoke() })
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
 
     ) {
@@ -71,30 +68,12 @@ fun CircularTextField(
 }
 
 @Composable
-fun RemoveButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
-    IconButton(
-        onClick = onClick,
-        modifier = modifier
-            .size(32.dp)
-    ) {
-        Icon(
-            imageVector = Icons.Default.Close,
-            contentDescription = stringResource(R.string.cd_remove),
-            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-        )
-    }
-}
-
-@Composable
 fun IconKey(
     modifier: Modifier = Modifier,
     background:Color=MaterialTheme.colorScheme.surface,
     borderColor: Color,
     sizeDp: androidx.compose.ui.unit.Dp = 50.dp,
     onClick: (() -> Unit)?,
-    onConfigure: (() -> Unit)? = null,
-    removable: Boolean = true,
-    onRemove: () -> Unit,
     icon: @Composable () -> Unit
 ) {
     Box(
@@ -112,30 +91,6 @@ fun IconKey(
         ) {
             icon()
         }
-        if (onConfigure != null) {
-            IconButton(
-                onClick = onConfigure,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .offset(12.dp, 12.dp)
-                    .size(32.dp)
-                    .background(MaterialTheme.colorScheme.surface, CircleShape)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Settings,
-                    contentDescription = stringResource(R.string.cd_configure_key),
-                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        }
-        if (removable) {
-            RemoveButton(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .offset(24.dp, -24.dp), onClick = onRemove
-            )
-        }
     }
 }
 
@@ -144,10 +99,9 @@ fun BagMapKey(
     modifier: Modifier = Modifier.padding(8.dp),
     borderColor: Color = MaterialTheme.colorScheme.primary,
     text: String = "ads",
-    onClick: (() -> Unit)?,
-    onRemove: () -> Unit
+    onClick: (() -> Unit)? = null,
 ) {
-    IconKey(modifier = modifier, borderColor = borderColor, onClick = onClick, onRemove = onRemove) {
+    IconKey(modifier = modifier, borderColor = borderColor, onClick = onClick) {
         Image(
             modifier = Modifier
                 .alpha(0.6f)
@@ -170,7 +124,7 @@ fun CancelKey(
     borderColor: Color = MaterialTheme.colorScheme.primary,
     onClick: () -> Unit
 ) {
-    IconKey(modifier = modifier, removable = false, onRemove = {}, onClick = onClick, borderColor = borderColor) {
+    IconKey(modifier = modifier, onClick = onClick, borderColor = borderColor) {
         Image(
             modifier = Modifier
                 .fillMaxSize()
@@ -186,10 +140,8 @@ fun CancelKey(
 fun MousePointer(
     modifier: Modifier = Modifier.padding(8.dp),
     borderColor: Color = MaterialTheme.colorScheme.primary,
-    onRemove: () -> Unit,
-    onConfigure: (() -> Unit)? = null
 ) {
-    IconKey(modifier=modifier,borderColor = borderColor, onClick = null, onRemove = onRemove, onConfigure = onConfigure, icon = {
+    IconKey(modifier=modifier,borderColor = borderColor, onClick = null, icon = {
         Image(
             modifier = Modifier
                 .fillMaxSize()
@@ -205,11 +157,9 @@ fun MousePointer(
 fun FireKey(
     modifier: Modifier = Modifier.padding(8.dp),
     borderColor: Color = MaterialTheme.colorScheme.primary,
-    onRemove: () -> Unit,
-    onConfigure: (() -> Unit)? = null
 ) {
 
-    IconKey(modifier=modifier, borderColor = borderColor, onClick = null, onRemove = onRemove, onConfigure = onConfigure) {
+    IconKey(modifier=modifier, borderColor = borderColor, onClick = null) {
         Image(
             modifier = Modifier
                 .fillMaxSize()
@@ -234,21 +184,15 @@ fun GenericFixedKey(
     modifier: Modifier = Modifier.padding(8.dp),
     label: String,
     iconRes: Int? = null,
-    editable: Boolean = true,
     pressed: Boolean = false,
     sizeDp: androidx.compose.ui.unit.Dp = 50.dp,
-    onRemove: () -> Unit,
-    onConfigure: (() -> Unit)? = null
 ) {
     IconKey(
         modifier = modifier,
         borderColor = if (pressed) Color.Cyan else MaterialTheme.colorScheme.primary,
         background = if (pressed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
         sizeDp = sizeDp,
-        onClick = null,
-        onRemove = onRemove,
-        removable = editable,
-        onConfigure = if (editable) onConfigure else null
+        onClick = null
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             iconRes?.let {
@@ -269,10 +213,8 @@ fun GenericFixedKey(
 @Composable
 fun WASDKeysGroup(
     modifier: Modifier = Modifier,
-    onRemove: () -> Unit,
     onPanIconDrag: (Offset) -> Unit,
     pressedKeys: Set<Int> = emptySet(),
-    onConfigure: () -> Unit = {},
     editable: Boolean = true
 ) {
     fun wasdBorder(keyCode: Int, fallback: Color): Color =
@@ -290,30 +232,21 @@ fun WASDKeysGroup(
                 modifier = Modifier
                     .align(Alignment.Center)
             ) {
-                CircularTextField("W", borderColor = wasdBorder(KeyEvent.KEYCODE_W, MaterialTheme.colorScheme.secondary), onClick = {})
+                CircularTextField("W", borderColor = wasdBorder(KeyEvent.KEYCODE_W, MaterialTheme.colorScheme.secondary))
                 Spacer(modifier = Modifier.size(22.dp))
-                CircularTextField("S", borderColor = wasdBorder(KeyEvent.KEYCODE_S, MaterialTheme.colorScheme.secondary), onClick = {})
+                CircularTextField("S", borderColor = wasdBorder(KeyEvent.KEYCODE_S, MaterialTheme.colorScheme.secondary))
             }
             Row(
                 modifier = Modifier
                     .align(Alignment.Center)
             ) {
-                CircularTextField("A", borderColor = wasdBorder(KeyEvent.KEYCODE_A, MaterialTheme.colorScheme.secondary), onClick = {})
+                CircularTextField("A", borderColor = wasdBorder(KeyEvent.KEYCODE_A, MaterialTheme.colorScheme.secondary))
                 Spacer(modifier = Modifier.size(22.dp))
-                CircularTextField("D", borderColor = wasdBorder(KeyEvent.KEYCODE_D, MaterialTheme.colorScheme.secondary), onClick = {})
+                CircularTextField("D", borderColor = wasdBorder(KeyEvent.KEYCODE_D, MaterialTheme.colorScheme.secondary))
             }
 
         }
         if (editable) {
-        IconButton(onClick = onConfigure, modifier = Modifier.align(Alignment.Center)
-            .offset((-56).dp, (-56).dp).size(32.dp)) {
-            Icon(Icons.Rounded.Settings, contentDescription = "疾跑距离设置")
-        }
-        RemoveButton(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .offset(56.dp, (-56).dp), onClick = onRemove
-        )
         IconButton(
             onClick = {}, modifier = Modifier
                 .align(Alignment.Center)
@@ -343,15 +276,9 @@ fun KeyCircular(
     value: String,
     borderColor: Color = MaterialTheme.colorScheme.primary,
     onClick: () -> Unit,
-    onRemove: () -> Unit,
 ) {
     Box(modifier = modifier.padding(8.dp)) {
         CircularTextField(value = value, borderColor, onClick = onClick)
-        RemoveButton(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .offset(24.dp, -24.dp), onClick = onRemove
-        )
     }
 }
 
@@ -364,26 +291,26 @@ private fun PreviewCancelKEy() {
 @Preview(showBackground = true)
 @Composable
 private fun PreviewBagMap() {
-    BagMapKey(onRemove = {}, onClick = {})
+    BagMapKey(onClick = {})
 }
 
 @Preview(showBackground = true)
 @Composable
 private fun PreviewMousePointer() {
-    MousePointer(onRemove = {}) {}
+    MousePointer()
 }
 
 @Preview(showBackground = true)
 @Composable
 private fun PreviewFireKey() {
-    FireKey(onRemove = {}) {}
+    FireKey()
 }
 
 @Preview(showBackground = true)
 @Composable
 private fun WASDKeysGroupPreview() {
     MaterialTheme {
-        WASDKeysGroup(onRemove = {}, onPanIconDrag = {})
+        WASDKeysGroup(onPanIconDrag = {})
     }
 }
 
@@ -394,9 +321,7 @@ fun KeyPreview() {
     MaterialTheme {
         KeyCircular(
             value = text.value,
-            onRemove = {
-
-            }, onClick = {}
+            onClick = {}
         )
     }
 }
