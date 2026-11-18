@@ -13,7 +13,7 @@
 | namespace / applicationId | `com.devoid.keysync` |
 | compileSdk / targetSdk | 36 |
 | minSdk | 29 |
-| versionCode / versionName | 46 / `1.76-android16` |
+| versionCode / versionName | 47 / `1.77-android16` |
 | debug 变体 | applicationId 后缀 `.fpsdebug`，versionName 后缀 `-debug` |
 | Kotlin / Java | 17 |
 
@@ -28,7 +28,7 @@
 | 预设 | 预设列表（切换 / 重命名 / 复制 / 导出 / 删除）、新建、导入 / 导出全部 |
 | 按键辅助 | 跟随当前预设：Tab 双击（窗口/冷却可调）、Tab 防连按（间隔可调）、R ↔ 右键换位、双键交换对、2-3-4 连点、Shift 取消蹲趴、点击宏 |
 | 操作与显示 | 按钮默认大小、指针灵敏度（随预设保存）、悬浮窗透明度、顶部状态提示条 |
-| 拟人化 | WASD / 其他按键开关、偏移强度、WASD 晃动、随机偏移间隔 |
+| 拟人化 | WASD / 其他按键开关、偏移强度、WASD 晃动、换向弧线过渡（时长可调）、随机偏移间隔 |
 | 轨迹录制 | 通知栏开始/停止，记录 WASD 向量与鼠标位移，生成 720p 轨迹动画 MP4 |
 | 兼容与高级 | 投屏键鼠兼容、主题、背包/退出键与普通按钮的点击方式、鼠标断点阈值 / 输入模式锁存 / 屏幕尺寸缓存、删除键位数据 |
 
