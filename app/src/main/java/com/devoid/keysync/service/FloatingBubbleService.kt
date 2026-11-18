@@ -11,8 +11,10 @@ import android.content.res.Configuration
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Environment
 import android.os.IBinder
 import android.util.Log
+import android.widget.Toast
 import android.view.MotionEvent
 import android.view.InputDevice
 import android.view.Gravity
@@ -63,11 +65,14 @@ import androidx.constraintlayout.compose.Dimension
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.devoid.keysync.MainActivity
 import com.devoid.keysync.R
+import com.devoid.keysync.domain.TrajectoryRecorder
+import com.devoid.keysync.domain.TrajectoryRecording
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.util.keyCodeToString
 import com.devoid.keysync.model.DraggableItemType
@@ -82,12 +87,18 @@ import dagger.Lazy
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 import kotlin.math.roundToInt
 
@@ -110,8 +121,11 @@ class FloatingBubbleService : Service() {
         private const val ACTION_TOGGLE_EDIT = "com.devoid.keysync.action.TOGGLE_EDIT"
         private const val ACTION_TOGGLE_KEYS = "com.devoid.keysync.action.TOGGLE_KEYS"
         private const val ACTION_TOGGLE_PAUSE = "com.devoid.keysync.action.TOGGLE_PAUSE"
-        private const val ACTION_ADD_KEY = "com.devoid.keysync.action.ADD_KEY"
-        private const val ACTION_STOP = "com.devoid.keysync.action.STOP"
+        private const val ACTION_TOGGLE_TRAJECTORY = "com.devoid.keysync.action.TOGGLE_TRAJECTORY"
+
+        /** 轨迹视频导出通知：与悬浮窗常驻通知分开，避免互相覆盖。 */
+        private const val TRAJECTORY_NOTIFICATION_ID = 2
+        private const val TRAJECTORY_CHANNEL_ID = "trajectory_export"
 
         private val _isRunning = MutableStateFlow(false)
         val isRunning = _isRunning.asStateFlow()
@@ -127,23 +141,18 @@ class FloatingBubbleService : Service() {
     private var overlayInitialized = false
     // 通知刷新监听只允许挂一次：每个通知 action 都会重入 onStartCommand。
     private var notificationObserverStarted = false
+    private var trajectoryAutoStopJob: Job? = null
+    private var trajectoryRenderJob: Job? = null
 
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 关闭必须最先处理：放在 startForeground 之前，避免为一次「关闭」白建通知。
-        if (intent?.action == ACTION_STOP) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
         // 屏幕上的气泡已删除，编辑态 / 按键显隐改由通知栏 action 驱动。
         // 先落状态再建通知，让这一次 startForeground 就带上正确的 action 标签。
         when (intent?.action) {
             ACTION_TOGGLE_EDIT -> stateManager.get().toggleEditMode()
             ACTION_TOGGLE_KEYS -> stateManager.get().toggleKeysVisible()
             ACTION_TOGGLE_PAUSE -> stateManager.get().toggleMappingPaused()
-            ACTION_ADD_KEY -> stateManager.get().addKeyFromNotification()
+            ACTION_TOGGLE_TRAJECTORY -> toggleTrajectoryRecording()
         }
 
         _isRunning.value = true
@@ -206,26 +215,169 @@ class FloatingBubbleService : Service() {
                     else R.string.notification_text_overlay_running
                 )
             )
-            // 折叠态只放得下 3 个 action，按使用频率排序：添加按键 / 暂停映射 /
-            // 隐藏按键。编辑布局与关闭放到展开态，其中「关闭」误触代价最大，
-            // 故意藏一层；「提示条」开关仍在编辑态的工具栏里。
+            // 折叠态只放得下 3 个 action，按使用频率排序：暂停 / 隐藏按键 / 录制轨迹。
+            // 添加按键已移到编辑态工具条的「＋」；编辑布局与关闭放到展开态，
+            // 其中「关闭」误触代价最大，故意藏一层。总共 5 个，避免第 6 个被系统吞掉。
             setStyle(NotificationCompat.BigTextStyle())
             setContentIntent(settingsPendingIntent())
             setOngoing(true)
             setSilent(true)
             setOnlyAlertOnce(true)
             setPriority(NotificationCompat.PRIORITY_LOW)
-            addAction(
-                0,
-                getString(R.string.notification_action_add_key),
-                servicePendingIntent(ACTION_ADD_KEY, 105)
-            )
             addAction(0, pauseLabel, servicePendingIntent(ACTION_TOGGLE_PAUSE, 106))
             addAction(0, keysLabel, servicePendingIntent(ACTION_TOGGLE_KEYS, 102))
+            addAction(
+                0,
+                getString(
+                    if (TrajectoryRecorder.isRecording) R.string.notification_action_stop_trajectory
+                    else R.string.notification_action_start_trajectory
+                ),
+                servicePendingIntent(ACTION_TOGGLE_TRAJECTORY, 107)
+            )
             addAction(0, editLabel, servicePendingIntent(ACTION_TOGGLE_EDIT, 101))
-            addAction(0, getString(R.string.notification_action_stop), servicePendingIntent(ACTION_STOP, 103))
         }.build()
     }
+
+    /**
+     * 通知栏「录制轨迹 / 停止并生成」。
+     *
+     * 录制只记 WASD 摇杆向量与射击模式鼠标增量；停止后在后台渲染 720p 视频，
+     * 完成时用单独的通知提示，点击可直接打开。
+     */
+    private fun toggleTrajectoryRecording() {
+        if (TrajectoryRecorder.isRecording) {
+            finishTrajectoryRecording()
+            return
+        }
+        if (!TrajectoryRecorder.start()) return
+        Toast.makeText(this, R.string.trajectory_started, Toast.LENGTH_SHORT).show()
+        refreshOverlayNotification()
+        trajectoryAutoStopJob?.cancel()
+        trajectoryAutoStopJob = scope.launch {
+            delay(TrajectoryRecorder.MAX_DURATION_MS)
+            if (TrajectoryRecorder.isRecording) finishTrajectoryRecording()
+        }
+    }
+
+    private fun finishTrajectoryRecording() {
+        trajectoryAutoStopJob?.cancel()
+        trajectoryAutoStopJob = null
+        val recording = TrajectoryRecorder.stop()
+        refreshOverlayNotification()
+        if (recording == null || recording.isEmpty) {
+            Toast.makeText(this, R.string.trajectory_empty, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val sm = stateManager.get()
+        val presetName = sm.profiles.value
+            .firstOrNull { it.id == sm.activeProfileId.value }
+            ?.name
+            .orEmpty()
+        renderTrajectory(recording, presetName)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun refreshOverlayNotification() {
+        if (!overlayInitialized) return
+        if (!canPostNotifications()) return
+        runCatching {
+            NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification())
+        }
+    }
+
+    private fun renderTrajectory(recording: TrajectoryRecording, presetName: String) {
+        if (trajectoryRenderJob?.isActive == true) return
+        createTrajectoryChannel()
+        showTrajectoryProgress(0)
+        trajectoryRenderJob = scope.launch {
+            val dir = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "KeySync")
+            if (!dir.exists() && !dir.mkdirs()) {
+                showTrajectoryResult(null, false)
+                return@launch
+            }
+            val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+            val output = File(dir, "trajectory-$stamp.mp4")
+            val ok = TrajectoryVideoRenderer.render(recording, presetName, output) { progress ->
+                showTrajectoryProgress(progress)
+            }
+            if (!ok) output.delete()
+            showTrajectoryResult(output.takeIf { ok }, ok)
+        }
+    }
+
+    private fun createTrajectoryChannel() {
+        val manager = getSystemService(NotificationManager::class.java) ?: return
+        if (manager.getNotificationChannel(TRAJECTORY_CHANNEL_ID) != null) return
+        val channel = NotificationChannel(
+            TRAJECTORY_CHANNEL_ID,
+            getString(R.string.trajectory_channel_name),
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = getString(R.string.trajectory_channel_desc)
+            setShowBadge(false)
+        }
+        manager.createNotificationChannel(channel)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun showTrajectoryProgress(progress: Int) {
+        if (!canPostNotifications()) return
+        val notification = NotificationCompat.Builder(this, TRAJECTORY_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(getString(R.string.trajectory_rendering))
+            .setContentText("$progress%")
+            .setProgress(100, progress.coerceIn(0, 100), false)
+            .setOngoing(true)
+            .setSilent(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+        runCatching {
+            NotificationManagerCompat.from(this).notify(TRAJECTORY_NOTIFICATION_ID, notification)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun showTrajectoryResult(file: File?, ok: Boolean) {
+        if (!canPostNotifications()) return
+        val builder = NotificationCompat.Builder(this, TRAJECTORY_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(
+                getString(if (ok) R.string.trajectory_done else R.string.trajectory_failed)
+            )
+            .setContentText(file?.name.orEmpty())
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+        if (file != null) {
+            val uri = FileProvider.getUriForFile(this, "$packageName.updates", file)
+            val view = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "video/mp4")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val chooser = Intent.createChooser(view, getString(R.string.trajectory_open)).apply {
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val pending = PendingIntent.getActivity(
+                this,
+                110,
+                chooser,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            builder.setContentIntent(pending)
+            builder.addAction(0, getString(R.string.trajectory_open), pending)
+        }
+        runCatching {
+            NotificationManagerCompat.from(this)
+                .notify(TRAJECTORY_NOTIFICATION_ID, builder.build())
+        }
+    }
+
+    private fun canPostNotifications(): Boolean =
+        Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
 
     /**
      * 点击通知正文 → App 设置页。
@@ -661,6 +813,9 @@ class FloatingBubbleService : Service() {
     override fun onDestroy() {
         _isRunning.value = false
         overlayInitialized = false
+        trajectoryAutoStopJob?.cancel()
+        trajectoryRenderJob?.cancel()
+        if (TrajectoryRecorder.isRecording) TrajectoryRecorder.stop()
         removeAllViews()
         stateManager.get().onDestroy()
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)

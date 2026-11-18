@@ -111,6 +111,14 @@ README 讲「怎么用、怎么改」，这里只讲「哪里会炸、为什么�
 - **抖动频率**：原来固定 100–220ms；现在 `humanization_interval_ms`（默认 1000，200–3000ms）控制，实际间隔 ±20% 随机。新增「随机偏移间隔」滑杆。
 - **红线**：抖动仍只发 MOVE、绝不 reanchor（见 6.1）；调间隔不要引入阻塞式 delay 到按键响应路径。
 
+### 2.26 轨迹录制（WASD 向量 + 鼠标位移视频）
+
+- 通知栏新增「录制 / 停止」action（折叠态第三个）；通知 action 从 5 个减到 4 个，文案统一 2 个字，修复 HyperOS 上「暂…」和空白按钮；「关闭」移到设置页。
+- 录制 WASD 摇杆向量与射击模式鼠标增量，停止后后台渲染 720p/30fps MP4。
+- 左侧画 WASD 向量轨迹（非游戏内位置），右侧画鼠标增量积分路径；单次上限 60 秒，数据只在内存。
+- 视频保存到 `externalFilesDir/Movies/KeySync/`，通过 FileProvider 打开；不需要 MediaProjection/录屏权限。
+- 新增 `TrajectoryRecorder`、`TrajectoryVideoRenderer` 与 3 个 JVM 用例。
+
 ### 2.25 Tab 时间参数可调 + 编辑球居中
 
 - **Tab 双击 / 防连按改为预设级可调**：新增 `tabComboWindowMs`（默认 2000，300–3000）、`tabComboCooldownMs`（默认 2000，0–5000）、`tabDebounceMs`（默认 1000，200–3000），设置页「按键辅助」里用滑杆调整，和开关一起暂存，保存后生效。

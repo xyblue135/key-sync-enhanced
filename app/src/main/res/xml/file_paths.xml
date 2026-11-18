@@ -2,4 +2,6 @@
 <paths>
     <!-- DownloadManager 保存路径：externalFilesDir/Download/updates/ -->
     <external-files-path name="updates" path="Download/updates/" />
+    <!-- 轨迹视频：externalFilesDir/Movies/ -->
+    <external-files-path name="trajectory" path="Movies/" />
 </paths>

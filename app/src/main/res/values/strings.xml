@@ -232,14 +232,14 @@
     <string name="notification_channel_overlay_desc">显示 KeySync 运行状态与控制入口</string>
     <string name="notification_text_overlay_running">控制面板已就绪 · 点此进入设置</string>
     <string name="notification_text_paused">已暂停映射 · 不拦截触控，可正常打字</string>
-    <string name="notification_action_add_key">添加按键</string>
-    <string name="notification_action_pause">暂停映射</string>
-    <string name="notification_action_resume">恢复映射</string>
-    <string name="notification_action_edit">编辑布局</string>
-    <string name="notification_action_exit_edit">退出编辑</string>
-    <string name="notification_action_hide_keys">隐藏按键</string>
-    <string name="notification_action_show_keys">显示按键</string>
-    <string name="notification_action_stop">关闭</string>
+
+    <string name="notification_action_pause">暂停</string>
+    <string name="notification_action_resume">恢复</string>
+    <string name="notification_action_edit">编辑</string>
+    <string name="notification_action_exit_edit">退出</string>
+    <string name="notification_action_hide_keys">隐藏</string>
+    <string name="notification_action_show_keys">显示</string>
+
 
     <!-- 编辑态操作条 -->
     <string name="overlay_hide_keys">隐藏按键</string>
@@ -249,4 +249,14 @@
     <string name="overlay_done">完成</string>
     <string name="notification_controls_required">请开启 KeySync 通知及按键悬浮窗通知频道，才能使用编辑和关闭入口。开启后请重新启动游戏。</string>
     <string name="profiles_temporary_changes">预设未成功读取，本次修改不会保存，请重启后重试</string>
+    <string name="notification_action_start_trajectory">录制</string>
+    <string name="notification_action_stop_trajectory">停止</string>
+    <string name="trajectory_started">轨迹录制已开始，最长 60 秒，再点一次停止</string>
+    <string name="trajectory_empty">没有录到 WASD 或鼠标输入</string>
+    <string name="trajectory_channel_name">轨迹视频</string>
+    <string name="trajectory_channel_desc">WASD 与鼠标轨迹动画的生成通知</string>
+    <string name="trajectory_rendering">正在生成轨迹视频</string>
+    <string name="trajectory_done">轨迹视频已生成</string>
+    <string name="trajectory_failed">轨迹视频生成失败</string>
+    <string name="trajectory_open">打开视频</string>
 </resources>

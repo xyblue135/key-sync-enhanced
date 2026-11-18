@@ -1451,17 +1451,6 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     /**
-     * 通知栏「添加按键」：恢复映射 → 进入编辑态 → 新建一个待绑定的通用按钮。
-     * 入口在通知栏，所以这里顺便把隐藏的按键重新显示出来，否则新按钮看不见。
-     */
-    fun addKeyFromNotification() {
-        setMappingPaused(false)
-        if (!_keysVisible.value) _keysVisible.value = true
-        if (!_isEditMode.value) toggleEditMode()
-        addNewItem(DraggableItemType.KEY)
-    }
-
-    /**
      * 一键切换顶部状态提示条（预设名 · 模式 · 最近输入）的显示/隐藏。
      * 只影响这一行文字，不影响按键容器，也不影响任何注入逻辑。
      */

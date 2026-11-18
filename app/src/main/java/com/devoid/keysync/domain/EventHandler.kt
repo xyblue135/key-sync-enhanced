@@ -294,7 +294,9 @@ class EventHandler(
                 if (!wasdHumanization) break
                 // 只拖 current 触点，绝不 reanchor（见 JoystickMotion.jitter）。
                 val center = map.center ?: return@launch
-                joystickMotion.jitter(pointerId, mask, jitterTarget(center, map.position))
+                val target = jitterTarget(center, map.position)
+                recordWasdVector(center, map.position, target)
+                joystickMotion.jitter(pointerId, mask, target)
             }
         }
     }
@@ -662,6 +664,7 @@ class EventHandler(
         val directionMask = vertical or horizontal
         if (directionMask == 0) {
             stopWasdJitter()
+            TrajectoryRecorder.recordWasd(0f, 0f)
             joystickMotion.update(pointerId, 0, Offset.Zero, Offset.Zero)
             return
         }
@@ -680,8 +683,18 @@ class EventHandler(
             // 每次换向时由 biasedDirection 重新采样偏置；再叠加低频微抖。
             jitterTarget(entry.center!!, biasedDirection(entry.center!!, entry.position))
         } else entry.position
+        recordWasdVector(entry.center!!, entry.position, target)
         joystickMotion.update(pointerId, effectiveMask, entry.center!!, target)
         if (wasdHumanization) restartWasdJitter(pointerId, effectiveMask, entry) else stopWasdJitter()
+    }
+
+    /** 把摇杆落点换算成以中心为原点、方向键距离为 1 的向量，供轨迹录制使用。 */
+    private fun recordWasdVector(center: Offset, directionPoint: Offset, target: Offset) {
+        val radius = (directionPoint - center).getDistance().coerceAtLeast(1f)
+        TrajectoryRecorder.recordWasd(
+            (target.x - center.x) / radius,
+            (target.y - center.y) / radius,
+        )
     }
 
 
@@ -847,7 +860,10 @@ class EventHandler(
             val requested = previous + position
             aimPosition = clampAimToBounds(requested)
             val applied = aimPosition - previous
-            if (applied != Offset.Zero) eventInjector.updatePointerPosition(pointerId, applied)
+            if (applied != Offset.Zero) {
+                TrajectoryRecorder.recordMouse(applied.x, applied.y)
+                eventInjector.updatePointerPosition(pointerId, applied)
+            }
             if (aimPosition != requested) {
                 val now = SystemClock.uptimeMillis()
                 if (now - lastRecenterTime >= recenterMinIntervalMs) {
