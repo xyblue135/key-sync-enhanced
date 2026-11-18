@@ -7,12 +7,15 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.ContentValues
 import android.content.res.Configuration
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.IBinder
+import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
 import android.view.MotionEvent
@@ -290,18 +293,70 @@ class FloatingBubbleService : Service() {
         createTrajectoryChannel()
         showTrajectoryProgress(0)
         trajectoryRenderJob = scope.launch {
-            val dir = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "KeySync")
-            if (!dir.exists() && !dir.mkdirs()) {
-                showTrajectoryResult(null, false)
+            val tempDir = File(cacheDir, "trajectory")
+            if (!tempDir.exists() && !tempDir.mkdirs()) {
+                showTrajectoryResult(null, false, false)
                 return@launch
             }
             val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-            val output = File(dir, "trajectory-$stamp.mp4")
-            val ok = TrajectoryVideoRenderer.render(recording, presetName, output) { progress ->
+            val displayName = "trajectory-$stamp.mp4"
+            val temp = File(tempDir, displayName)
+            val ok = TrajectoryVideoRenderer.render(recording, presetName, temp) { progress ->
                 showTrajectoryProgress(progress)
             }
-            if (!ok) output.delete()
-            showTrajectoryResult(output.takeIf { ok }, ok)
+            if (!ok) {
+                temp.delete()
+                showTrajectoryResult(null, false, false)
+                return@launch
+            }
+
+            // 优先写入系统媒体库 Movies/KeySync，相册和文件管理器都能直接看到；
+            // 媒体库不可用时退回应用自己的 external files 目录。
+            val galleryUri = exportToGallery(temp, displayName)
+            if (galleryUri != null) {
+                temp.delete()
+                showTrajectoryResult(galleryUri, true, true)
+            } else {
+                val fallbackDir = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "KeySync")
+                val fallback = File(fallbackDir, displayName)
+                val copied = runCatching {
+                    fallbackDir.mkdirs()
+                    temp.copyTo(fallback, overwrite = true)
+                }.isSuccess
+                temp.delete()
+                if (!copied) {
+                    showTrajectoryResult(null, false, false)
+                    return@launch
+                }
+                val uri = runCatching {
+                    FileProvider.getUriForFile(this@FloatingBubbleService, "$packageName.updates", fallback)
+                }.getOrNull()
+                showTrajectoryResult(uri, uri != null, false)
+            }
+        }
+    }
+
+    /** 把渲染好的临时文件写入系统媒体库，返回可直接播放的 content:// Uri。 */
+    private fun exportToGallery(source: File, displayName: String): Uri? {
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/KeySync")
+            put(MediaStore.Video.Media.IS_PENDING, 1)
+        }
+        val collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        val uri = runCatching { contentResolver.insert(collection, values) }.getOrNull() ?: return null
+        return runCatching {
+            contentResolver.openOutputStream(uri)?.use { output ->
+                source.inputStream().use { input -> input.copyTo(output) }
+            } ?: error("openOutputStream returned null")
+            values.clear()
+            values.put(MediaStore.Video.Media.IS_PENDING, 0)
+            contentResolver.update(uri, values, null, null)
+            uri
+        }.getOrElse {
+            runCatching { contentResolver.delete(uri, null, null) }
+            null
         }
     }
 
@@ -338,19 +393,23 @@ class FloatingBubbleService : Service() {
     }
 
     @SuppressLint("MissingPermission")
-    private fun showTrajectoryResult(file: File?, ok: Boolean) {
+    private fun showTrajectoryResult(uri: Uri?, ok: Boolean, inGallery: Boolean) {
         if (!canPostNotifications()) return
+        val text = when {
+            !ok -> ""
+            inGallery -> getString(R.string.trajectory_saved_gallery)
+            else -> getString(R.string.trajectory_saved_app)
+        }
         val builder = NotificationCompat.Builder(this, TRAJECTORY_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(
                 getString(if (ok) R.string.trajectory_done else R.string.trajectory_failed)
             )
-            .setContentText(file?.name.orEmpty())
+            .setContentText(text)
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-        if (file != null) {
-            val uri = FileProvider.getUriForFile(this, "$packageName.updates", file)
+        if (uri != null) {
             val view = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "video/mp4")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)

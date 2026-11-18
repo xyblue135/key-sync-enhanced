@@ -14,34 +14,52 @@ internal class JoystickMotion(
     private var lastCenter = Offset.Zero
     private var lastTarget = Offset.Zero
 
-    fun update(pointer: Int, mask: Int, center: Offset, target: Offset) {
+    /** 当前按下的方向位；0 表示没有触点。 */
+    val activeMask: Int get() = lastMask
+
+    /** 最后一次实际注入的落点。 */
+    val target: Offset get() = lastTarget
+
+    /**
+     * 返回 true 表示已经把触点移到 [target]；false 表示调用方接管了这次换向，
+     * 需要通过 [jitter] 沿弧线补中间点，最后再补 [target]。
+     */
+    fun update(
+        pointer: Int,
+        mask: Int,
+        center: Offset,
+        target: Offset,
+        sendTarget: Boolean = true,
+    ): Boolean {
         if (mask == 0) {
             if (lastMask != 0) release(lastPointer)
             reset()
-            return
+            return true
         }
-        if (lastMask == mask && lastPointer == pointer && lastCenter == center && lastTarget == target) return
+        if (lastMask == mask && lastPointer == pointer && lastCenter == center && lastTarget == target) return true
         // 只在「疾跑位发生变化」时重新起按：之前只要处于疾跑状态、任何换向都会
         // release + 重新 DOWN，松 A / 加 A 这类普通换向也被当成疾跑切换，游戏会看到
         // 摇杆瞬间回中再按下，表现为顿一下、方向甩到另一侧。普通换向只发 MOVE。
         val sprintChanged = ((lastMask xor mask) and sprintBit) != 0
         val reanchor = lastMask != 0 && (sprintChanged || lastPointer != pointer || lastCenter != center)
         if (reanchor) release(lastPointer)
-        if (lastMask == 0 || reanchor) {
+        val started = lastMask == 0 || reanchor
+        if (started) {
             start(pointer, center, target)
         } else {
             // 方向切换时先补一帧中点：真人的拇指是划过旧方向到新方向，不会瞬移。
             // 只多发一条 MOVE，不引入等待，也不触发 reanchor。
-            if (lastMask != mask) {
+            if (lastMask != mask && sendTarget) {
                 val via = (lastTarget + target) / 2f
                 if (via != lastTarget && via != target) move(pointer, via)
             }
-            move(pointer, target)
+            if (sendTarget) move(pointer, target)
         }
         lastMask = mask
         lastPointer = pointer
         lastCenter = center
         lastTarget = target
+        return sendTarget || started
     }
 
     /**

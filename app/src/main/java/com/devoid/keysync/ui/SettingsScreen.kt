@@ -127,11 +127,15 @@ fun SettingsScreen(
     humanizationStrength: Float = 0f,
     humanizationInterval: Long = 1000L,
     wasdSway: Float = 50f,
+    wasdTransition: Boolean = true,
+    wasdTransitionMs: Int = 80,
     onSetWasdHumanization: (Boolean) -> Unit = {},
     onSetKeyHumanization: (Boolean) -> Unit = {},
     onSetHumanizationStrength: (Float) -> Unit = {},
     onSetHumanizationInterval: (Long) -> Unit = {},
     onSetWasdSway: (Float) -> Unit = {},
+    onSetWasdTransition: (Boolean) -> Unit = {},
+    onSetWasdTransitionMs: (Int) -> Unit = {},
     onNavigateBack: () -> Unit = {},
     onNavigateAbout: () -> Unit = {}
 ) {
@@ -630,6 +634,36 @@ fun SettingsScreen(
                         Text(
                             "只影响 WASD 摇杆按住时的轻微摆头，与整体偏移强度独立。" +
                                 "满值约 ±1.5°，默认 50；跑动时觉得方向飘就把它调小。",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("WASD 换向弧线过渡", style = MaterialTheme.typography.titleMedium)
+                            }
+                            Switch(
+                                checked = wasdTransition,
+                                onCheckedChange = onSetWasdTransition
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "过渡时长",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text("$wasdTransitionMs ms")
+                        }
+                        Slider(
+                            enabled = wasdTransition,
+                            value = wasdTransitionMs.toFloat().coerceIn(40f, 200f),
+                            valueRange = 40f..200f,
+                            steps = 15,
+                            onValueChange = { onSetWasdTransitionMs(it.roundToInt()) }
+                        )
+                        Text(
+                            "方向切换时沿圆弧补 2–8 个中间点，松手仍然立即停止。" +
+                                "默认 80ms；调小更跟手，调大更像拇指滑过去。关闭后换向仍是 8 向瞬移。",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

@@ -95,6 +95,10 @@ class DataStoreManager internal constructor(
         val WASD_SWAY = intPreferencesKey("wasd_sway")
         /** 随机偏移间隔（ms），默认 1000；全局键，与拟人化开关一起生效。 */
         val HUMANIZATION_INTERVAL_MS = intPreferencesKey("humanization_interval_ms")
+        /** WASD 换向时是否沿圆弧过渡，默认开启。 */
+        val WASD_TRANSITION = booleanPreferencesKey("wasd_transition")
+        /** WASD 换向过渡时长（ms），默认 80。 */
+        val WASD_TRANSITION_MS = intPreferencesKey("wasd_transition_ms")
 
         /* -------- 鼠标高级参数（全局，与预设无关） -------- */
         /** 单帧位移断点阈值（px），默认 240。 */

@@ -259,4 +259,6 @@
     <string name="trajectory_done">轨迹视频已生成</string>
     <string name="trajectory_failed">轨迹视频生成失败</string>
     <string name="trajectory_open">打开视频</string>
+    <string name="trajectory_saved_gallery">已保存到相册 · Movies/KeySync</string>
+    <string name="trajectory_saved_app">已保存到应用目录 · Movies/KeySync</string>
 </resources>

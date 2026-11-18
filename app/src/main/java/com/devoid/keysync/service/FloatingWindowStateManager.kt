@@ -99,6 +99,10 @@ class FloatingWindowStateManager @Inject constructor(
     /** 随机偏移间隔（ms），默认 1000（约每秒一次）。 */
     val humanizationInterval = MutableStateFlow(1000L)
 
+    /** WASD 换向弧线过渡：默认开启，80ms；全局设置。 */
+    val wasdTransition = MutableStateFlow(true)
+    val wasdTransitionMs = MutableStateFlow(EventHandler.DEFAULT_WASD_TRANSITION_MS)
+
     /* ----------------- 鼠标高级参数（全局，与预设无关） ----------------- */
 
     /** 单帧位移超过该值就视为光标跳变并丢弃；默认 240px。 */
@@ -296,6 +300,12 @@ class FloatingWindowStateManager @Inject constructor(
             wasdSway.value =
                 (dataStoreManager.getInt(DataStoreManager.WASD_SWAY).first() ?: 50)
                     .coerceIn(1, 100).toFloat()
+            wasdTransition.value =
+                dataStoreManager.getBoolean(DataStoreManager.WASD_TRANSITION).first() ?: true
+            wasdTransitionMs.value =
+                (dataStoreManager.getInt(DataStoreManager.WASD_TRANSITION_MS).first()
+                    ?: EventHandler.DEFAULT_WASD_TRANSITION_MS)
+                    .coerceIn(EventHandler.MIN_WASD_TRANSITION_MS, EventHandler.MAX_WASD_TRANSITION_MS)
             // 顶部提示条是持久化开关：默认显示，用户关掉后下次启动仍然隐藏。
             _statusBarVisible.value =
                 dataStoreManager.getBoolean(DataStoreManager.STATUS_BAR_VISIBLE).first() ?: true
@@ -1214,6 +1224,7 @@ class FloatingWindowStateManager @Inject constructor(
             wasdSway.value,
         )
         eventHandler.setHumanizationInterval(humanizationInterval.value)
+        eventHandler.setWasdTransition(wasdTransition.value, wasdTransitionMs.value)
     }
 
     fun setWasdHumanization(enabled: Boolean) {
@@ -1255,6 +1266,24 @@ class FloatingWindowStateManager @Inject constructor(
         scope.launch {
             dataStoreManager.save(DataStoreManager.HUMANIZATION_INTERVAL_MS, clamped.toInt())
         }
+    }
+
+    /** WASD 换向弧线过渡开关（全局）。 */
+    fun setWasdTransition(enabled: Boolean) {
+        wasdTransition.value = enabled
+        syncHumanization()
+        scope.launch { dataStoreManager.save(DataStoreManager.WASD_TRANSITION, enabled) }
+    }
+
+    /** WASD 换向过渡时长 40–200ms（全局）。 */
+    fun setWasdTransitionMs(ms: Int) {
+        val clamped = ms.coerceIn(
+            EventHandler.MIN_WASD_TRANSITION_MS,
+            EventHandler.MAX_WASD_TRANSITION_MS,
+        )
+        wasdTransitionMs.value = clamped
+        syncHumanization()
+        scope.launch { dataStoreManager.save(DataStoreManager.WASD_TRANSITION_MS, clamped) }
     }
 
     /* ----------------- 鼠标高级参数 ----------------- */

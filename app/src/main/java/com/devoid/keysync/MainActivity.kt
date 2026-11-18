@@ -221,6 +221,8 @@ class MainActivity : ComponentActivity() {
                         val humanizationStrength by viewModel.humanizationStrength.collectAsStateWithLifecycle()
                         val humanizationInterval by viewModel.humanizationInterval.collectAsStateWithLifecycle()
                         val wasdSway by viewModel.wasdSway.collectAsStateWithLifecycle()
+                        val wasdTransition by viewModel.wasdTransition.collectAsStateWithLifecycle()
+                        val wasdTransitionMs by viewModel.wasdTransitionMs.collectAsStateWithLifecycle()
                         val overlayOpacity by viewModel.overlayOpacity.collectAsStateWithLifecycle()
                         val statusBarVisible by viewModel.statusBarVisible.collectAsStateWithLifecycle()
                         val mouseJumpThresholdPx by viewModel.mouseJumpThresholdPx.collectAsStateWithLifecycle()
@@ -255,6 +257,10 @@ class MainActivity : ComponentActivity() {
                             onSetHumanizationStrength = viewModel::setHumanizationStrength,
                             onSetHumanizationInterval = viewModel::setHumanizationInterval,
                             onSetWasdSway = viewModel::setWasdSway,
+                            wasdTransition = wasdTransition,
+                            wasdTransitionMs = wasdTransitionMs,
+                            onSetWasdTransition = viewModel::setWasdTransition,
+                            onSetWasdTransitionMs = viewModel::setWasdTransitionMs,
                             overlayOpacity = overlayOpacity,
                             onSetOverlayOpacity = viewModel::setOverlayOpacity,
                             statusBarVisible = statusBarVisible,

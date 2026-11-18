@@ -277,7 +277,9 @@ object TrajectoryVideoRenderer {
         val centerX = left + size / 2f
         val centerY = top + size / 2f
         val half = size / 2f
-        val domain = 1.4f
+        // 疾跑落点是普通方向点的 sprintScale 倍（默认 1.5），画布必须留到 1.6，
+        // 否则奔跑时会画到面板外。
+        val domain = 1.6f
 
         p.fill.color = PANEL
         canvas.drawRoundRect(left, top, left + size, top + size, 20f, 20f, p.fill)
@@ -302,28 +304,48 @@ object TrajectoryVideoRenderer {
         fun px(x: Float) = centerX + x / domain * half
         fun py(y: Float) = centerY + y / domain * half
 
-        val visible = samples.filter { it.timeMs <= tMs }
+        // 自定义疾跑距离可能远超画布范围，按方向等比缩回边缘，避免点画到面板外。
+        val visible = samples.filter { it.timeMs <= tMs }.map { s ->
+            val r = kotlin.math.hypot(s.x, s.y)
+            val limit = domain - 0.05f
+            if (r > limit) s.copy(x = s.x * limit / r, y = s.y * limit / r) else s
+        }
         if (visible.isNotEmpty()) {
-            val all = Path()
-            visible.forEachIndexed { index, s ->
-                if (index == 0) all.moveTo(px(s.x), py(s.y)) else all.lineTo(px(s.x), py(s.y))
-            }
+            val segments = wasdSegments(visible)
             p.line.color = WASD_COLOR
-            p.line.alpha = 60
-            canvas.drawPath(all, p.line)
-            p.line.alpha = 255
-
-            val recent = visible.filter { it.timeMs >= tMs - 2_000 }
-            if (recent.size > 1) {
+            p.line.alpha = 45
+            segments.forEach { segment ->
                 val path = Path()
-                recent.forEachIndexed { index, s ->
+                segment.forEachIndexed { index, s ->
                     if (index == 0) path.moveTo(px(s.x), py(s.y)) else path.lineTo(px(s.x), py(s.y))
                 }
                 canvas.drawPath(path, p.line)
             }
-            val last = visible.last()
+            p.line.alpha = 255
+
+            val recent = visible.filter { it.timeMs >= tMs - 2_000 }
+            wasdSegments(recent).forEach { segment ->
+                val path = Path()
+                segment.forEachIndexed { index, s ->
+                    if (index == 0) path.moveTo(px(s.x), py(s.y)) else path.lineTo(px(s.x), py(s.y))
+                }
+                canvas.drawPath(path, p.line)
+            }
+
+            // 最近两秒的采样点也画出来：换向很快时没有连续线段，至少能看到落点。
             p.fill.color = WASD_COLOR
-            canvas.drawCircle(px(last.x), py(last.y), 7f, p.fill)
+            p.fill.alpha = 140
+            recent.forEach { canvas.drawCircle(px(it.x), py(it.y), 3f, p.fill) }
+            p.fill.alpha = 255
+
+            val last = visible.last()
+            if (abs(last.x) < 0.02f && abs(last.y) < 0.02f) {
+                p.line.color = MUTED
+                canvas.drawCircle(centerX, centerY, 10f, p.line)
+            } else {
+                p.fill.color = WASD_COLOR
+                canvas.drawCircle(px(last.x), py(last.y), 7f, p.fill)
+            }
             p.text.color = TEXT
             p.text.textSize = 18f
             canvas.drawText(
@@ -340,7 +362,49 @@ object TrajectoryVideoRenderer {
 
         p.text.color = MUTED
         p.text.textSize = 16f
-        canvas.drawText("虚拟摇杆向量（非游戏内位置）", left, top + size + 56f, p.text)
+        canvas.drawText("虚拟摇杆向量 · 断线 = 松手或瞬移", left, top + size + 56f, p.text)
+    }
+
+    /**
+     * 把采样点拆成「一次连续按压」的线段。
+     *
+     * 松手、超过 300ms 没有新样本、方向角突变超过 35° 或半径突变时断开。
+     * 以前整段连成一条折线，A 松手再按 D 会画出一条穿过中心的横线，
+     * W→WD→D 则连成八边形；断开后这些都不再出现。
+     */
+    private fun wasdSegments(samples: List<WasdTrajectorySample>): List<List<WasdTrajectorySample>> {
+        val result = ArrayList<List<WasdTrajectorySample>>()
+        var current = ArrayList<WasdTrajectorySample>()
+        var previous: WasdTrajectorySample? = null
+        for (sample in samples) {
+            val zero = abs(sample.x) < 0.02f && abs(sample.y) < 0.02f
+            if (zero) {
+                if (current.size >= 2) result += current
+                current = ArrayList()
+                previous = null
+                continue
+            }
+            val last = previous
+            if (last != null && wasdBreak(last, sample)) {
+                if (current.size >= 2) result += current
+                current = ArrayList()
+            }
+            current += sample
+            previous = sample
+        }
+        if (current.size >= 2) result += current
+        return result
+    }
+
+    private fun wasdBreak(a: WasdTrajectorySample, b: WasdTrajectorySample): Boolean {
+        if (b.timeMs - a.timeMs > 300) return true
+        val radiusA = kotlin.math.hypot(a.x, a.y)
+        val radiusB = kotlin.math.hypot(b.x, b.y)
+        if (radiusA < 0.001f || radiusB < 0.001f) return true
+        if (abs(radiusB - radiusA) > 0.25f) return true
+        val cosine = ((a.x * b.x + a.y * b.y) / (radiusA * radiusB)).coerceIn(-1f, 1f)
+        val degrees = Math.toDegrees(kotlin.math.acos(cosine).toDouble())
+        return degrees > 35.0
     }
 
     private fun drawMousePanel(

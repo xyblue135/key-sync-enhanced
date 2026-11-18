@@ -99,6 +99,9 @@ class MainActivityViewModel @Inject constructor(
     val humanizationStrength: StateFlow<Float> = stateManager.humanizationStrength
     val humanizationInterval: StateFlow<Long> = stateManager.humanizationInterval
     val wasdSway: StateFlow<Float> = stateManager.wasdSway
+    /** WASD 换向弧线过渡（全局）。 */
+    val wasdTransition: StateFlow<Boolean> = stateManager.wasdTransition
+    val wasdTransitionMs: StateFlow<Int> = stateManager.wasdTransitionMs
     /** 悬浮窗透明度（全局设置），设置页用；改动立即持久化。 */
     val overlayOpacity: StateFlow<Float> = stateManager.overlayOpacity
     /** 顶部状态提示条（预设名 · 模式 · 最近输入）的显隐；全局设置，立即持久化。 */
@@ -221,6 +224,8 @@ class MainActivityViewModel @Inject constructor(
     fun setHumanizationStrength(value: Float) = stateManager.setHumanizationStrength(value)
     fun setHumanizationInterval(intervalMs: Long) = stateManager.setHumanizationInterval(intervalMs)
     fun setWasdSway(value: Float) = stateManager.setWasdSway(value)
+    fun setWasdTransition(enabled: Boolean) = stateManager.setWasdTransition(enabled)
+    fun setWasdTransitionMs(ms: Int) = stateManager.setWasdTransitionMs(ms)
     fun setOverlayOpacity(value: Float) = stateManager.saveOverlayOpacity(value)
     fun setStatusBarVisible(visible: Boolean) = stateManager.setStatusBarVisible(visible)
     fun setMouseJumpThreshold(px: Int) = stateManager.setMouseJumpThreshold(px)
