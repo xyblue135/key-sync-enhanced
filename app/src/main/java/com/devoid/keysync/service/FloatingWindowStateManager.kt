@@ -35,6 +35,9 @@ import com.devoid.keysync.domain.KEYCODE_MMC
 import com.devoid.keysync.domain.KEYCODE_RMC
 import com.devoid.keysync.data.external.ShizukuSystemServerAPi
 import com.devoid.keysync.model.Profile
+import com.devoid.keysync.model.ExtraTapPoint
+import com.devoid.keysync.model.EXTRA_TAP_WINDOW_MS
+import com.devoid.keysync.model.MAX_EXTRA_TAP_POINTS
 import com.devoid.keysync.model.projectLayout
 import com.devoid.keysync.model.clampToViewport
 import com.devoid.keysync.model.SwapPair
@@ -378,6 +381,15 @@ class FloatingWindowStateManager @Inject constructor(
             stored = listOf(Profile(id = UUID.randomUUID().toString(), name = "默认"))
         }
 
+        // Tab 双击判定窗口旧默认值是 2000ms，会让 0.5 秒内的连按永远落在窗口内、
+        // 同时也让防连按与组合互相打架。一次性把仍是旧默认值的预设改到 500ms。
+        migrateLegacyTabWindow(stored).let { migrated ->
+            if (migrated != null) {
+                stored = migrated
+                dataStoreManager.saveProfiles(stored)
+            }
+        }
+
         // Virtual mouse buttons used to be persisted as 64/128/256. Those
         // numbers are legitimate Android KeyEvent codes, so the input layer
         // now uses a negative private namespace. Migrate only the semantic
@@ -417,6 +429,21 @@ class FloatingWindowStateManager @Inject constructor(
         _profiles.value = stored
         _activeProfileId.value = activeId
         applyActiveProfile()
+    }
+
+    /**
+     * Tab 双击判定窗口的旧默认值是 2000ms。仍停留在该值的预设一次性改到 500ms，
+     * 并写入迁移标记，之后用户手动改回 2000ms 不会再被覆盖。
+     */
+    private suspend fun migrateLegacyTabWindow(stored: List<Profile>): List<Profile>? {
+        if (dataStoreManager.getBoolean(DataStoreManager.TAB_WINDOW_DEFAULT_MIGRATED).first() == true) {
+            return null
+        }
+        dataStoreManager.save(DataStoreManager.TAB_WINDOW_DEFAULT_MIGRATED, true)
+        val migrated = stored.map { profile ->
+            if (profile.tabComboWindowMs == 2000) profile.copy(tabComboWindowMs = 500) else profile
+        }
+        return migrated.takeIf { it != stored }
     }
 
     private fun migrateLegacyVirtualMouseCodes(stored: List<Profile>): List<Profile>? {
@@ -697,6 +724,30 @@ class FloatingWindowStateManager @Inject constructor(
     private var lastTabDownAt = 0L
     private var tabComboCooldownUntil = 0L
 
+    // 连按落点计数：同一个键在窗口内连续按下时递增，超时或换键就重新从 1 开始。
+    private var extraTapKeyCode = -1
+    private var extraTapCount = 0
+    private var extraTapLastAt = 0L
+
+    /**
+     * 连按落点触发：第 N 次按下（N≥2）额外点击该键的第 N-1 个落点，最多 3 个。
+     * 本体映射不受影响，由调用方继续走普通按键流程。
+     */
+    private fun handleExtraTap(keyCode: Int) {
+        val now = SystemClock.uptimeMillis()
+        if (keyCode != extraTapKeyCode || now - extraTapLastAt > EXTRA_TAP_WINDOW_MS) {
+            extraTapKeyCode = keyCode
+            extraTapCount = 0
+        }
+        extraTapLastAt = now
+        extraTapCount++
+        val index = extraTapCount - 2
+        if (index !in 0 until MAX_EXTRA_TAP_POINTS) return
+        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return
+        val point = profile.extraTapPoints.filter { it.keyCode == keyCode }.getOrNull(index) ?: return
+        eventHandler.tapExtraPoint(Offset(point.x, point.y))
+    }
+
     // Tab 防连按：记录最后一次被接受的 Tab 按下时间，以及本次 Tab 是否已被吞掉。
     // 被吞掉的 DOWN 必须连同 UP 一起吞，否则 UP 仍会走映射，可能出现残留状态。
     private var lastAcceptedTabAt = 0L
@@ -707,14 +758,16 @@ class FloatingWindowStateManager @Inject constructor(
      *
      * 开启后，距上一次有效 Tab 不足预设间隔（默认 1000ms，可调）的重复 Tab 整段吞掉：
      * - 快速连按 Tab 时，多余的按下不会落到游戏里（避免点到别的东西）
-     * - 第二次有效 Tab 必然落在双击判定窗口内，组合更容易成功
+     *
+     * 但 Tab 双击组合开启时不再防连按：快速连按本身就是双击触发条件，
+     * 吞掉第二次 Tab 会让组合永远无法触发（表现为连按只出一次 Tab）。
      *
      * 只拦截 Tab，其他按键不受影响；长按产生的重复事件跟随首次判定。
      */
     private fun guardTabRepeat(keyEvent: KeyEvent): Boolean {
         if (keyEvent.keyCode != KeyEvent.KEYCODE_TAB) return false
         val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
-        if (!profile.tabDebounceEnabled) {
+        if (!profile.tabDebounceEnabled || profile.tabEscEnabled) {
             swallowedTabDown = false
             return false
         }
@@ -742,10 +795,10 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     /**
-     * Tab 双击：在预设窗口内（默认 2 秒，可调）第二次按 Tab 时，改为依次点击 Tab 位置与 Esc 位置。
+     * Tab 双击：在预设窗口内（默认 0.5 秒，可调）第二次按 Tab 时，改为点击 Tab，等待预设延迟（默认 1 秒）后点击 Esc。
      *
      * - 第一次按 Tab 走正常映射，并记下时间
-     * - 第二次按 Tab（窗口内）吞掉原始 Tab，主动注入 Tab → Esc
+     * - 第二次按 Tab（窗口内）吞掉原始 Tab，主动注入 Tab → 延迟 → Esc
      * - 触发后进入预设冷却（默认 2 秒，可调），冷却期内的 Tab 一律按普通 Tab 处理
      * - Tab / Esc 任一按钮不存在就不接管，让 Tab 保持原行为
      */
@@ -780,7 +833,7 @@ class FloatingWindowStateManager @Inject constructor(
                         eventHandler.handleKeyEvent(
                             KeyEvent(at, at, KeyEvent.ACTION_UP, code, 0)
                         )
-                        if (index == 0) delay(kotlin.random.Random.nextLong(60L, 130L))
+                        if (index == 0) delay(profile.tabEscDelayMs.coerceIn(0, 5000).toLong())
                     }
             }
         }
@@ -1040,9 +1093,49 @@ class FloatingWindowStateManager @Inject constructor(
         persistActiveProfile()
     }
 
+    /**
+     * 为指定按键添加一个连按落点（最多 3 个）。
+     * 默认放在该按键右下 90px 处，随后可在编辑态直接拖动。
+     */
+    fun addExtraTapPoint(keyCode: Int) {
+        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return
+        if (keyCode == KeyEvent.KEYCODE_UNKNOWN) return
+        if (profile.extraTapPoints.count { it.keyCode == keyCode } >= MAX_EXTRA_TAP_POINTS) return
+        val anchor = _containerItems.value.firstOrNull { it.boundKeyCode() == keyCode }?.position
+            ?: Offset(240f, 520f)
+        updateExtraTapPoints(
+            profile.extraTapPoints + ExtraTapPoint(keyCode, anchor.x + 90f, anchor.y + 90f)
+        )
+    }
+
+    /** 拖动结束后更新某个落点的坐标。 */
+    fun moveExtraTapPoint(keyCode: Int, index: Int, position: Offset) {
+        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return
+        var seen = -1
+        val updated = profile.extraTapPoints.map { point ->
+            if (point.keyCode != keyCode) return@map point
+            seen++
+            if (seen == index) point.copy(x = position.x, y = position.y) else point
+        }
+        updateExtraTapPoints(updated)
+    }
+
+    /** 清空某个按键的全部连按落点。 */
+    fun clearExtraTapPoints(keyCode: Int) {
+        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return
+        updateExtraTapPoints(profile.extraTapPoints.filterNot { it.keyCode == keyCode })
+    }
+
+    private fun updateExtraTapPoints(points: List<ExtraTapPoint>) {
+        val id = _activeProfileId.value
+        _profiles.value = _profiles.value.map {
+            if (it.id == id) it.copy(extraTapPoints = points) else it
+        }
+        persistActiveProfile()
+    }
+
     /** UI 弹出绑定框后调用，清除待绑定信号，避免下次重组又弹一次。 */
-    fun updateMeasuredPosition(item: DraggableItem) {
-        val size = when (item) {
+    fun updateMeasuredPosition(item: DraggableItem) {        val size = when (item) {
             is DraggableItem.FixedKey -> item.size
             is DraggableItem.VariableKey -> item.size
             else -> 0
@@ -1536,6 +1629,8 @@ class FloatingWindowStateManager @Inject constructor(
         }
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
             !eventHandler.isMacroTrigger(keyEvent.keyCode)) {
+            // 连按落点：本体照常映射，第 2/3/4 次快速按下时额外点击预设位置。
+            handleExtraTap(keyEvent.keyCode)
             // Tab 双击负责整段 Tab+Esc 注入，命中时吞掉原始 Tab。
             if (runTabEscCombo(keyEvent.keyCode)) return true
             // 预设级 2-3-4 连点负责整段注入，命中时吞掉原始 3，避免再点一次。

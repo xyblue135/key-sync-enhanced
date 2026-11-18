@@ -83,6 +83,21 @@ class EventHandler(
     private var macroOrigin = Offset.Zero
     private val scrollPulse = TapPulse(schedule = { delay, action -> mainHandler.postDelayed({ action() }, delay) })
 
+    // 连按落点使用独立触点号段：不与宏、普通按键、摇杆的 pointer id 冲突。
+    private val extraTapPointerBase = 1_200_000
+    private var extraTapCursor = 0
+    private val extraTapPulse = TapPulse(schedule = { delay, action -> mainHandler.postDelayed({ action() }, delay) })
+
+    /** 在指定屏幕坐标补一次点击（连按落点）。不阻塞按键路径，抬起时刻由 TapPulse 采样。 */
+    fun tapExtraPoint(position: Offset) {
+        val pointer = extraTapPointerBase + (extraTapCursor++ % 8)
+        extraTapPulse.tap(
+            pointer,
+            down = { eventInjector.injectPointer(pointer, position) },
+            up = { eventInjector.releasePointer(pointer) },
+        )
+    }
+
     fun setMacros(value: List<ClickMacro>, viewport: Offset, origin: Offset) {
         macroRunner.cancel()
         macros = value

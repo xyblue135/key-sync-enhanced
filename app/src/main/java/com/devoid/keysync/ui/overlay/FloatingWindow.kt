@@ -6,6 +6,7 @@ import android.util.Log
 import android.view.KeyEvent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -61,6 +62,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -71,6 +73,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -93,6 +96,8 @@ import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.DraggableItemType
+import com.devoid.keysync.model.ExtraTapPoint
+import com.devoid.keysync.model.MAX_EXTRA_TAP_POINTS
 import com.devoid.keysync.model.TouchMode
 import com.devoid.keysync.model.clampToViewport
 import com.devoid.keysync.model.layoutSizeForClamp
@@ -121,7 +126,12 @@ fun ItemsContainer(
     onBindConsumed: () -> Unit = {},
     onKeyCaptureChanged: (((Int) -> Unit)?) -> Unit = {},
     pressedKeys: Set<Int> = emptySet(),
-    onRequestFocus: () -> Unit = {}
+    onRequestFocus: () -> Unit = {},
+    /** 当前预设的连按落点，编辑态渲染成可拖动的小圆圈。 */
+    extraTapPoints: List<ExtraTapPoint> = emptyList(),
+    onAddExtraTapPoint: (Int) -> Unit = {},
+    onMoveExtraTapPoint: (Int, Int, Offset) -> Unit = { _, _, _ -> },
+    onClearExtraTapPoints: (Int) -> Unit = {}
 ) {
     // When the user taps the gear icon on a key, this is set so we can
     // pop up a key-capture dialog bound to that specific item.
@@ -313,6 +323,43 @@ fun ItemsContainer(
             }
         }
 
+        // 编辑态显示连按落点：虚线小圈直接拖动，松手才写回预设。
+        if (editing) {
+            extraTapPoints.forEachIndexed { index, point ->
+                key("extra-${point.keyCode}-$index") {
+                    var pos by remember(point.x, point.y) { mutableStateOf(Offset(point.x, point.y)) }
+                    val density = LocalDensity.current
+                    val radiusPx = with(density) { 14.dp.toPx() }
+                    Box(
+                        modifier = Modifier
+                            .offset { IntOffset((pos.x - radiusPx).toInt(), (pos.y - radiusPx).toInt()) }
+                            .size(28.dp)
+                            .alpha(0.75f)
+                            .border(1.5.dp, MaterialTheme.colorScheme.tertiary, CircleShape)
+                            .pointerInput(point.keyCode, point.x, point.y) {
+                                detectDragGestures(
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        pos += dragAmount
+                                    },
+                                    onDragEnd = {
+                                        onMoveExtraTapPoint(point.keyCode, index, pos)
+                                    },
+                                )
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "${point.keyCode.keyCodeToString().removePrefix("KEYCODE_")}·${index + 2}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 8.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+        }
+
         configuringWasd?.let { target ->
             var forward by remember(target.id) { mutableFloatStateOf(target.sprintForwardDistance ?: ((target.w - target.center).getDistance() * target.sprintScale).coerceIn(10f, 1000f)) }
             var side by remember(target.id) { mutableFloatStateOf(target.sprintSideDistance ?: ((target.d - target.center).getDistance() * target.sprintScale).coerceIn(10f, 1000f)) }
@@ -404,6 +451,10 @@ fun ItemsContainer(
                 onDismiss = { configuringVariableKey = null },
                 onKeyCaptureChanged = onKeyCaptureChanged,
                 onRequestFocus = onRequestFocus,
+                extraTapPoints = extraTapPoints,
+                onAddExtraTap = { onAddExtraTapPoint(it) },
+                onClearExtraTaps = { onClearExtraTapPoints(it) },
+                conflictKeys = otherOccupiedKeys(containerItems, target.id),
                 onDelete = {
                     onRemove(target.id)
                     configuringVariableKey = null
@@ -426,6 +477,10 @@ fun ItemsContainer(
                 onDismiss = { configuringCancelableKey = null },
                 onKeyCaptureChanged = onKeyCaptureChanged,
                 onRequestFocus = onRequestFocus,
+                extraTapPoints = extraTapPoints,
+                onAddExtraTap = { onAddExtraTapPoint(it) },
+                onClearExtraTaps = { onClearExtraTapPoints(it) },
+                conflictKeys = otherOccupiedKeys(containerItems, target.id),
                 onDelete = {
                     onRemove(target.id)
                     configuringCancelableKey = null
@@ -548,9 +603,22 @@ fun ShootingModeKeyDialog(
     }
 }
 
+/** 该按钮占用的物理按键；摇杆组按 W/A/S/D 四个方向算。 */
+private fun DraggableItem.occupiedKeyCodes(): List<Int> = when (this) {
+    is DraggableItem.VariableKey -> listOfNotNull(keyCode)
+    is DraggableItem.FixedKey -> listOf(keyCode)
+    is DraggableItem.CancelableKey -> listOfNotNull(keyCode)
+    is DraggableItem.WASDGroup -> listOf(
+        KeyEvent.KEYCODE_W, KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_S, KeyEvent.KEYCODE_D
+    )
+}
+
+/** 除自己以外，布局里已经被占用的按键集合。 */
+private fun otherOccupiedKeys(items: List<DraggableItem>, selfId: Int): Set<Int> =
+    items.filter { it.id != selfId }.flatMap { it.occupiedKeyCodes() }.toSet()
+
 @Composable
-fun KeyCaptureDialog(
-    currentWheelRadius: Float = 50f,
+fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
     onWheelRadiusChange: (Float) -> Unit = {},
     currentSizeDp: Float = 50f,
     onSizeDpChange: (Float) -> Unit = {},
@@ -563,7 +631,13 @@ fun KeyCaptureDialog(
     onKeyCaptureChanged: (((Int) -> Unit)?) -> Unit = {},
     onRequestFocus: () -> Unit = {},
     /** 非空时在底部显示「删除按键」：删除入口从悬浮窗移进设置页，避免误触。 */
-    onDelete: (() -> Unit)? = null
+    onDelete: (() -> Unit)? = null,
+    /** 当前预设的全部连按落点，用于显示数量与编辑。 */
+    extraTapPoints: List<ExtraTapPoint> = emptyList(),
+    onAddExtraTap: ((Int) -> Unit)? = null,
+    onClearExtraTaps: ((Int) -> Unit)? = null,
+    /** 已被其他按钮占用的按键：命中时禁止确认，避免重复键互相覆盖。 */
+    conflictKeys: Set<Int> = emptySet()
 ) {
     var captured by remember { mutableStateOf<Int?>(null) }
     var selectedMode by remember { mutableStateOf(currentTouchMode) }
@@ -588,6 +662,10 @@ fun KeyCaptureDialog(
 
     val display = captured?.let { it.keyCodeToString().removePrefix("KEYCODE_") }
         ?: currentKeyCode.keyCodeToString().removePrefix("KEYCODE_")
+    // 待确认的按键：已被其他按钮占用时禁止确认，避免重复键在映射表里互相覆盖。
+    val nextCode = captured ?: currentKeyCode
+    val conflict = nextCode != KeyEvent.KEYCODE_UNKNOWN && nextCode in conflictKeys
+    val nextExtraCount = extraTapPoints.count { it.keyCode == nextCode }
 
     InlineDialog(onDismiss = onDismiss) {
         Column(
@@ -642,6 +720,37 @@ fun KeyCaptureDialog(
             )
             Text("侧键或滚轮可直接触发捕获，也可从鼠标绑定列表选择。滚轮绑定始终点击一次；轮盘打开时优先用于轮盘选择。",
                 style = MaterialTheme.typography.bodySmall)
+            if (conflict) {
+                Text(
+                    "该按键已被其他按钮使用，请换一个键；重复绑定会让其中一个按钮失效。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            if (!walkCustomization && onAddExtraTap != null && onClearExtraTaps != null) {
+                HorizontalDivider()
+                Text(
+                    "连按落点 $nextExtraCount/$MAX_EXTRA_TAP_POINTS",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    "同一按键在 ${com.devoid.keysync.model.EXTRA_TAP_WINDOW_MS}ms 内连续按下时，第 2/3/4 次会额外点击一个落点，本体始终照常触发。添加后在编辑态拖动小圆圈定位。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row {
+                    TextButton(
+                        enabled = nextCode != KeyEvent.KEYCODE_UNKNOWN &&
+                            nextExtraCount < MAX_EXTRA_TAP_POINTS,
+                        onClick = { onAddExtraTap(nextCode) }
+                    ) { Text("添加连按落点") }
+                    TextButton(
+                        enabled = nextExtraCount > 0 && nextCode != KeyEvent.KEYCODE_UNKNOWN,
+                        onClick = { onClearExtraTaps(nextCode) }
+                    ) { Text("清空落点") }
+                }
+            }
 
             if (selectedMode == TouchMode.WHEEL) {
                 Text("鼠标轮盘半径：${radius.roundToInt()} px")
@@ -716,9 +825,9 @@ fun KeyCaptureDialog(
                         Text(stringResource(R.string.key_rebind_cancel))
                     }
                     TextButton(
-                        enabled = !walkCustomization || (captured ?: currentKeyCode) !in setOf(
+                        enabled = !conflict && (!walkCustomization || (captured ?: currentKeyCode) !in setOf(
                             KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT,
-                            KeyEvent.KEYCODE_W, KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_S, KeyEvent.KEYCODE_D),
+                            KeyEvent.KEYCODE_W, KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_S, KeyEvent.KEYCODE_D)),
                         onClick = { onWheelRadiusChange(radius); onConfirm(captured ?: currentKeyCode, if (walkCustomization) TouchMode.TAP else selectedMode) }
                     ) {
                         Text(stringResource(R.string.key_rebind_confirm))

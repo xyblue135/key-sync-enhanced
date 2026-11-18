@@ -825,7 +825,7 @@ private fun ProfileAssistCard(
             )
             AssistSwitchRow(
                 title = "Tab 双击 → Tab + Esc",
-                desc = "在判定窗口内连按两次 Tab 时，第二次改为点击 Tab + Esc；触发后进入冷却。",
+                desc = "在判定窗口内连按两次 Tab 时，第二次改为点击 Tab，等待设定延迟后点击 Esc；触发后进入冷却。",
                 checked = draft.tabEscEnabled,
                 onToggle = { onDraftChange(draft.copy(tabEscEnabled = !draft.tabEscEnabled)) }
             )
@@ -839,6 +839,14 @@ private fun ProfileAssistCard(
                     onChange = { onDraftChange(draft.copy(tabComboWindowMs = it)) }
                 )
                 AssistTimeSlider(
+                    title = "Tab → Esc 延迟",
+                    value = draft.tabEscDelayMs,
+                    min = 0,
+                    max = 5000,
+                    step = 100,
+                    onChange = { onDraftChange(draft.copy(tabEscDelayMs = it)) }
+                )
+                AssistTimeSlider(
                     title = "触发后冷却",
                     value = draft.tabComboCooldownMs,
                     min = 0,
@@ -849,7 +857,7 @@ private fun ProfileAssistCard(
             }
             AssistSwitchRow(
                 title = "Tab 防连按",
-                desc = "在间隔内的重复 Tab 直接吞掉，避免双击判定失败或点到其他按钮。",
+                desc = "在间隔内的重复 Tab 直接吞掉；双击组合开启时不生效，连按本身就是触发条件。",
                 checked = draft.tabDebounceEnabled,
                 onToggle = {
                     onDraftChange(draft.copy(tabDebounceEnabled = !draft.tabDebounceEnabled))

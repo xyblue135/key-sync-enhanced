@@ -671,14 +671,7 @@ class FloatingBubbleService : Service() {
                                 .size(diameter)
                                 .background(Color.White.copy(alpha = 0.16f), CircleShape)
                                 .border(1.5.dp, Color.White.copy(alpha = 0.85f), CircleShape)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.Center)
-                                    .size(3.dp)
-                                    .background(Color.White.copy(alpha = 0.9f), CircleShape)
-                            )
-                        }
+                        )
                     }
                     if (!isEditMode && itemsContainerOpacity == 0f)
                         return@Box//do not compose if user set overlay opacity to 0
@@ -707,6 +700,13 @@ class FloatingBubbleService : Service() {
                             },
                             pressedKeys = pressedKeys,
                             onRequestFocus = { composeView.post { composeView.requestFocus() } },
+                            extraTapPoints = profiles.firstOrNull { it.id == activeId }
+                                ?.extraTapPoints.orEmpty(),
+                            onAddExtraTapPoint = { stateManager.get().addExtraTapPoint(it) },
+                            onMoveExtraTapPoint = { keyCode, index, point ->
+                                stateManager.get().moveExtraTapPoint(keyCode, index, point)
+                            },
+                            onClearExtraTapPoints = { stateManager.get().clearExtraTapPoints(it) },
                         )
                         // 顶部状态提示条：预设名 · 模式 · 最近输入。
                         // 通知栏的「隐藏提示」action 只关这一行，不影响按键容器。
