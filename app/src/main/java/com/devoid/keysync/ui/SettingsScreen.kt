@@ -639,7 +639,7 @@ fun SettingsScreen(
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("WASD 换向弧线过渡", style = MaterialTheme.typography.titleMedium)
+                                Text("WASD 换向 / 疾跑推杆", style = MaterialTheme.typography.titleMedium)
                             }
                             Switch(
                                 checked = wasdTransition,
@@ -662,8 +662,9 @@ fun SettingsScreen(
                             onValueChange = { onSetWasdTransitionMs(it.roundToInt()) }
                         )
                         Text(
-                            "方向切换时沿圆弧补 2–8 个中间点，松手仍然立即停止。" +
-                                "默认 80ms；调小更跟手，调大更像拇指滑过去。关闭后换向仍是 8 向瞬移。",
+                            "换向时沿圆弧补 2–8 个中间点；按下/松开 Shift 时从当前落点沿同一方向缓慢拉到疾跑半径，" +
+                                "而不是瞬间跳过去。松手仍然立即停止。默认 80ms；调小更跟手，调大更像拇指推杆。" +
+                                "关闭后换向与疾跑切换都恢复瞬移。",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

@@ -30,6 +30,7 @@ internal class JoystickMotion(
         center: Offset,
         target: Offset,
         sendTarget: Boolean = true,
+        reanchorOnSprint: Boolean = true,
     ): Boolean {
         if (mask == 0) {
             if (lastMask != 0) release(lastPointer)
@@ -40,7 +41,10 @@ internal class JoystickMotion(
         // 只在「疾跑位发生变化」时重新起按：之前只要处于疾跑状态、任何换向都会
         // release + 重新 DOWN，松 A / 加 A 这类普通换向也被当成疾跑切换，游戏会看到
         // 摇杆瞬间回中再按下，表现为顿一下、方向甩到另一侧。普通换向只发 MOVE。
-        val sprintChanged = ((lastMask xor mask) and sprintBit) != 0
+        //
+        // [reanchorOnSprint] = false 时，进出疾跑也不 release：交给调用方沿同一方向
+        // 从原落点缓慢拉（推杆）到疾跑半径，避免 Shift 一下把触点瞬移到外圈。
+        val sprintChanged = reanchorOnSprint && ((lastMask xor mask) and sprintBit) != 0
         val reanchor = lastMask != 0 && (sprintChanged || lastPointer != pointer || lastCenter != center)
         if (reanchor) release(lastPointer)
         val started = lastMask == 0 || reanchor

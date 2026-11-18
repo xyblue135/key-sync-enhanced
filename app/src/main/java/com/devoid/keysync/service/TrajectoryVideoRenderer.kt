@@ -277,9 +277,9 @@ object TrajectoryVideoRenderer {
         val centerX = left + size / 2f
         val centerY = top + size / 2f
         val half = size / 2f
-        // 疾跑落点是普通方向点的 sprintScale 倍（默认 1.5），画布必须留到 1.6，
-        // 否则奔跑时会画到面板外。
-        val domain = 1.6f
+        // 疾跑落点是普通方向点的 sprintScale 倍（默认 1.5），每次还会再随机上浮约 12%，
+        // 画布留到 1.8 才不会把变化裁成一条恒定半径的圆弧。
+        val domain = 1.8f
 
         p.fill.color = PANEL
         canvas.drawRoundRect(left, top, left + size, top + size, 20f, 20f, p.fill)

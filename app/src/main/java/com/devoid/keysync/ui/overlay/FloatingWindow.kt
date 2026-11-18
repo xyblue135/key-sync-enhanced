@@ -323,7 +323,7 @@ fun ItemsContainer(
                     Slider(value = forward.coerceIn(10f, 1000f), onValueChange = { forward = it }, valueRange = 10f..1000f)
                     Text("A / D 横向（共用）：${side.roundToInt()} px")
                     Slider(value = side.coerceIn(10f, 1000f), onValueChange = { side = it }, valueRange = 10f..1000f)
-                    Text("斜跑保留完整前向距离；只有 S 取消疾跑。保存后退出编辑生效。", style = MaterialTheme.typography.bodySmall)
+                    Text("疾跑落点统一落在同一圈上，斜跑不再叠加两轴距离；只有 S 取消疾跑。保存后退出编辑生效。", style = MaterialTheme.typography.bodySmall)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween

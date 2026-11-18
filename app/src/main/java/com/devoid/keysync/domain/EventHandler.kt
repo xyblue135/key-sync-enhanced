@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -226,6 +227,9 @@ class EventHandler(
     private val humanizeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var wasdJitterJob: Job? = null
     private var wasdTransitionJob: Job? = null
+    /** 本次按压段使用的推力倍率；换向或重新按下时重采样。 */
+    private var pressVariationMask = 0
+    private var pressVariation = 1f
     private val keyJitterJobs = HashMap<Int, Job>(16)
 
     /** 拟人化抖动偏移（px）。强度 0 时返回零偏移。 */
@@ -294,7 +298,7 @@ class EventHandler(
         pointerId: Int,
         mask: Int,
         center: Offset,
-        unitRadius: Float,
+        unit: Offset,
         start: Offset,
         end: Offset,
     ) {
@@ -308,7 +312,7 @@ class EventHandler(
                 if (!isActive) return@launch
                 val point = if (i == steps) end else arcPoint(center, start, end, i.toFloat() / steps)
                 joystickMotion.jitter(pointerId, mask, point)
-                recordWasdVector(center, unitRadius, point)
+                recordWasdVector(center, unit, point)
             }
         }
     }
@@ -353,7 +357,13 @@ class EventHandler(
         return center + rotated * radius
     }
 
-    private fun restartWasdJitter(pointerId: Int, mask: Int, map: KeyMap, unitRadius: Float) {
+    private fun restartWasdJitter(
+        pointerId: Int,
+        mask: Int,
+        map: KeyMap,
+        unit: Offset,
+        baseTarget: Offset,
+    ) {
         wasdJitterJob?.cancel()
         wasdJitterJob = humanizeScope.launch {
             while (isActive && wasdHumanization) {
@@ -361,8 +371,8 @@ class EventHandler(
                 if (!wasdHumanization) break
                 // 只拖 current 触点，绝不 reanchor（见 JoystickMotion.jitter）。
                 val center = map.center ?: return@launch
-                val target = jitterTarget(center, map.position)
-                recordWasdVector(center, unitRadius, target)
+                val target = jitterTarget(center, baseTarget)
+                recordWasdVector(center, unit, target)
                 joystickMotion.jitter(pointerId, mask, target)
             }
         }
@@ -732,6 +742,8 @@ class EventHandler(
         if (directionMask == 0) {
             stopWasdJitter()
             stopWasdTransition()
+            pressVariationMask = 0
+            pressVariation = 1f
             TrajectoryRecorder.recordWasd(0f, 0f)
             joystickMotion.update(pointerId, 0, Offset.Zero, Offset.Zero)
             return
@@ -748,10 +760,24 @@ class EventHandler(
             stopWasdTransition()
             return
         }
+        // 每次换向/重新按下都重采样一次推力，真实拇指每次推的幅度并不相同：
+        // 疾跑在 1.50–1.68 倍之间（始终超过 +50%）；普通移动只向上浮动 0–8%
+        // （幅度随「WASD 晃动」缩放），不会低于基准、掉进游戏的慢走/死区。
+        if (pressVariationMask != effectiveMask) {
+            pressVariationMask = effectiveMask
+            pressVariation = if (effectiveMask and MASK_SPRINT != 0) {
+                1f + Random.nextFloat() * SPRINT_VARIATION_RANGE
+            } else {
+                1f + Random.nextFloat() * WALK_VARIATION_RANGE * swayFactor
+            }
+        }
+        val nominal = if (pressVariation != 1f) {
+            entry.center!! + (entry.position - entry.center!!) * pressVariation
+        } else entry.position
         val target = if (wasdHumanization) {
             // 每次换向时由 biasedDirection 重新采样偏置；再叠加低频微抖。
-            jitterTarget(entry.center!!, biasedDirection(entry.center!!, entry.position))
-        } else entry.position
+            jitterTarget(entry.center!!, biasedDirection(entry.center!!, nominal))
+        } else nominal
         val directionChanged = joystickMotion.activeMask != effectiveMask
         // 过渡期间同一方向的按键重复（长按 W/D 的系统 repeat）不能把触点提前拉到终点，
         // 否则 80ms 的弧线只走了第一帧就被截断。
@@ -765,37 +791,44 @@ class EventHandler(
         // 否则录像里会先出现终点、再出现弧线中间点。
         // 录像归一化基准取「非疾跑方向落点」：疾跑条目坐标在 sprintScale（默认 1.5）
         // 倍半径上，用它自己归一化会把奔跑也画成 1.0，轨迹里看不出 Shift。
-        val baseEntry = wasdMap[directionMask] ?: entry
-        val unitRadius = (baseEntry.position - (baseEntry.center ?: entry.center!!))
-            .getDistance().coerceAtLeast(1f)
+        // 录像按轴归一化：x 用 A/D 落点距离、y 用 W 落点距离，普通方向就是半径 1
+        // 的菱形、斜向 0.71；疾跑是同一圈 1.5–1.68，和实际注入形状一致。若按当前
+        // 方向自己的落点距离归一化，斜向疾跑会被放大到 2 倍以上再被画布裁成圆弧。
+        val center = entry.center!!
+        val sideUnit = abs((wasdMap[MASK_D]?.position ?: entry.position).x - center.x)
+        val forwardUnit = abs((wasdMap[MASK_W]?.position ?: entry.position).y - center.y)
+        val unit = Offset(sideUnit.coerceAtLeast(1f), forwardUnit.coerceAtLeast(1f))
         val moved = joystickMotion.update(
             pointerId,
             effectiveMask,
-            entry.center!!,
+            center,
             target,
             sendTarget = !wantsTransition,
+            reanchorOnSprint = !wantsTransition,
         )
         if (moved) {
             stopWasdTransition()
-            recordWasdVector(entry.center!!, unitRadius, target)
+            recordWasdVector(center, unit, target)
         } else {
-            startWasdTransition(pointerId, effectiveMask, entry.center!!, unitRadius, actualStart, target)
+            startWasdTransition(pointerId, effectiveMask, center, unit, actualStart, target)
         }
-        if (wasdHumanization) restartWasdJitter(pointerId, effectiveMask, entry, unitRadius) else stopWasdJitter()
+        if (wasdHumanization) {
+            restartWasdJitter(pointerId, effectiveMask, entry, unit, nominal)
+        } else stopWasdJitter()
     }
 
     /**
      * 把摇杆落点换算成以中心为原点、普通方向键距离为 1 的向量，供轨迹录制使用。
      *
-     * [unitRadius] 必须取「非疾跑方向落点」的半径，而不是当前落点半径：疾跑条目的
-     * 坐标本身就在 1.5 倍半径上，用它归一化会把奔跑也画成 1.0，录像里看不出 Shift。
-     * 记录的是 [target]（已含方向偏置与低频晃动），也就是真正注入给游戏的那个点。
+     * [unit] 是按轴取的基准距离（x 用 A/D、y 用 W），不能用当前落点自己的半径：
+     * 疾跑落点本身就在 1.5 倍半径上，用它会画成 1.0；斜向用方向自己的半径又会
+     * 被放大到 2 倍以上。记录的是 [target]（已含方向偏置与低频晃动），也就是
+     * 真正注入给游戏的那个点。
      */
-    private fun recordWasdVector(center: Offset, unitRadius: Float, target: Offset) {
-        val radius = unitRadius.coerceAtLeast(1f)
+    private fun recordWasdVector(center: Offset, unit: Offset, target: Offset) {
         TrajectoryRecorder.recordWasd(
-            (target.x - center.x) / radius,
-            (target.y - center.y) / radius,
+            (target.x - center.x) / unit.x.coerceAtLeast(1f),
+            (target.y - center.y) / unit.y.coerceAtLeast(1f),
         )
     }
 
@@ -1356,5 +1389,11 @@ class EventHandler(
         const val DEFAULT_WASD_TRANSITION_MS = 80
         const val MIN_WASD_TRANSITION_MS = 40
         const val MAX_WASD_TRANSITION_MS = 200
+
+        /** 疾跑半径在 sprintScale 之上再随机上浮 0–12%，避免每次都是同一圈。 */
+        const val SPRINT_VARIATION_RANGE = 0.12f
+
+        /** 普通移动的推力在基准之上随机上浮 0–8%（再乘「WASD 晃动」系数）。 */
+        const val WALK_VARIATION_RANGE = 0.08f
     }
 }

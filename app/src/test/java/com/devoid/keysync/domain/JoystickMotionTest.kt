@@ -33,6 +33,24 @@ class JoystickMotionTest {
             assertEquals(forward, rig.target)
         }
     }
+    @Test fun sprintPushCanSlideWithoutReleasing() {
+        // 按 Shift 时不再 release + 瞬移：交给调用方沿同一方向补中间点。
+        val rig = Rig()
+        rig.motion.update(3, 1, center, Offset(300f, 620f))
+        rig.events.clear()
+        val handedOff = !rig.motion.update(
+            3,
+            1 or sprint,
+            center,
+            Offset(300f, 470f),
+            sendTarget = false,
+            reanchorOnSprint = false,
+        )
+        assertTrue(handedOff)
+        assertTrue(rig.events.isEmpty())
+        assertEquals(Offset(300f, 470f), rig.motion.target)
+    }
+
     @Test fun steadySprintDoesNotRestartAndOnlyJoystickIsReleased() {
         val rig = Rig()
         repeat(100) { rig.motion.update(3, 1 or sprint, center, Offset(300f, 480f)) }
