@@ -893,6 +893,27 @@ fun DraggableItem(
             }
         }) {
         content()
+        // 编辑态恢复齿轮入口：点一下直接打开配置框，不必再记住双击。
+        // 只在编辑态且该按钮有配置回调时出现；非编辑态不渲染任何额外控件。
+        if (enabled && onDoubleTap != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 12.dp, y = (-12).dp)
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surface)
+                    .clickable { currentOnDoubleTap?.invoke() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Rounded.Settings,
+                    contentDescription = "配置按键",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(13.dp)
+                )
+            }
+        }
     }
 }
 
@@ -949,7 +970,7 @@ fun EditToolbar(
         } else {
         Row(
             modifier = Modifier
-                .align(Alignment.TopEnd)
+                .align(Alignment.Center)
                 .clip(CircleShape.copy(CornerSize(10)))
                 .background(MaterialTheme.colorScheme.surface)
                 .padding(horizontal = 4.dp),
@@ -995,7 +1016,7 @@ fun EditToolbar(
             }
         }
         if (itemsMenuVisible) {
-            Box(modifier = Modifier.align(Alignment.TopEnd).offset(y = 48.dp)) {
+            Box(modifier = Modifier.align(Alignment.Center).offset(y = 48.dp)) {
                 MenuItems(onItemClick = {
                     onAddItem(it)
                     itemsMenuVisible = false

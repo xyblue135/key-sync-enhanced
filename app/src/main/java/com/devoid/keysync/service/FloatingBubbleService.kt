@@ -124,6 +124,8 @@ class FloatingBubbleService : Service() {
         private const val ACTION_TOGGLE_EDIT = "com.devoid.keysync.action.TOGGLE_EDIT"
         private const val ACTION_TOGGLE_KEYS = "com.devoid.keysync.action.TOGGLE_KEYS"
         private const val ACTION_TOGGLE_PAUSE = "com.devoid.keysync.action.TOGGLE_PAUSE"
+        /** 关闭悬浮窗：与设置页「恢复默认」上方的「关闭悬浮窗」同一行为。 */
+        private const val ACTION_CLOSE_OVERLAY = "com.devoid.keysync.action.CLOSE_OVERLAY"
         private const val ACTION_TOGGLE_TRAJECTORY = "com.devoid.keysync.action.TOGGLE_TRAJECTORY"
 
         /** 轨迹视频导出通知：与悬浮窗常驻通知分开，避免互相覆盖。 */
@@ -155,6 +157,10 @@ class FloatingBubbleService : Service() {
             ACTION_TOGGLE_EDIT -> stateManager.get().toggleEditMode()
             ACTION_TOGGLE_KEYS -> stateManager.get().toggleKeysVisible()
             ACTION_TOGGLE_PAUSE -> stateManager.get().toggleMappingPaused()
+            ACTION_CLOSE_OVERLAY -> {
+                stopSelf()
+                return START_NOT_STICKY
+            }
             ACTION_TOGGLE_TRAJECTORY -> toggleTrajectoryRecording()
         }
 
@@ -205,10 +211,7 @@ class FloatingBubbleService : Service() {
             if (sm.keysVisible.value) R.string.notification_action_hide_keys
             else R.string.notification_action_show_keys
         )
-        val pauseLabel = getString(
-            if (sm.mappingPaused.value) R.string.notification_action_resume
-            else R.string.notification_action_pause
-        )
+        val pauseLabel = getString(R.string.overlay_close_overlay)
         return NotificationCompat.Builder(this, CHANNEL_ID).apply {
             setSmallIcon(R.drawable.ic_launcher_foreground)
             setContentTitle(getString(R.string.app_name))
@@ -218,7 +221,9 @@ class FloatingBubbleService : Service() {
                     else R.string.notification_text_overlay_running
                 )
             )
-            // 折叠态只放得下 3 个 action，按使用频率排序：暂停 / 隐藏按键 / 录制轨迹。
+            // 折叠态只放得下 3 个 action：关闭悬浮窗 / 隐藏按键 / 录制轨迹。
+            // 「关闭悬浮窗」等价于设置页「恢复默认」上方的同名按钮（停止前台服务），
+            // 暂停映射不再单独提供：暂停后没有可靠的恢复入口，直接关闭更符合直觉。
             // 添加按键已移到编辑态工具条的「＋」；编辑布局与关闭放到展开态，
             // 其中「关闭」误触代价最大，故意藏一层。总共 5 个，避免第 6 个被系统吞掉。
             setStyle(NotificationCompat.BigTextStyle())
@@ -227,7 +232,7 @@ class FloatingBubbleService : Service() {
             setSilent(true)
             setOnlyAlertOnce(true)
             setPriority(NotificationCompat.PRIORITY_LOW)
-            addAction(0, pauseLabel, servicePendingIntent(ACTION_TOGGLE_PAUSE, 106))
+            addAction(0, pauseLabel, servicePendingIntent(ACTION_CLOSE_OVERLAY, 106))
             addAction(0, keysLabel, servicePendingIntent(ACTION_TOGGLE_KEYS, 102))
             addAction(
                 0,
