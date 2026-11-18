@@ -223,6 +223,9 @@ class MainActivity : ComponentActivity() {
                         val wasdSway by viewModel.wasdSway.collectAsStateWithLifecycle()
                         val overlayOpacity by viewModel.overlayOpacity.collectAsStateWithLifecycle()
                         val statusBarVisible by viewModel.statusBarVisible.collectAsStateWithLifecycle()
+                        val mouseJumpThresholdPx by viewModel.mouseJumpThresholdPx.collectAsStateWithLifecycle()
+                        val mouseModeLatch by viewModel.mouseModeLatch.collectAsStateWithLifecycle()
+                        val screenSizeCacheEnabled by viewModel.screenSizeCacheEnabled.collectAsStateWithLifecycle()
                         // Collected so a change applied outside the save button
                         // (the profile-switch master switch) is reflected
                         // instead of being overwritten by a stale newConfig.
@@ -241,28 +244,7 @@ class MainActivity : ComponentActivity() {
                             onDuplicateProfile = { viewModel.duplicateProfile(it) },
                             onExportProfile = { viewModel.exportProfileJson(it) },
                             onImportProfile = { viewModel.importProfileJson(it) },
-                            onSetProfileMacros = viewModel::setMacros,
-                            onSetProfileQuickSwap = { profileId, enabled ->
-                                viewModel.setQuickSwap(profileId, enabled)
-                            },
-                            onSetProfileSwapPairs = { profileId, pairs ->
-                                viewModel.setSwapPairs(profileId, pairs)
-                            },
-                            onSetProfileTapSequence = { profileId, enabled ->
-                                viewModel.setTapSequence234(profileId, enabled)
-                            },
-                            onSetProfileTapSequenceGap = { profileId, gapMs ->
-                                viewModel.setTapSequence234Gap(profileId, gapMs)
-                            },
-                            onSetProfileTabEsc = { profileId, enabled ->
-                                viewModel.setTabEsc(profileId, enabled)
-                            },
-                            onSetProfileTabDebounce = { profileId, enabled ->
-                                viewModel.setTabDebounce(profileId, enabled)
-                            },
-                            onSetProfileStanceAssist = { profileId, enabled ->
-                                viewModel.setStanceAssist(profileId, enabled)
-                            },
+                            onSaveProfileAssist = viewModel::saveProfileAssist,
                             wasdHumanization = wasdHumanization,
                             keyHumanization = keyHumanization,
                             humanizationStrength = humanizationStrength,
@@ -277,6 +259,12 @@ class MainActivity : ComponentActivity() {
                             onSetOverlayOpacity = viewModel::setOverlayOpacity,
                             statusBarVisible = statusBarVisible,
                             onSetStatusBarVisible = viewModel::setStatusBarVisible,
+                            mouseJumpThresholdPx = mouseJumpThresholdPx,
+                            onSetMouseJumpThreshold = viewModel::setMouseJumpThreshold,
+                            mouseModeLatch = mouseModeLatch,
+                            onSetMouseModeLatch = viewModel::setMouseModeLatch,
+                            screenSizeCacheEnabled = screenSizeCacheEnabled,
+                            onSetScreenSizeCache = viewModel::setScreenSizeCache,
                             onStopOverlay = {
                                 stopService(
                                     Intent(
@@ -296,9 +284,8 @@ class MainActivity : ComponentActivity() {
                                 // popBackStack, not navigate(MainScreen):
                                 // navigating pushed another MainScreen on top,
                                 // so the stack grew Main → Settings → Main →
-                                // Settings… and Back walked the user back
-                                // through every previous settings screen.
-                                navController.popBackStack()
+                                // 保存本身不导航：设置页的「保存」按钮保存后自行返回，
+                                // 而「保存并切换预设」需要留在设置页继续操作。
                             })
                     }
                     composable<AboutScreen> {

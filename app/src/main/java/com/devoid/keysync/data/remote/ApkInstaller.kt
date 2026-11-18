@@ -54,7 +54,9 @@ class ApkInstaller(private val context: Context) {
                 DOWNLOAD_DIR,
             ).apply { mkdirs() }
             val target = File(dir, fileName)
-            if (target.exists()) target.delete()
+            // 先下到 .part，完整校验通过后再替换旧包；下载失败不会把上一版可用的包弄丢。
+            val part = File(dir, "$fileName.part")
+            if (part.exists()) part.delete()
 
             val dm = context.getSystemService(DownloadManager::class.java)
             val request = DownloadManager.Request(Uri.parse(apkUrl))
@@ -64,7 +66,7 @@ class ApkInstaller(private val context: Context) {
                 .setDestinationInExternalFilesDir(
                     context,
                     Environment.DIRECTORY_DOWNLOADS,
-                    "$DOWNLOAD_DIR/$fileName",
+                    "$DOWNLOAD_DIR/$fileName.part",
                 )
             val id = dm.enqueue(request)
             val startedAt = SystemClock.uptimeMillis()
@@ -87,7 +89,13 @@ class ApkInstaller(private val context: Context) {
                     if (total > 0) onProgress(((soFar * 100) / total).toInt().coerceIn(0, 100))
                     when (status) {
                         DownloadManager.STATUS_SUCCESSFUL -> {
-                            if (!target.exists()) error("下载完成但文件不存在")
+                            if (!part.exists()) error("下载完成但文件不存在")
+                            // 断流时 DownloadManager 也可能报成功，这里按字节数再确认一次。
+                            if (total > 0 && part.length() != total) {
+                                error("下载文件不完整（${part.length()}/$total 字节）")
+                            }
+                            if (target.exists()) target.delete()
+                            if (!part.renameTo(target)) error("无法保存安装包")
                             return@runCatching target
                         }
                         DownloadManager.STATUS_FAILED -> {
@@ -102,6 +110,14 @@ class ApkInstaller(private val context: Context) {
             }
             @Suppress("UNREACHABLE_CODE")
             target
+        }.onFailure {
+            // 失败时清掉半截包，保留上一次成功下载的完整包。
+            runCatching {
+                File(
+                    File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), DOWNLOAD_DIR),
+                    "KeySync-Enhanced-$version.apk.part",
+                ).delete()
+            }
         }
     }
 

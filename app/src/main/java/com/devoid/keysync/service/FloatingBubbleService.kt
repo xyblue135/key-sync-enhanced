@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.res.Configuration
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.os.Build
@@ -318,6 +319,7 @@ class FloatingBubbleService : Service() {
         val touchTranslator = TouchToMouseTranslator(
             onMouseEvent = { event -> sm.onMouseEvent(event) },
             isInIgnoreZone = { x, y -> isOnKeySyncButton(x, y, sm) },
+            onGestureStart = { sm.resetMouseRawBaseline() },
         )
 
         containerView =
@@ -648,6 +650,12 @@ class FloatingBubbleService : Service() {
 
     override fun onBind(p0: Intent?): IBinder? {
         return null
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // 旋转/分屏会改变屏幕尺寸，丢掉鼠标路径缓存的尺寸，下次事件重新测量。
+        stateManager.get().invalidateScreenSizeCache()
     }
 
     override fun onDestroy() {

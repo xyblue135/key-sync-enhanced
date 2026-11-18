@@ -94,9 +94,9 @@ fun ClickMacrosDialog(profile: Profile, onDismiss: () -> Unit, onSave: (List<Cli
                             Text("${current.standardIntervalMs} 毫秒")
                         }
                         Slider(
-                            value = current.standardIntervalMs.toFloat().coerceIn(0f, 2000f),
-                            valueRange = 0f..2000f,
-                            steps = 39,
+                            value = current.standardIntervalMs.toFloat().coerceIn(0f, 5000f),
+                            valueRange = 0f..5000f,
+                            steps = 99,
                             onValueChange = {
                                 change(current.copy(standardIntervalMs = it.roundToInt().toLong()))
                             })

@@ -69,7 +69,7 @@ jobs:
           ORG_GRADLE_PROJECT_keyAlias: ${{ secrets.KEY_ALIAS }}
           ORG_GRADLE_PROJECT_keyPassword: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew :app:assembleRelease --console=plain
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: release-apk-v${{ steps.version.outputs.version_name }}
           path: app/build/outputs/apk/release/app-release.apk
@@ -88,7 +88,7 @@ jobs:
         with:
           # 需要完整 tag 历史，才能算出上一个版本到本次 tag 的提交范围。
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: release-apk-v${{ needs.build.outputs.version_name }}
       - name: Build release notes from commits

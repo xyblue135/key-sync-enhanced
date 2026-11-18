@@ -21,9 +21,8 @@ import com.devoid.keysync.data.local.DataStoreManager
 import com.devoid.keysync.data.mapping.MappingPreset
 import com.devoid.keysync.data.mapping.MappingPresetRepository
 import com.devoid.keysync.model.AppConfig
-import com.devoid.keysync.model.ClickMacro
 import com.devoid.keysync.model.Profile
-import com.devoid.keysync.model.SwapPair
+import com.devoid.keysync.model.ProfileAssist
 import com.devoid.keysync.data.remote.ApkInstaller
 import com.devoid.keysync.model.UpdateState
 import com.devoid.keysync.service.FloatingBubbleService
@@ -104,6 +103,11 @@ class MainActivityViewModel @Inject constructor(
     val overlayOpacity: StateFlow<Float> = stateManager.overlayOpacity
     /** 顶部状态提示条（预设名 · 模式 · 最近输入）的显隐；全局设置，立即持久化。 */
     val statusBarVisible: StateFlow<Boolean> = stateManager.statusBarVisible
+
+    /* -------- 鼠标高级参数（全局，设置页「兼容与高级」） -------- */
+    val mouseJumpThresholdPx: StateFlow<Int> = stateManager.mouseJumpThresholdPx
+    val mouseModeLatch: StateFlow<Boolean> = stateManager.mouseModeLatch
+    val screenSizeCacheEnabled: StateFlow<Boolean> = stateManager.screenSizeCacheEnabled
 
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     /** 「检查更新 / 下载并安装」的状态。 */
@@ -207,34 +211,9 @@ class MainActivityViewModel @Inject constructor(
     /** @return null on success, otherwise a user-facing error message. */
     fun importProfileJson(raw: String): String? = stateManager.importProfileJson(raw)
 
-    fun setMacros(profileId: String, macros: List<ClickMacro>) = stateManager.setMacros(profileId, macros)
-
-    fun setSwapPairs(profileId: String, pairs: List<SwapPair>) {
-        stateManager.setSwapPairs(profileId, pairs)
-    }
-
-    fun setQuickSwap(profileId: String, enabled: Boolean) {
-        stateManager.setQuickSwap(profileId, enabled)
-    }
-
-    fun setTapSequence234(profileId: String, enabled: Boolean) {
-        stateManager.setTapSequence234(profileId, enabled)
-    }
-
-    fun setTapSequence234Gap(profileId: String, gapMs: Int) {
-        stateManager.setTapSequence234Gap(profileId, gapMs)
-    }
-
-    fun setTabEsc(profileId: String, enabled: Boolean) {
-        stateManager.setTabEsc(profileId, enabled)
-    }
-
-    fun setTabDebounce(profileId: String, enabled: Boolean) {
-        stateManager.setTabDebounce(profileId, enabled)
-    }
-
-    fun setStanceAssist(profileId: String, enabled: Boolean) {
-        stateManager.setStanceAssist(profileId, enabled)
+    /** 设置页「保存」时一次性写入当前预设的按键辅助草稿。 */
+    fun saveProfileAssist(profileId: String, assist: ProfileAssist) {
+        stateManager.saveProfileAssist(profileId, assist)
     }
 
     fun setWasdHumanization(enabled: Boolean) = stateManager.setWasdHumanization(enabled)
@@ -244,6 +223,9 @@ class MainActivityViewModel @Inject constructor(
     fun setWasdSway(value: Float) = stateManager.setWasdSway(value)
     fun setOverlayOpacity(value: Float) = stateManager.saveOverlayOpacity(value)
     fun setStatusBarVisible(visible: Boolean) = stateManager.setStatusBarVisible(visible)
+    fun setMouseJumpThreshold(px: Int) = stateManager.setMouseJumpThreshold(px)
+    fun setMouseModeLatch(enabled: Boolean) = stateManager.setMouseModeLatch(enabled)
+    fun setScreenSizeCache(enabled: Boolean) = stateManager.setScreenSizeCache(enabled)
 
     /**
      * Removes games by package name.

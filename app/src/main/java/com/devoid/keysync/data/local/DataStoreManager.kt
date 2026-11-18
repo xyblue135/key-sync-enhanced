@@ -95,6 +95,15 @@ class DataStoreManager internal constructor(
         val WASD_SWAY = intPreferencesKey("wasd_sway")
         /** 随机偏移间隔（ms），默认 1000；全局键，与拟人化开关一起生效。 */
         val HUMANIZATION_INTERVAL_MS = intPreferencesKey("humanization_interval_ms")
+
+        /* -------- 鼠标高级参数（全局，与预设无关） -------- */
+        /** 单帧位移断点阈值（px），默认 240。 */
+        val MOUSE_JUMP_THRESHOLD_PX = intPreferencesKey("mouse_jump_threshold_px")
+        /** 是否在一段手势内锁存相对轴/绝对坐标解析方式，默认开启。 */
+        val MOUSE_MODE_LATCH = booleanPreferencesKey("mouse_mode_latch")
+        /** 是否缓存屏幕尺寸，默认开启。 */
+        val SCREEN_SIZE_CACHE = booleanPreferencesKey("screen_size_cache")
+
         val KEYS_CONFIG = stringPreferencesKey("keys_config")
 
         /** All user-defined keymap presets. */

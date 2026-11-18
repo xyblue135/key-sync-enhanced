@@ -45,6 +45,8 @@ import kotlin.math.hypot
 class TouchToMouseTranslator(
     private val onMouseEvent: (MotionEvent) -> Boolean,
     private val isInIgnoreZone: (x: Float, y: Float) -> Boolean,
+    /** 新手指按下时通知鼠标层重置位移基准，避免拿上一段触摸的坐标做差。 */
+    private val onGestureStart: () -> Unit = {},
 ) {
     private var downTime = 0L
     private var downX = 0f
@@ -96,6 +98,9 @@ class TouchToMouseTranslator(
     }
 
     private fun handleActionDown(event: MotionEvent): Boolean {
+        // 新手势从 0 位移开始：否则下面这条 HOVER_MOVE 会拿上一段触摸结束
+        // 的位置做差，投屏模式下表现为视角被轻推一下。
+        onGestureStart()
         downTime = event.eventTime
         downX = event.x
         downY = event.y

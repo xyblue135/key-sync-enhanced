@@ -25,7 +25,9 @@ import com.devoid.keysync.domain.ScrollTracker
 import com.devoid.keysync.domain.mouseButtonKeyCode
 import com.devoid.keysync.domain.mouseKeyAlias
 import com.devoid.keysync.model.ClickMacro
+import com.devoid.keysync.model.ProfileAssist
 import com.devoid.keysync.model.validateClickMacros
+import com.devoid.keysync.model.withAssist
 import com.devoid.keysync.util.keyCodeToString
 import com.devoid.keysync.domain.EventHandler
 import com.devoid.keysync.domain.KEYCODE_LMC
@@ -96,6 +98,15 @@ class FloatingWindowStateManager @Inject constructor(
     val wasdSway = MutableStateFlow(50f)
     /** 随机偏移间隔（ms），默认 1000（约每秒一次）。 */
     val humanizationInterval = MutableStateFlow(1000L)
+
+    /* ----------------- 鼠标高级参数（全局，与预设无关） ----------------- */
+
+    /** 单帧位移超过该值就视为光标跳变并丢弃；默认 240px。 */
+    val mouseJumpThresholdPx = MutableStateFlow(DEFAULT_MOUSE_JUMP_THRESHOLD_PX)
+    /** 为 true 时，一段操作内固定相对轴/绝对坐标解析方式，避免模式抖动。 */
+    val mouseModeLatch = MutableStateFlow(true)
+    /** 为 true 时缓存屏幕尺寸，避免每个鼠标事件都查询 WindowManager。 */
+    val screenSizeCacheEnabled = MutableStateFlow(true)
 
     // 悬浮窗按键的显示/隐藏开关（一键切换，不影响功能）。
     private val _keysVisible = MutableStateFlow(true)
@@ -179,6 +190,11 @@ class FloatingWindowStateManager @Inject constructor(
     val lastInputLabel = _lastInputLabel.asStateFlow()
     private var lastMouseRawX = Float.NaN
     private var lastMouseRawY = Float.NaN
+    // 手势期间锁存的解析方式；null 表示尚未决定。换设备/新手势时清空。
+    private var latchedRelativeAxisMode: Boolean? = null
+    private var lastMouseDeviceId: Int = -1
+    // 屏幕尺寸缓存；服务收到 configuration change 时清空。
+    private var cachedScreenSize: Offset? = null
 
     private val _containerItems = MutableStateFlow(listOf<DraggableItem>())
     val containerItems = _containerItems.asStateFlow()
@@ -283,6 +299,13 @@ class FloatingWindowStateManager @Inject constructor(
             // 顶部提示条是持久化开关：默认显示，用户关掉后下次启动仍然隐藏。
             _statusBarVisible.value =
                 dataStoreManager.getBoolean(DataStoreManager.STATUS_BAR_VISIBLE).first() ?: true
+            mouseJumpThresholdPx.value =
+                (dataStoreManager.getInt(DataStoreManager.MOUSE_JUMP_THRESHOLD_PX).first()
+                    ?: DEFAULT_MOUSE_JUMP_THRESHOLD_PX).coerceIn(40, 800)
+            mouseModeLatch.value =
+                dataStoreManager.getBoolean(DataStoreManager.MOUSE_MODE_LATCH).first() ?: true
+            screenSizeCacheEnabled.value =
+                dataStoreManager.getBoolean(DataStoreManager.SCREEN_SIZE_CACHE).first() ?: true
             // 两条 init 协程的完成顺序不确定：若预设先加载完，这里要把刚读到的拟人化设置补应用一次。
             syncHumanization()
         }
@@ -438,11 +461,8 @@ class FloatingWindowStateManager @Inject constructor(
         const val TAB_COMBO_COOLDOWN_MS = 2000L
         /** Tab 防连按：两次有效 Tab 按下之间的最小间隔。 */
         const val TAB_REPEAT_GUARD_MS = 1000L
-        /**
-         * 单帧鼠标位移上限（像素）。正常人手一帧的位移远低于此值；
-         * 超过它基本只可能来自光标回中、换设备或窗口重捕获造成的坐标跳变。
-         */
-        const val MAX_MOUSE_DELTA_PER_EVENT = 240f
+        /** 鼠标断点阈值默认值；用户可在设置页的高级项里调整（全局）。 */
+        const val DEFAULT_MOUSE_JUMP_THRESHOLD_PX = 240
     }
 
     /** 旧数据未记录分辨率时，统一假定为 legacy 基准，便于 applyActiveProfile 迁移。 */
@@ -557,13 +577,6 @@ class FloatingWindowStateManager @Inject constructor(
             overlayViewport ?: currentScreenSize(), overlayOrigin ?: Offset.Zero)
     }
 
-    fun setMacros(profileId: String, macros: List<ClickMacro>) {
-        require(validateClickMacros(macros) == null) { validateClickMacros(macros).orEmpty() }
-        _profiles.value = _profiles.value.map { if (it.id == profileId) it.copy(macros = macros) else it }
-        if (_activeProfileId.value == profileId) syncMacros()
-        if (dataStoreManager.canWriteProfiles) scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
-    }
-
     fun updateMacroPoint(macroId: String, stepId: String, x: Float, y: Float) {
         if (!_isEditMode.value || !x.isFinite() || !y.isFinite()) return
         _profiles.value = _profiles.value.map { profile ->
@@ -607,64 +620,29 @@ class FloatingWindowStateManager @Inject constructor(
 
     /* ----------------- swap pairs (swapOn / swapOff) ----------------- */
 
-    /** Persist the profile's swap-pair list (called from the settings UI). */
-    fun setSwapPairs(profileId: String, pairs: List<SwapPair>) {
-        _profiles.value = _profiles.value.map {
-            if (it.id == profileId) it.copy(swapPairs = pairs) else it
-        }
-        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
-    }
+    /* ----------------- 按键辅助（设置页一次性保存） ----------------- */
 
-    /** 预设级快捷换位开关（X 换位 / 1 还原），默认开启。 */
-    fun setQuickSwap(profileId: String, enabled: Boolean) {
-        _profiles.value = _profiles.value.map {
-            if (it.id == profileId) it.copy(quickSwapEnabled = enabled) else it
+    /**
+     * 设置页把「按键辅助」草稿一次性写回预设。宏校验失败时整批不落盘，
+     * 避免只保存了一半的开关。开关的即时语义（Tab 防连按、姿态取消）
+     * 与以前单独设置时保持一致。
+     */
+    fun saveProfileAssist(profileId: String, assist: ProfileAssist) {
+        if (validateClickMacros(assist.macros) != null) return
+        val target = _profiles.value.firstOrNull { it.id == profileId } ?: return
+        val updatedProfile = target.withAssist(assist)
+        _profiles.value = _profiles.value.map { if (it.id == profileId) updatedProfile else it }
+        if (_activeProfileId.value == profileId) {
+            if (!assist.tabDebounceEnabled) {
+                lastAcceptedTabAt = 0L
+                swallowedTabDown = false
+            }
+            if (!assist.stanceAssistEnabled) stanceKeyCode = null
+            syncMacros()
         }
-        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
-    }
-
-    /** 预设级「按 3 依次点 2/3/4」开关，默认开启。 */
-    fun setTapSequence234(profileId: String, enabled: Boolean) {
-        _profiles.value = _profiles.value.map {
-            if (it.id == profileId) it.copy(tapSequence234Enabled = enabled) else it
+        if (dataStoreManager.canWriteProfiles) {
+            scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
         }
-        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
-    }
-
-    /** 2-3-4 连点间距（ms），20–400，越小越快。 */
-    fun setTapSequence234Gap(profileId: String, gapMs: Int) {
-        val clamped = gapMs.coerceIn(20, 400)
-        _profiles.value = _profiles.value.map {
-            if (it.id == profileId) it.copy(tapSequence234GapMs = clamped) else it
-        }
-        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
-    }
-
-    /** 预设级「Tab 双击 → Tab + Esc」开关，默认开启。 */
-    fun setTabEsc(profileId: String, enabled: Boolean) {
-        _profiles.value = _profiles.value.map {
-            if (it.id == profileId) it.copy(tabEscEnabled = enabled) else it
-        }
-        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
-    }
-
-    /** 预设级「Tab 防连按（1 秒一次）」开关，默认开启。 */
-    fun setTabDebounce(profileId: String, enabled: Boolean) {
-        _profiles.value = _profiles.value.map {
-            if (it.id == profileId) it.copy(tabDebounceEnabled = enabled) else it
-        }
-        lastAcceptedTabAt = 0L
-        swallowedTabDown = false
-        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
-    }
-
-    /** 预设级「Shift 取消蹲/趴」开关，默认开启。 */
-    fun setStanceAssist(profileId: String, enabled: Boolean) {
-        _profiles.value = _profiles.value.map {
-            if (it.id == profileId) it.copy(stanceAssistEnabled = enabled) else it
-        }
-        if (profileId == _activeProfileId.value && !enabled) stanceKeyCode = null
-        scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
     }
 
     /** 最后一次按下的姿态键（C / Z / Ctrl）；null 表示当前没有可取消的姿态。 */
@@ -1146,6 +1124,14 @@ class FloatingWindowStateManager @Inject constructor(
      * other. New items now fan out across a coarse grid instead.
      */
     private fun currentScreenSize(): Offset {
+        if (screenSizeCacheEnabled.value) {
+            cachedScreenSize?.let { return it }
+            return computeScreenSize().also { cachedScreenSize = it }
+        }
+        return computeScreenSize()
+    }
+
+    private fun computeScreenSize(): Offset {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val bounds = windowManager.currentWindowMetrics.bounds
             return Offset(bounds.width().toFloat(), bounds.height().toFloat())
@@ -1272,6 +1258,39 @@ class FloatingWindowStateManager @Inject constructor(
         scope.launch {
             dataStoreManager.save(DataStoreManager.HUMANIZATION_INTERVAL_MS, clamped.toInt())
         }
+    }
+
+    /* ----------------- 鼠标高级参数 ----------------- */
+
+    /** 单帧鼠标位移断点阈值（40–800px），改动立即生效并保存（全局）。 */
+    fun setMouseJumpThreshold(px: Int) {
+        val clamped = px.coerceIn(40, 800)
+        mouseJumpThresholdPx.value = clamped
+        scope.launch { dataStoreManager.save(DataStoreManager.MOUSE_JUMP_THRESHOLD_PX, clamped) }
+    }
+
+    fun setMouseModeLatch(enabled: Boolean) {
+        mouseModeLatch.value = enabled
+        if (!enabled) latchedRelativeAxisMode = null
+        scope.launch { dataStoreManager.save(DataStoreManager.MOUSE_MODE_LATCH, enabled) }
+    }
+
+    fun setScreenSizeCache(enabled: Boolean) {
+        screenSizeCacheEnabled.value = enabled
+        if (!enabled) cachedScreenSize = null
+        scope.launch { dataStoreManager.save(DataStoreManager.SCREEN_SIZE_CACHE, enabled) }
+    }
+
+    /** 屏幕旋转/分辨率变化后由服务调用，丢弃缓存的屏幕尺寸。 */
+    fun invalidateScreenSizeCache() {
+        cachedScreenSize = null
+    }
+
+    /** 新手势开始时重置鼠标位移基准与锁存模式。 */
+    fun resetMouseRawBaseline() {
+        lastMouseRawX = Float.NaN
+        lastMouseRawY = Float.NaN
+        latchedRelativeAxisMode = null
     }
 
     /* ----------------- profile CRUD ----------------- */
@@ -1533,14 +1552,16 @@ class FloatingWindowStateManager @Inject constructor(
         // 新的一段输入开始时清掉上一段的绝对坐标基准：换鼠标、光标被系统回中、
         // 悬浮窗重新捕获指针后，rawX/rawY 会从一个完全不同的位置开始，
         // 继续和旧值相减会得到几百像素的假位移，视角因此瞬间甩到背后。
+        if (motionEvent.deviceId != lastMouseDeviceId) {
+            lastMouseDeviceId = motionEvent.deviceId
+            resetMouseRawBaseline()
+        }
         when (motionEvent.actionMasked) {
             MotionEvent.ACTION_DOWN,
             MotionEvent.ACTION_HOVER_ENTER,
             MotionEvent.ACTION_CANCEL,
-            MotionEvent.ACTION_OUTSIDE -> {
-                lastMouseRawX = Float.NaN
-                lastMouseRawY = Float.NaN
-            }
+            MotionEvent.ACTION_OUTSIDE,
+            MotionEvent.ACTION_HOVER_EXIT -> resetMouseRawBaseline()
         }
         eventHandler.mousePointerPosition = (pointerOffset.value + (overlayOrigin ?: Offset.Zero)).let {
             Offset(it.x.coerceIn(0f, screen.x - 1f), it.y.coerceIn(0f, screen.y - 1f))
@@ -1553,8 +1574,16 @@ class FloatingWindowStateManager @Inject constructor(
                 val relativeMouse = motionEvent.isFromSource(InputDevice.SOURCE_MOUSE_RELATIVE)
                 val axisX = if (relativeMouse) 0f else motionEvent.getAxisValue(MotionEvent.AXIS_RELATIVE_X)
                 val axisY = if (relativeMouse) 0f else motionEvent.getAxisValue(MotionEvent.AXIS_RELATIVE_Y)
-                val relativeAxes = !relativeMouse &&
+                val rawRelativeAxes = !relativeMouse &&
                     (motionEvent.isFromSource(InputDevice.SOURCE_TOUCHPAD) || axisX != 0f || axisY != 0f)
+                // 有的设备只在部分事件里填相对轴。逐事件判断会让同一段移动在
+                // 「相对位移」和「绝对坐标差」之间来回切换，表现为速度忽快忽慢。
+                // 锁存后整段手势固定一种解析方式，直到新手势/换设备。
+                val relativeAxes = if (mouseModeLatch.value) {
+                    latchedRelativeAxisMode
+                        ?: rawRelativeAxes.also { latchedRelativeAxisMode = it }
+                } else rawRelativeAxes
+                val maxDelta = mouseJumpThresholdPx.value.toFloat()
                 val dx: Float
                 val dy: Float
                 if (relativeMouse) {
@@ -1575,7 +1604,7 @@ class FloatingWindowStateManager @Inject constructor(
                 // 会跳几百像素；超过阈值说明是断点而不是人手一帧的真实位移，
                 // 丢掉这一帧并重建基准，避免视角被瞬间甩到背后。
                 if (!relativeMouse && !relativeAxes &&
-                    (abs(dx) > MAX_MOUSE_DELTA_PER_EVENT || abs(dy) > MAX_MOUSE_DELTA_PER_EVENT)
+                    (abs(dx) > maxDelta || abs(dy) > maxDelta)
                 ) {
                     lastMouseRawX = motionEvent.rawX
                     lastMouseRawY = motionEvent.rawY
@@ -1583,8 +1612,8 @@ class FloatingWindowStateManager @Inject constructor(
                 }
                 if (isShootingMode.value) {
                     val clamped = Offset(
-                        dx.coerceIn(-MAX_MOUSE_DELTA_PER_EVENT, MAX_MOUSE_DELTA_PER_EVENT),
-                        dy.coerceIn(-MAX_MOUSE_DELTA_PER_EVENT, MAX_MOUSE_DELTA_PER_EVENT)
+                        dx.coerceIn(-maxDelta, maxDelta),
+                        dy.coerceIn(-maxDelta, maxDelta)
                     )
                     // 射击模式：灵敏度作用在瞄准转视角上。
                     return eventHandler.handlePointerMove(clamped * sensitivity)

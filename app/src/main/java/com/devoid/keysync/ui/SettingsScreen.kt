@@ -80,7 +80,9 @@ import com.devoid.keysync.R
 import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.Profile
-import com.devoid.keysync.model.ClickMacro
+import com.devoid.keysync.model.ProfileAssist
+import com.devoid.keysync.model.assist
+import com.devoid.keysync.model.withAssist
 import com.devoid.keysync.model.SwapPair
 import com.devoid.keysync.model.ThemePreference
 import com.devoid.keysync.model.TouchMode
@@ -108,18 +110,17 @@ fun SettingsScreen(
     onDuplicateProfile: (String) -> Unit = {},
     onExportProfile: (String) -> String? = { null },
     onImportProfile: (String) -> String? = { null },
-    onSetProfileQuickSwap: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
-    onSetProfileSwapPairs: (profileId: String, pairs: List<SwapPair>) -> Unit = { _, _ -> },
-    onSetProfileTapSequence: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
-    onSetProfileTapSequenceGap: (profileId: String, gapMs: Int) -> Unit = { _, _ -> },
-    onSetProfileTabEsc: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
-    onSetProfileTabDebounce: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
-    onSetProfileStanceAssist: (profileId: String, enabled: Boolean) -> Unit = { _, _ -> },
-    onSetProfileMacros: (String, List<ClickMacro>) -> Unit = { _, _ -> },
+    onSaveProfileAssist: (String, ProfileAssist) -> Unit = { _, _ -> },
     overlayOpacity: Float = 0.5f,
     onSetOverlayOpacity: (Float) -> Unit = {},
     statusBarVisible: Boolean = true,
     onSetStatusBarVisible: (Boolean) -> Unit = {},
+    mouseJumpThresholdPx: Int = 240,
+    onSetMouseJumpThreshold: (Int) -> Unit = {},
+    mouseModeLatch: Boolean = true,
+    onSetMouseModeLatch: (Boolean) -> Unit = {},
+    screenSizeCacheEnabled: Boolean = true,
+    onSetScreenSizeCache: (Boolean) -> Unit = {},
     onStopOverlay: () -> Unit = {},
     wasdHumanization: Boolean = false,
     keyHumanization: Boolean = false,
@@ -144,7 +145,28 @@ fun SettingsScreen(
     var showResetConfirm by remember { mutableStateOf(false) }
     var showDiscardConfirm by remember { mutableStateOf(false) }
 
-    val isDirty = newConfig != appConfig
+    val activeProfile = profiles.firstOrNull { it.id == activeProfileId }
+    // 「按键辅助」草稿：和 newConfig 一样先收在本地，点保存才写回预设。
+    var assistDraft by remember(activeProfileId, activeProfile) {
+        mutableStateOf(activeProfile?.assist() ?: ProfileAssist())
+    }
+    var pendingSwitch by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    val assistDirty = activeProfile != null && assistDraft != activeProfile.assist()
+    val isDirty = newConfig != appConfig || assistDirty
+
+    /** 保存当前页面的全部草稿（应用配置 + 当前预设的按键辅助）。 */
+    fun saveStaged() {
+        onSave(newConfig)
+        if (activeProfile != null && assistDraft != activeProfile.assist()) {
+            onSaveProfileAssist(activeProfile.id, assistDraft)
+        }
+    }
+
+    /** 切换预设/新建会换掉草稿归属，有未保存修改时先确认。 */
+    fun runAfterDirtyCheck(action: () -> Unit) {
+        if (isDirty) pendingSwitch = action else action()
+    }
 
     // Leaving with unsaved edits used to be silent: the back arrow just
     // popped the stack and every pending change vanished.
@@ -164,6 +186,32 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(onClick = { showDiscardConfirm = false }) {
                     Text(stringResource(R.string.settings_discard_keep))
+                }
+            }
+        )
+    }
+
+    if (pendingSwitch != null) {
+        AlertDialog(
+            onDismissRequest = { pendingSwitch = null },
+            title = { Text("有未保存的修改") },
+            text = { Text("切换预设或新建会离开当前预设。要先保存这里的修改吗？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val action = pendingSwitch
+                    pendingSwitch = null
+                    saveStaged()
+                    action?.invoke()
+                }) { Text("保存并继续") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        val action = pendingSwitch
+                        pendingSwitch = null
+                        action?.invoke()
+                    }) { Text("放弃修改") }
+                    TextButton(onClick = { pendingSwitch = null }) { Text("取消") }
                 }
             }
         )
@@ -211,7 +259,10 @@ fun SettingsScreen(
                     Button(
                         modifier = Modifier.padding(end = 8.dp),
                         enabled = isDirty,
-                        onClick = { onSave(newConfig) }
+                        onClick = {
+                            saveStaged()
+                            onNavigateBack()
+                        }
                     ) {
                         Text(stringResource(R.string.settings_save))
                     }
@@ -229,9 +280,9 @@ fun SettingsScreen(
                 ProfileManagerCard(
                     profiles = profiles,
                     activeProfileId = activeProfileId,
-                    onCreate = onCreateProfile,
+                    onCreate = { name -> runAfterDirtyCheck { onCreateProfile(name) } },
                     onExportAllProfiles = onExportAllProfiles,
-                    onSwitch = onSwitchProfile,
+                    onSwitch = { id -> runAfterDirtyCheck { onSwitchProfile(id) } },
                     onRename = onRenameProfile,
                     onDelete = onDeleteProfile,
                     onDuplicate = onDuplicateProfile,
@@ -239,15 +290,9 @@ fun SettingsScreen(
                     onImport = onImportProfile,
                 )
                 ProfileAssistCard(
-                    profile = profiles.firstOrNull { it.id == activeProfileId },
-                    onSetQuickSwap = onSetProfileQuickSwap,
-                    onSetSwapPairs = onSetProfileSwapPairs,
-                    onSetTapSequence = onSetProfileTapSequence,
-                    onSetTapSequenceGap = onSetProfileTapSequenceGap,
-                    onSetTabEsc = onSetProfileTabEsc,
-                    onSetTabDebounce = onSetProfileTabDebounce,
-                    onSetStanceAssist = onSetProfileStanceAssist,
-                    onSetMacros = onSetProfileMacros,
+                    profile = activeProfile,
+                    draft = assistDraft,
+                    onDraftChange = { assistDraft = it },
                 )
                 Card {
                     Column(
@@ -361,6 +406,67 @@ fun SettingsScreen(
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.primary
                         )
+                        Text(
+                            "鼠标（全局，立即生效并保存）",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "单帧断点阈值",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text("${mouseJumpThresholdPx}px")
+                        }
+                        Slider(
+                            value = mouseJumpThresholdPx.toFloat().coerceIn(40f, 800f),
+                            valueRange = 40f..800f,
+                            steps = 37,
+                            onValueChange = { onSetMouseJumpThreshold(it.roundToInt()) }
+                        )
+                        Text(
+                            "正常手速一帧的位移远小于它；超过就当作光标跳变丢弃。默认 240，可按不同鼠标/投屏端微调。",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        HorizontalDivider()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "锁定鼠标输入模式",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    "同一段操作内固定用相对轴或绝对坐标，避免设备偶尔上报相对轴时速度忽快忽慢。默认开启。",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = mouseModeLatch,
+                                onCheckedChange = onSetMouseModeLatch
+                            )
+                        }
+                        HorizontalDivider()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "缓存屏幕尺寸",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    "避免每个鼠标事件都查询系统窗口尺寸，默认开启；屏幕旋转或分辨率变化时自动失效。",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = screenSizeCacheEnabled,
+                                onCheckedChange = onSetScreenSizeCache
+                            )
+                        }
+                        HorizontalDivider()
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(
@@ -645,20 +751,15 @@ fun KeyConfigTextField(
 }
 
 /**
- * 按键辅助：这些开关都跟随「当前预设」保存，与具体按键绑定无关。
- * 之前散落在每个预设的溢出菜单里，现在集中到当前预设的独立卡片。
+ * 按键辅助：这些开关都跟随「当前预设」，与具体按键绑定无关。
+ * 改动先写入 [draft]，点设置页右上角保存时才由调用方一次性写回预设，
+ * 这样返回或切换预设时「放弃修改」才能真正放弃。
  */
 @Composable
 private fun ProfileAssistCard(
     profile: Profile?,
-    onSetQuickSwap: (String, Boolean) -> Unit,
-    onSetSwapPairs: (String, List<SwapPair>) -> Unit,
-    onSetTapSequence: (String, Boolean) -> Unit,
-    onSetTapSequenceGap: (String, Int) -> Unit,
-    onSetTabEsc: (String, Boolean) -> Unit,
-    onSetTabDebounce: (String, Boolean) -> Unit,
-    onSetStanceAssist: (String, Boolean) -> Unit,
-    onSetMacros: (String, List<ClickMacro>) -> Unit,
+    draft: ProfileAssist,
+    onDraftChange: (ProfileAssist) -> Unit,
 ) {
     var showSwapPairs by remember { mutableStateOf(false) }
     var showMacros by remember { mutableStateOf(false) }
@@ -683,28 +784,32 @@ private fun ProfileAssistCard(
                 return@Column
             }
             Text(
-                "当前预设：${profile.name}",
+                "当前预设：${profile.name} · 改动需点右上角保存",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             AssistSwitchRow(
                 title = "Tab 双击 → Tab + Esc（2 秒冷却）",
                 desc = "约 1 秒内连按两次 Tab 时，第二次改为点击 Tab + Esc。",
-                checked = profile.tabEscEnabled,
-                onToggle = { onSetTabEsc(profile.id, !profile.tabEscEnabled) }
+                checked = draft.tabEscEnabled,
+                onToggle = { onDraftChange(draft.copy(tabEscEnabled = !draft.tabEscEnabled)) }
             )
             AssistSwitchRow(
                 title = "Tab 防连按（1 秒内只接受一次）",
                 desc = "快速连按 Tab 时吞掉多余输入，避免双击判定失败或点到其他按钮。",
-                checked = profile.tabDebounceEnabled,
-                onToggle = { onSetTabDebounce(profile.id, !profile.tabDebounceEnabled) }
+                checked = draft.tabDebounceEnabled,
+                onToggle = {
+                    onDraftChange(draft.copy(tabDebounceEnabled = !draft.tabDebounceEnabled))
+                }
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             AssistSwitchRow(
                 title = "R ↔ 右键（X 换位 / 1 还原）",
                 desc = "按换位键让 R 与鼠标右键按钮交换位置，按还原键各自归位。只改位置，不动键位绑定。",
-                checked = profile.quickSwapEnabled,
-                onToggle = { onSetQuickSwap(profile.id, !profile.quickSwapEnabled) }
+                checked = draft.quickSwapEnabled,
+                onToggle = {
+                    onDraftChange(draft.copy(quickSwapEnabled = !draft.quickSwapEnabled))
+                }
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -716,37 +821,43 @@ private fun ProfileAssistCard(
                     )
                 }
                 TextButton(onClick = { showSwapPairs = true }) {
-                    Text(if (profile.swapPairs.isEmpty()) "添加" else "编辑（${profile.swapPairs.size}）")
+                    Text(if (draft.swapPairs.isEmpty()) "添加" else "编辑（${draft.swapPairs.size}）")
                 }
             }
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             AssistSwitchRow(
                 title = "按 3 依次点 2/3/4",
                 desc = "一键切换武器组：按 3 时依次点击 2 → 3 → 4 的位置。",
-                checked = profile.tapSequence234Enabled,
-                onToggle = { onSetTapSequence(profile.id, !profile.tapSequence234Enabled) }
+                checked = draft.tapSequence234Enabled,
+                onToggle = {
+                    onDraftChange(draft.copy(tapSequence234Enabled = !draft.tapSequence234Enabled))
+                }
             )
-            if (profile.tapSequence234Enabled) {
+            if (draft.tapSequence234Enabled) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "连点间隔",
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodyMedium
                     )
-                    Text("${profile.tapSequence234GapMs} ms", style = MaterialTheme.typography.bodyMedium)
+                    Text("${draft.tapSequence234GapMs} ms", style = MaterialTheme.typography.bodyMedium)
                 }
                 Slider(
-                    value = profile.tapSequence234GapMs.toFloat().coerceIn(20f, 300f),
+                    value = draft.tapSequence234GapMs.toFloat().coerceIn(20f, 300f),
                     valueRange = 20f..300f,
                     steps = 27,
-                    onValueChange = { onSetTapSequenceGap(profile.id, it.roundToInt()) }
+                    onValueChange = {
+                        onDraftChange(draft.copy(tapSequence234GapMs = it.roundToInt()))
+                    }
                 )
             }
             AssistSwitchRow(
                 title = "Shift 取消蹲/趴（C/Z/Ctrl）",
                 desc = "按下 Shift 时取消最后一次切换的蹲下 / 趴下姿态。",
-                checked = profile.stanceAssistEnabled,
-                onToggle = { onSetStanceAssist(profile.id, !profile.stanceAssistEnabled) }
+                checked = draft.stanceAssistEnabled,
+                onToggle = {
+                    onDraftChange(draft.copy(stanceAssistEnabled = !draft.stanceAssistEnabled))
+                }
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -759,7 +870,7 @@ private fun ProfileAssistCard(
                     )
                 }
                 TextButton(onClick = { showMacros = true }) {
-                    Text(if (profile.macros.isEmpty()) "添加" else "编辑（${profile.macros.size}）")
+                    Text(if (draft.macros.isEmpty()) "添加" else "编辑（${draft.macros.size}）")
                 }
             }
         }
@@ -768,16 +879,16 @@ private fun ProfileAssistCard(
     if (profile == null) return
     if (showSwapPairs) {
         SwapPairsDialog(
-            profile = profile,
+            profile = profile.withAssist(draft),
             onDismiss = { showSwapPairs = false },
-            onSave = { onSetSwapPairs(profile.id, it) }
+            onSave = { onDraftChange(draft.copy(swapPairs = it)) }
         )
     }
     if (showMacros) {
         ClickMacrosDialog(
-            profile = profile,
+            profile = profile.withAssist(draft),
             onDismiss = { showMacros = false },
-            onSave = { onSetMacros(profile.id, it) }
+            onSave = { onDraftChange(draft.copy(macros = it)) }
         )
     }
 }
@@ -895,6 +1006,8 @@ fun ProfileManagerCard(
     var deleteTarget by remember { mutableStateOf<Profile?>(null) }
     var menuProfile by remember { mutableStateOf<Profile?>(null) }
     var exportText by remember { mutableStateOf<String?>(null) }
+    var showImportNotice by remember { mutableStateOf(false) }
+    var pendingImport by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -939,6 +1052,36 @@ fun ProfileManagerCard(
         }
     }
 
+    if (showImportNotice) {
+        AlertDialog(
+            onDismissRequest = {
+                showImportNotice = false
+                pendingImport = null
+            },
+            title = { Text("导入提示") },
+            text = {
+                Text(
+                    "预设里的按键位置按「悬浮窗可用区域」的比例保存，不是按手机分辨率。" +
+                        "换设备或可用区域比例不同时可能错位，导入后请进编辑态核对位置。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showImportNotice = false
+                    val action = pendingImport
+                    pendingImport = null
+                    action?.invoke()
+                }) { Text("继续导入") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showImportNotice = false
+                    pendingImport = null
+                }) { Text(stringResource(R.string.common_cancel)) }
+            }
+        )
+    }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -967,10 +1110,16 @@ fun ProfileManagerCard(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                TextButton(onClick = { showImportDialog = true }) {
+                TextButton(onClick = {
+                    pendingImport = { showImportDialog = true }
+                    showImportNotice = true
+                }) {
                     Text(stringResource(R.string.profile_import))
                 }
-                TextButton(onClick = { importFromFileLauncher.launch(arrayOf("*/*")) }) {
+                TextButton(onClick = {
+                    pendingImport = { importFromFileLauncher.launch(arrayOf("*/*")) }
+                    showImportNotice = true
+                }) {
                     Text("从文件导入")
                 }
                 TextButton(onClick = { exportText = onExportAllProfiles() }) { Text("复制全部预设") }
