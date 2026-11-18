@@ -789,19 +789,47 @@ private fun ProfileAssistCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             AssistSwitchRow(
-                title = "Tab 双击 → Tab + Esc（2 秒冷却）",
-                desc = "约 1 秒内连按两次 Tab 时，第二次改为点击 Tab + Esc。",
+                title = "Tab 双击 → Tab + Esc",
+                desc = "在判定窗口内连按两次 Tab 时，第二次改为点击 Tab + Esc；触发后进入冷却。",
                 checked = draft.tabEscEnabled,
                 onToggle = { onDraftChange(draft.copy(tabEscEnabled = !draft.tabEscEnabled)) }
             )
+            if (draft.tabEscEnabled) {
+                AssistTimeSlider(
+                    title = "双击判定窗口",
+                    value = draft.tabComboWindowMs,
+                    min = 300,
+                    max = 3000,
+                    step = 100,
+                    onChange = { onDraftChange(draft.copy(tabComboWindowMs = it)) }
+                )
+                AssistTimeSlider(
+                    title = "触发后冷却",
+                    value = draft.tabComboCooldownMs,
+                    min = 0,
+                    max = 5000,
+                    step = 100,
+                    onChange = { onDraftChange(draft.copy(tabComboCooldownMs = it)) }
+                )
+            }
             AssistSwitchRow(
-                title = "Tab 防连按（1 秒内只接受一次）",
-                desc = "快速连按 Tab 时吞掉多余输入，避免双击判定失败或点到其他按钮。",
+                title = "Tab 防连按",
+                desc = "在间隔内的重复 Tab 直接吞掉，避免双击判定失败或点到其他按钮。",
                 checked = draft.tabDebounceEnabled,
                 onToggle = {
                     onDraftChange(draft.copy(tabDebounceEnabled = !draft.tabDebounceEnabled))
                 }
             )
+            if (draft.tabDebounceEnabled) {
+                AssistTimeSlider(
+                    title = "防连按间隔",
+                    value = draft.tabDebounceMs,
+                    min = 200,
+                    max = 3000,
+                    step = 100,
+                    onChange = { onDraftChange(draft.copy(tabDebounceMs = it)) }
+                )
+            }
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             AssistSwitchRow(
                 title = "R ↔ 右键（X 换位 / 1 还原）",
@@ -891,6 +919,29 @@ private fun ProfileAssistCard(
             onSave = { onDraftChange(draft.copy(macros = it)) }
         )
     }
+}
+
+/** 按键辅助里的毫秒滑杆：范围与步进由调用方给出。 */
+@Composable
+private fun AssistTimeSlider(
+    title: String,
+    value: Int,
+    min: Int,
+    max: Int,
+    step: Int,
+    onChange: (Int) -> Unit,
+) {
+    val safeValue = value.coerceIn(min, max)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Text("$safeValue ms", style = MaterialTheme.typography.bodyMedium)
+    }
+    Slider(
+        value = safeValue.toFloat(),
+        valueRange = min.toFloat()..max.toFloat(),
+        steps = ((max - min) / step - 1).coerceAtLeast(0),
+        onValueChange = { onChange(it.roundToInt()) }
+    )
 }
 
 /** 按键辅助里的一行开关：点整行或右侧 Switch 都能切换。 */

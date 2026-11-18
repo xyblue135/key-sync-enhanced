@@ -455,12 +455,6 @@ class FloatingWindowStateManager @Inject constructor(
     private companion object {
         const val legacyLayoutScreenWidth = 2608
         const val legacyLayoutScreenHeight = 1200
-        /** Tab 双击判定窗口：两次按下间隔不超过该值才算双击。 */
-        const val TAB_COMBO_WINDOW_MS = 2000L
-        /** 触发 Tab+Esc 后的冷却，避免紧接着的 Tab 又被当成双击。 */
-        const val TAB_COMBO_COOLDOWN_MS = 2000L
-        /** Tab 防连按：两次有效 Tab 按下之间的最小间隔。 */
-        const val TAB_REPEAT_GUARD_MS = 1000L
         /** 鼠标断点阈值默认值；用户可在设置页的高级项里调整（全局）。 */
         const val DEFAULT_MOUSE_JUMP_THRESHOLD_PX = 240
     }
@@ -701,9 +695,9 @@ class FloatingWindowStateManager @Inject constructor(
     /**
      * Tab 防连按（预设级子开关）。
      *
-     * 开启后，距上一次有效 Tab 不足 [TAB_REPEAT_GUARD_MS] 的重复 Tab 整段吞掉：
+     * 开启后，距上一次有效 Tab 不足预设间隔（默认 1000ms，可调）的重复 Tab 整段吞掉：
      * - 快速连按 Tab 时，多余的按下不会落到游戏里（避免点到别的东西）
-     * - 第二次有效 Tab 必然间隔 ≥ 1 秒，正好落在双击判定窗口内，组合更容易成功
+     * - 第二次有效 Tab 必然落在双击判定窗口内，组合更容易成功
      *
      * 只拦截 Tab，其他按键不受影响；长按产生的重复事件跟随首次判定。
      */
@@ -714,6 +708,7 @@ class FloatingWindowStateManager @Inject constructor(
             swallowedTabDown = false
             return false
         }
+        val guardMs = profile.tabDebounceMs.coerceIn(200, 3000).toLong()
         return when (keyEvent.action) {
             KeyEvent.ACTION_DOWN -> {
                 if (keyEvent.repeatCount > 0) {
@@ -721,7 +716,7 @@ class FloatingWindowStateManager @Inject constructor(
                 } else {
                     val now = SystemClock.uptimeMillis()
                     val tooSoon = lastAcceptedTabAt != 0L &&
-                        now - lastAcceptedTabAt < TAB_REPEAT_GUARD_MS
+                        now - lastAcceptedTabAt < guardMs
                     swallowedTabDown = tooSoon
                     if (!tooSoon) lastAcceptedTabAt = now
                     tooSoon
@@ -737,11 +732,11 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     /**
-     * Tab 双击：2 秒内第二次按 Tab 时，改为依次点击 Tab 位置与 Esc 位置。
+     * Tab 双击：在预设窗口内（默认 2 秒，可调）第二次按 Tab 时，改为依次点击 Tab 位置与 Esc 位置。
      *
      * - 第一次按 Tab 走正常映射，并记下时间
      * - 第二次按 Tab（窗口内）吞掉原始 Tab，主动注入 Tab → Esc
-     * - 触发后进入 2 秒冷却，冷却期内的 Tab 一律按普通 Tab 处理，避免连按误触发 Esc
+     * - 触发后进入预设冷却（默认 2 秒，可调），冷却期内的 Tab 一律按普通 Tab 处理
      * - Tab / Esc 任一按钮不存在就不接管，让 Tab 保持原行为
      */
     private fun runTabEscCombo(keyCode: Int): Boolean {
@@ -754,13 +749,15 @@ class FloatingWindowStateManager @Inject constructor(
         if (items.none { it.boundKeyCode() == KeyEvent.KEYCODE_TAB } ||
             items.none { it.boundKeyCode() == KeyEvent.KEYCODE_ESCAPE }
         ) return false
-        val withinWindow = lastTabDownAt != 0L && now - lastTabDownAt <= TAB_COMBO_WINDOW_MS
+        val windowMs = profile.tabComboWindowMs.coerceIn(300, 3000).toLong()
+        val cooldownMs = profile.tabComboCooldownMs.coerceIn(0, 5000).toLong()
+        val withinWindow = lastTabDownAt != 0L && now - lastTabDownAt <= windowMs
         if (!withinWindow) {
             lastTabDownAt = now
             return false
         }
         lastTabDownAt = 0L
-        tabComboCooldownUntil = now + TAB_COMBO_COOLDOWN_MS
+        tabComboCooldownUntil = now + cooldownMs
         if (tabEscJob?.isActive != true) {
             tabEscJob = scope.launch {
                 listOf(KeyEvent.KEYCODE_TAB, KeyEvent.KEYCODE_ESCAPE)

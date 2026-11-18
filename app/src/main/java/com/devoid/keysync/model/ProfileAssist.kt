@@ -13,7 +13,10 @@ data class ProfileAssist(
     val tapSequence234Enabled: Boolean = true,
     val tapSequence234GapMs: Int = 60,
     val tabEscEnabled: Boolean = true,
+    val tabComboWindowMs: Int = 2000,
+    val tabComboCooldownMs: Int = 2000,
     val tabDebounceEnabled: Boolean = true,
+    val tabDebounceMs: Int = 1000,
     val stanceAssistEnabled: Boolean = true,
     val macros: List<ClickMacro> = emptyList(),
 )
@@ -25,7 +28,10 @@ fun Profile.assist(): ProfileAssist = ProfileAssist(
     tapSequence234Enabled = tapSequence234Enabled,
     tapSequence234GapMs = tapSequence234GapMs,
     tabEscEnabled = tabEscEnabled,
+    tabComboWindowMs = tabComboWindowMs,
+    tabComboCooldownMs = tabComboCooldownMs,
     tabDebounceEnabled = tabDebounceEnabled,
+    tabDebounceMs = tabDebounceMs,
     stanceAssistEnabled = stanceAssistEnabled,
     macros = macros,
 )
@@ -37,7 +43,10 @@ fun Profile.withAssist(assist: ProfileAssist): Profile = copy(
     tapSequence234Enabled = assist.tapSequence234Enabled,
     tapSequence234GapMs = assist.tapSequence234GapMs.coerceIn(20, 400),
     tabEscEnabled = assist.tabEscEnabled,
+    tabComboWindowMs = assist.tabComboWindowMs.coerceIn(300, 3000),
+    tabComboCooldownMs = assist.tabComboCooldownMs.coerceIn(0, 5000),
     tabDebounceEnabled = assist.tabDebounceEnabled,
+    tabDebounceMs = assist.tabDebounceMs.coerceIn(200, 3000),
     stanceAssistEnabled = assist.stanceAssistEnabled,
     macros = assist.macros,
 )

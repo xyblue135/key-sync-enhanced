@@ -35,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ExitToApp
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Done
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -803,8 +804,9 @@ fun EditToolbar(
     var itemsMenuVisible by remember { mutableStateOf(false) }
     // 编辑条会挡住想摆放的位置，因此允许直接拖动（按 ⠿ 手柄拖动，避免和按钮点击冲突）。
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
-    // 收起后只留一个 ⠿ 圆点，右上角按键区域可以正常拖动摆放。
-    var collapsed by remember { mutableStateOf(false) }
+    // 默认只显示一个居中的圆球：右上角经常放自定义按键，工具栏展开会挡住它。
+    // 点圆球展开完整工具栏，拖圆球可把它挪开。
+    var collapsed by remember { mutableStateOf(true) }
     // 根节点必须撑满父容器：下拉菜单是本 Box 的子节点，wrap-content 时菜单展开会
     // 把 Box 撑大，而 Box 在父级又按 TopEnd 对齐，结果整条工具栏（含 ⠿ 手柄）
     // 被挤到左边——就是「重新打开配置菜单，按钮被顶到一边」。撑满后工具栏与菜单
@@ -813,7 +815,7 @@ fun EditToolbar(
         if (collapsed) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
+                    .align(Alignment.Center)
                     .padding(8.dp)
                     .size(36.dp)
                     .clip(CircleShape)
@@ -829,7 +831,11 @@ fun EditToolbar(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Text("⠿", color = MaterialTheme.colorScheme.onSurface)
+                Icon(
+                    Icons.Rounded.Settings,
+                    contentDescription = "展开编辑工具栏",
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
             }
         } else {
         Row(

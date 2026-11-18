@@ -22,10 +22,16 @@ data class Profile(
     val tapSequence234Enabled: Boolean = true,
     /** 2-3-4 连点之间每个触点的间隔（ms），越小越快。默认 60。 */
     val tapSequence234GapMs: Int = 60,
-    /** Tab 双击（2 秒内）改为点击 Tab + Esc 两个位置，之后 2 秒冷却。默认开启。 */
+    /** Tab 双击（默认 2 秒内）改为点击 Tab + Esc 两个位置，之后进入冷却。默认开启。 */
     val tabEscEnabled: Boolean = true,
-    /** Tab 防连按：开启后 1 秒内的重复 Tab 直接吞掉，避免手速过快时多余的 Tab 落到游戏里。默认开启。 */
+    /** Tab 双击判定窗口（ms）：两次 Tab 按下间隔不超过该值才算双击。默认 2000。 */
+    val tabComboWindowMs: Int = 2000,
+    /** 触发 Tab+Esc 后的冷却（ms），避免紧接着的 Tab 又被当成双击。默认 2000。 */
+    val tabComboCooldownMs: Int = 2000,
+    /** Tab 防连按：开启后重复 Tab 在间隔内直接吞掉，避免手速过快时多余的 Tab 落到游戏里。默认开启。 */
     val tabDebounceEnabled: Boolean = true,
+    /** Tab 防连按间隔（ms）：两次有效 Tab 按下之间的最小间隔。默认 1000。 */
+    val tabDebounceMs: Int = 1000,
     /** Shift 按下时取消最后按下的蹲/趴姿态（C / Z / Ctrl）。默认开启。 */
     val stanceAssistEnabled: Boolean = true,
     /** Ordered independent click points, separate from ordinary key bindings. */
