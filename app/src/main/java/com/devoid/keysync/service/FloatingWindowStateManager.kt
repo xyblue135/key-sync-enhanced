@@ -179,8 +179,9 @@ class FloatingWindowStateManager @Inject constructor(
         if (width <= 0 || height <= 0) return
         val viewport = Offset(width.toFloat(), height.toFloat())
         if (overlayViewport == viewport && overlayOrigin == origin) return
-        // Save against the OLD frame before replacing it, so rotation cannot relabel old coordinates.
-        if (layoutViewport != null) persistActiveProfile()
+        // 这里不再 persist：窗口重建/首帧/insets 落地时的尺寸是瞬态的，
+        // 把按瞬态尺寸投影出的坐标写回预设会让边缘按钮被永久压平。
+        // 预设坐标只在用户实际操作（拖拽、改键、缩放等）时写回。
         overlayViewport = viewport
         overlayOrigin = origin
         _reportedViewport.value = viewport
@@ -358,7 +359,8 @@ class FloatingWindowStateManager @Inject constructor(
                 layoutScreenWidth = viewport.x.toInt(), layoutScreenHeight = viewport.y.toInt())
             _profiles.value = listOf(temporary)
             _activeProfileId.value = temporary.id
-            applyActiveProfile()
+            // 等悬浮层首帧尺寸到达后再投影；此前用整屏 bounds 会污染坐标。
+            if (overlayViewport != null) applyActiveProfile()
             return
         }
         val storedActiveId = dataStoreManager.getActiveProfileId().first()
@@ -428,7 +430,9 @@ class FloatingWindowStateManager @Inject constructor(
 
         _profiles.value = stored
         _activeProfileId.value = activeId
-        applyActiveProfile()
+        // 悬浮层还没布局时先不投影：currentScreenSize() 是整屏 bounds（含系统栏），
+        // 与预设保存的可用区域坐标系不同。等 onOverlayFrame 拿到真实尺寸后再应用。
+        if (overlayViewport != null) applyActiveProfile()
     }
 
     /**
@@ -632,13 +636,16 @@ class FloatingWindowStateManager @Inject constructor(
     /** Persist the current in-memory items/appConfig back into the active profile. */
     private fun persistActiveProfile() {
         val id = _activeProfileId.value ?: return
+        val applied = layoutViewport != null
         val updated = _profiles.value.map { profile ->
             if (profile.id == id) {
+                val layout = layoutViewport ?: overlayViewport
                 profile.copy(
-                    items = _containerItems.value.map { it.copy() },
+                    // 尚未完成首次投影时容器是空的，直接沿用预设里的 items，避免把布局清空。
+                    items = if (applied) _containerItems.value.map { it.copy() } else profile.items,
                     appConfig = _appConfig.value,
-                    layoutScreenWidth = (layoutViewport ?: overlayViewport ?: currentScreenSize()).x.toInt(),
-                    layoutScreenHeight = (layoutViewport ?: overlayViewport ?: currentScreenSize()).y.toInt(),
+                    layoutScreenWidth = layout?.x?.toInt() ?: profile.layoutScreenWidth,
+                    layoutScreenHeight = layout?.y?.toInt() ?: profile.layoutScreenHeight,
                 )
             } else profile
         }

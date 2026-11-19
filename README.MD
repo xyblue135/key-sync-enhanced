@@ -13,7 +13,7 @@
 | namespace / applicationId | `com.devoid.keysync` |
 | compileSdk / targetSdk | 36 |
 | minSdk | 29 |
-| versionCode / versionName | 50 / `1.80-android16` |
+| versionCode / versionName | 51 / `1.81-android16` |
 | debug 变体 | applicationId 后缀 `.fpsdebug`，versionName 后缀 `-debug` |
 | Kotlin / Java | 17 |
 
@@ -371,6 +371,20 @@ DataStore 文件名为 `app_configurations`，键定义集中在 `DataStoreManag
 
 - `overlayOpacity` 旧代码只改 StateFlow 不落盘，重启即丢；已补 `FloatingWindowStateManager.saveOverlayOpacity()` 写穿。
 - `overlayOrigin` 是 `FloatingWindowStateManager` 的运行期私有字段（由实测位置推出，见 `updateMeasuredPosition`），**不随 Profile 存储**；布局一致性依赖 Profile 的 `layoutScreenWidth/Height` 基准 + 实测重算。改动测量/缩放逻辑时两者要一起看。
+
+### 6.3.1 重启后右上角按钮被往下挤（1.81 修复）
+
+- 现象：只有贴近屏幕上边缘的一部分按钮（多在右上角）每次重启后被下移一截，左侧与右下角正常。
+- 根因链条：
+  1. 服务启动时悬浮窗尚未布局，`overlayViewport == null`，`applyActiveProfile()` 退回 `currentScreenSize()`（`WindowMetrics.bounds`，**整屏，含系统栏**），而预设保存的是**可用区域**坐标系。
+  2. `LayoutProjection.position()` 把坐标归一化后 `coerceIn(0f, 1f)`；被拖到 `y<0`（编辑态允许压进上边缘）的按钮在归一化时成为负数，被压成 0，投影结果为 `margin = size*(scale-1)/2`。
+  3. 悬浮层首帧到达时 `onOverlayFrame()` 立即 `persistActiveProfile()`，把这份被压平的坐标连同整屏基准写回预设，之后重启都停在新位置。
+- 修复（三处，缺一不可）：
+  1. `projectLayout` 在 `from ≈ to` 且未旋转时**原样返回**，不做归一化/夹取。
+  2. `onOverlayFrame` **不再自动写盘**，只更新 viewport 并重新投影；持久化仅由用户操作触发。
+  3. `persistActiveProfile` 只在完成首次投影后写 `items`，并用本次 apply 的 `layoutViewport` 作为基准；未投影时保留预设原有 items/layout，避免清空。
+- 回归用例：`LayoutProjectionTest.sameSizeProjectionKeepsEdgeButtonsExactlyInPlace`（同尺寸必须保留负 y）。
+- **红线：不要在 `from == to` 的路径上恢复归一化夹取，也不要在帧变化回调里写盘。**
 
 ### 6.4 批量改动的注意事项
 

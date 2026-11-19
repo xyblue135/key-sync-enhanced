@@ -11,6 +11,11 @@ internal fun projectLayout(items: List<DraggableItem>, from: Offset, to: Offset,
     // 保证 横→竖→横 能回到原坐标。
     val rotate = (from.x > from.y) != (to.x > to.y)
     val rotatedFrom = if (rotate) Offset(from.y, from.x) else from
+    // 同一尺寸下不做任何投影。归一化 + coerceIn 在边缘是不可逆的：
+    // 被拖到 y<0 的按钮会被压到 margin，再投影回来也无法复位。
+    val sameFrame = !rotate &&
+        kotlin.math.abs(rotatedFrom.x - to.x) < 1f &&
+        kotlin.math.abs(rotatedFrom.y - to.y) < 1f
 
     fun orient(p: Offset): Offset = when {
         !rotate -> p
@@ -25,6 +30,7 @@ internal fun projectLayout(items: List<DraggableItem>, from: Offset, to: Offset,
     // Button dimensions are measured again by Compose in dp. Scaling that cached
     // measurement shrinks it repeatedly across restarts and does not resize the UI.
     fun position(p: Offset, size: Int): Offset {
+        if (sameFrame) return p
         val q = orient(p)
         fun axis(value: Float, old: Float, new: Float): Float {
             val scale = buttonScale.coerceIn(0.6f, 2f)
@@ -45,6 +51,7 @@ internal fun projectLayout(items: List<DraggableItem>, from: Offset, to: Offset,
                 cancelPosition = position(item.cancelPosition, item.size),
                 anchorPosition = item.anchorPosition?.let { position(it, item.size) })
             is DraggableItem.WASDGroup -> {
+                if (sameFrame) return@map item
                 // A WASD group has no cached size, so its extent comes from the
                 // geometry it last reported. Without this an in-range source can
                 // still project to a position whose drawn box leaves the screen.

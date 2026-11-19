@@ -77,6 +77,17 @@ class LayoutProjectionTest {
         assertEquals((group.w - group.center).getDistance(), (projected.w - projected.center).getDistance(), 0.01f)
         assertEquals((group.d - group.center).getDistance(), (projected.d - projected.center).getDistance(), 0.01f)
     }
+    @Test fun sameSizeProjectionKeepsEdgeButtonsExactlyInPlace() {
+        // 重启时曾经先用整屏 bounds 投影，再被首帧写盘：y<0 的按钮被 coerceIn
+        // 压到 margin，永久下移。同尺寸下必须原样返回，包括负坐标。
+        val topEdge = DraggableItem.FixedKey(1, Offset(900f, -12f), DraggableItemType.KEY, 35, 100)
+        val projected = projectLayout(
+            listOf(topEdge), Offset(1080f, 2210f), Offset(1080f, 2210f)
+        ).single()
+        assertEquals(-12f, projected.position.y, 0.01f)
+        assertEquals(900f, projected.position.x, 0.01f)
+    }
+
     @Test fun keyCannotBeProjectedPastTheLeftOrTopEdge() {
         // A button saved off the left edge -- the classic landscape symptom --
         // must come back inside the viewport instead of staying cut off.
