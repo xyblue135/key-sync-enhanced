@@ -1683,6 +1683,14 @@ class FloatingWindowStateManager @Inject constructor(
         ) {
             if (handleMapMouseToggle()) return true
         }
+        // 光标模式（鼠标已唤起）下按 F：在光标位置快速点两下，方便拾取/打开物品。
+        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
+            keyEvent.keyCode == KeyEvent.KEYCODE_F &&
+            !isShootingMode.value && mouseCursorSeen
+        ) {
+            eventHandler.doubleTapExtraPoint(eventHandler.mousePointerPosition)
+            return true
+        }
         _lastInputLabel.value = keyEvent.keyCode.keyCodeToString() +
             if (keyEvent.action == KeyEvent.ACTION_DOWN) " 按下" else " 松开"
         // 非编辑态：同步物理按键的按下/抬起状态，供悬浮窗按钮显示「按下」高亮。

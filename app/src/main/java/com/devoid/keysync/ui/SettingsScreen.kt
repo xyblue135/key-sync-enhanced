@@ -486,6 +486,11 @@ fun SettingsScreen(
                             onSelect = { newConfig = newConfig.copy(normalBtnTouchMode = it) }
                         )
                     }
+                    Text(
+                        "颜色区分：点击=绿、按住=蓝、混合=橙（有约 200ms 延迟，不推荐）、轮盘=紫；单个按键可在编辑弹窗里单独覆盖。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 SettingsSectionCard(
                     title = "鼠标与兼容",
@@ -1131,13 +1136,23 @@ private fun TouchModeSelector(
                 .widthIn(min = 60.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(value.name.capitalizeFirst(), style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = touchModeShortName(value),
+                style = MaterialTheme.typography.titleMedium,
+                color = touchModeColor(value)
+            )
             Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null)
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             TouchMode.entries.filter { it != TouchMode.WHEEL }.forEach {
                 DropdownMenuItem(
-                    text = { Text(it.name.capitalizeFirst()) },
+                    text = {
+                        Text(
+                            text = touchModeShortName(it) +
+                                if (it == TouchMode.MIXED) " · 有延迟，不推荐" else "",
+                            color = touchModeColor(it)
+                        )
+                    },
                     onClick = {
                         onSelect(it)
                         expanded = false

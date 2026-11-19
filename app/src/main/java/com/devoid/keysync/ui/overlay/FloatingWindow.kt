@@ -45,6 +45,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -92,6 +93,7 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import com.devoid.keysync.R
 import com.devoid.keysync.ui.MouseInputPicker
+import com.devoid.keysync.ui.touchModeColor
 import com.devoid.keysync.domain.KEYCODE_MMC
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.AppConfig
@@ -817,12 +819,14 @@ fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
                 ) {
                     RadioButton(
                         selected = selectedMode == mode,
-                        onClick = { selectedMode = mode }
+                        onClick = { selectedMode = mode },
+                        colors = RadioButtonDefaults.colors(selectedColor = touchModeColor(mode))
                     )
                     Text(
                         text = touchModeLabel(mode),
                         modifier = Modifier.padding(start = 4.dp),
-                        style = MaterialTheme.typography.bodyMedium
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = touchModeColor(mode)
                     )
                 }
             }
@@ -834,12 +838,16 @@ fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
             ) {
                 RadioButton(
                     selected = selectedMode == null,
-                    onClick = { selectedMode = null }
+                    onClick = { selectedMode = null },
+                    colors = RadioButtonDefaults.colors(
+                        selectedColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 )
                 Text(
                     text = stringResource(R.string.key_touch_mode_global),
                     modifier = Modifier.padding(start = 4.dp),
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             }

@@ -98,6 +98,25 @@ class EventHandler(
         )
     }
 
+    /**
+     * 在指定屏幕坐标快速点两下（光标模式下 F 键）。
+     *
+     * 复用同一个 pointer：第二下调用 tap() 会先抬起上一段未结束的触点，
+     * 再重新按下，保证「抬起 → 短间隔 → 按下」的顺序，不会变成双指同时按。
+     */
+    fun doubleTapExtraPoint(position: Offset, gapMs: Long = 90L) {
+        val pointer = extraTapPointerBase + (extraTapCursor++ % 8)
+        val tapOnce = {
+            extraTapPulse.tap(
+                pointer,
+                down = { eventInjector.injectPointer(pointer, position) },
+                up = { eventInjector.releasePointer(pointer) },
+            )
+        }
+        tapOnce()
+        mainHandler.postDelayed({ tapOnce() }, gapMs)
+    }
+
     // 拖拽丢弃使用独立触点号段，避免和摇杆/宏/按键触点互相覆盖。
     private val dragPointerBase = 1_300_000
     private var dragPointerCursor = 0
