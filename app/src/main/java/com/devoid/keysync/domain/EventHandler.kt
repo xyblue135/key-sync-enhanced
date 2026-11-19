@@ -1114,6 +1114,11 @@ class EventHandler(
         }
     }
 
+    /** 外部（M 键开关地图）设置射击模式：true = 瞄准/光标收回，false = 光标模式。 */
+    fun setShootingModeEnabled(enabled: Boolean) {
+        if (shootingMode != enabled) toggleShootingMode()
+    }
+
     private fun toggleShootingMode() {
         stopWheel()
         val newState = !shootingMode

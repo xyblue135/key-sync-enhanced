@@ -103,6 +103,8 @@ class DataStoreManager internal constructor(
         val DISCARD_DRAG_ENABLED = booleanPreferencesKey("discard_drag_enabled")
         /** Alt+D 拖拽速度倍数（1–10，默认 5 = 原速的 5 倍）。 */
         val DISCARD_DRAG_SPEED = floatPreferencesKey("discard_drag_speed")
+        /** M 键开关地图并切换鼠标（全局），默认开启。 */
+        val MAP_MOUSE_TOGGLE_ENABLED = booleanPreferencesKey("map_mouse_toggle_enabled")
 
         /* -------- 鼠标高级参数（全局，与预设无关） -------- */
         /** 单帧位移断点阈值（px），默认 240。 */

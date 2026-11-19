@@ -124,6 +124,8 @@ fun SettingsScreen(
     onSetDiscardDragEnabled: (Boolean) -> Unit = {},
     discardDragSpeed: Float = 5f,
     onSetDiscardDragSpeed: (Float) -> Unit = {},
+    mapMouseToggleEnabled: Boolean = true,
+    onSetMapMouseToggleEnabled: (Boolean) -> Unit = {},
     onStopOverlay: () -> Unit = {},
     wasdHumanization: Boolean = false,
     keyHumanization: Boolean = false,
@@ -543,6 +545,24 @@ fun SettingsScreen(
                         Switch(
                             checked = screenSizeCacheEnabled,
                             onCheckedChange = onSetScreenSizeCache
+                        )
+                    }
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "M 键开关地图并切光标",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                "第一下按 M 打开地图并把鼠标切出来，再按一下改为点 ESC 位置关图、收回鼠标。适合开地图后用鼠标点标记/道具。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = mapMouseToggleEnabled,
+                            onCheckedChange = onSetMapMouseToggleEnabled
                         )
                     }
                     HorizontalDivider()

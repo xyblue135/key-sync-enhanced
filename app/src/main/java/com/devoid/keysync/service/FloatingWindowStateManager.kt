@@ -210,6 +210,10 @@ class FloatingWindowStateManager @Inject constructor(
     /** Alt+D 拖拽速度倍数（1–10）：值越大移动越快，默认 5 = 原速的 5 倍。 */
     val discardDragSpeed = MutableStateFlow(DEFAULT_DISCARD_DRAG_SPEED)
     private var discardDragJob: Job? = null
+    /** M 键开关地图并切换鼠标（全局），默认开启。 */
+    val mapMouseToggleEnabled = MutableStateFlow(true)
+    /** M 键当前是否处于「地图已打开」状态；重启服务后归零。 */
+    private var mapToggleOpen = false
 
     private val _containerItems = MutableStateFlow(listOf<DraggableItem>())
     val containerItems = _containerItems.asStateFlow()
@@ -333,6 +337,8 @@ class FloatingWindowStateManager @Inject constructor(
                 (dataStoreManager.getFloat(DataStoreManager.DISCARD_DRAG_SPEED).first()
                     ?: DEFAULT_DISCARD_DRAG_SPEED)
                     .coerceIn(MIN_DISCARD_DRAG_SPEED, MAX_DISCARD_DRAG_SPEED)
+            mapMouseToggleEnabled.value =
+                dataStoreManager.getBoolean(DataStoreManager.MAP_MOUSE_TOGGLE_ENABLED).first() ?: true
             // 两条 init 协程的完成顺序不确定：若预设先加载完，这里要把刚读到的拟人化设置补应用一次。
             syncHumanization()
         }
@@ -1072,6 +1078,31 @@ class FloatingWindowStateManager @Inject constructor(
         scope.launch { dataStoreManager.save(DataStoreManager.DISCARD_DRAG_ENABLED, enabled) }
     }
 
+    /** 全局开关：M 键开关地图并切换鼠标（默认开启）。 */
+    fun setMapMouseToggleEnabled(enabled: Boolean) {
+        mapMouseToggleEnabled.value = enabled
+        scope.launch { dataStoreManager.save(DataStoreManager.MAP_MOUSE_TOGGLE_ENABLED, enabled) }
+    }
+
+    /**
+     * M 键：第一次按下开图并把鼠标切出来（退出射击模式），M 键本身继续走正常映射；
+     * 第二次按下点 ESC 映射位置并收回鼠标（进入射击模式），本次 M 被吞掉。
+     */
+    private fun handleMapMouseToggle(): Boolean {
+        if (!mapToggleOpen) {
+            mapToggleOpen = true
+            eventHandler.setShootingModeEnabled(false)
+            return false
+        }
+        mapToggleOpen = false
+        val esc = _containerItems.value.firstOrNull {
+            it.boundKeyCode() == KeyEvent.KEYCODE_ESCAPE
+        }
+        if (esc != null) eventHandler.tapExtraPoint(esc.position)
+        eventHandler.setShootingModeEnabled(true)
+        return true
+    }
+
     /** 全局设置：Alt+D 拖拽速度倍数（1–10），立即持久化。 */
     fun setDiscardDragSpeed(speed: Float) {
         val safe = speed.coerceIn(MIN_DISCARD_DRAG_SPEED, MAX_DISCARD_DRAG_SPEED)
@@ -1646,6 +1677,12 @@ class FloatingWindowStateManager @Inject constructor(
             keyEvent.keyCode == KeyEvent.KEYCODE_D &&
             keyEvent.isAltPressed && startDiscardDrag()
         ) return true
+        // M 键开图并切光标：第一下透传 M 并切出光标，第二下改点 ESC 并收回光标。
+        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
+            keyEvent.keyCode == KeyEvent.KEYCODE_M && mapMouseToggleEnabled.value
+        ) {
+            if (handleMapMouseToggle()) return true
+        }
         _lastInputLabel.value = keyEvent.keyCode.keyCodeToString() +
             if (keyEvent.action == KeyEvent.ACTION_DOWN) " 按下" else " 松开"
         // 非编辑态：同步物理按键的按下/抬起状态，供悬浮窗按钮显示「按下」高亮。

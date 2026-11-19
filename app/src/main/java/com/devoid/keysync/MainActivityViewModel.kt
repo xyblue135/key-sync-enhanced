@@ -114,6 +114,8 @@ class MainActivityViewModel @Inject constructor(
     val discardDragEnabled: StateFlow<Boolean> = stateManager.discardDragEnabled
     /** Alt+D 拖拽速度倍数（1–10，默认 5）。 */
     val discardDragSpeed: StateFlow<Float> = stateManager.discardDragSpeed
+    /** M 键开关地图并切换鼠标（全局，默认开启）。 */
+    val mapMouseToggleEnabled: StateFlow<Boolean> = stateManager.mapMouseToggleEnabled
 
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     /** 「检查更新 / 下载并安装」的状态。 */
@@ -237,6 +239,7 @@ class MainActivityViewModel @Inject constructor(
 
     fun setDiscardDragEnabled(enabled: Boolean) = stateManager.setDiscardDragEnabled(enabled)
     fun setDiscardDragSpeed(speed: Float) = stateManager.setDiscardDragSpeed(speed)
+    fun setMapMouseToggleEnabled(enabled: Boolean) = stateManager.setMapMouseToggleEnabled(enabled)
 
     /**
      * Removes games by package name.
