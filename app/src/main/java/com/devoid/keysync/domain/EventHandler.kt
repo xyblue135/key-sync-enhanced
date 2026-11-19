@@ -98,6 +98,27 @@ class EventHandler(
         )
     }
 
+    // 拖拽丢弃使用独立触点号段，避免和摇杆/宏/按键触点互相覆盖。
+    private val dragPointerBase = 1_300_000
+    private var dragPointerCursor = 0
+
+    fun allocateDragPointer(): Int = dragPointerBase + (dragPointerCursor++ % 4)
+
+    /** 拖拽起点：按住左键（在游戏里表现为按下不放）。 */
+    fun beginCursorDrag(pointerId: Int, position: Offset) {
+        eventInjector.injectPointer(pointerId, position)
+    }
+
+    /** 拖拽中途：绝对定位到新位置，保持按下状态。 */
+    fun moveCursorDrag(pointerId: Int, position: Offset) {
+        eventInjector.transFormGesture(pointerId, position)
+    }
+
+    /** 松开左键；取消/异常路径也必须调用。 */
+    fun endCursorDrag(pointerId: Int) {
+        eventInjector.releasePointer(pointerId)
+    }
+
     fun setMacros(value: List<ClickMacro>, viewport: Offset, origin: Offset) {
         macroRunner.cancel()
         macros = value

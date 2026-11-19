@@ -20,6 +20,17 @@ class ProfileToolsTest {
     )
 
     @Test
+    fun swapPairKeepsLegacySingleKeyAndSupportsMultipleOnKeys() {
+        // 旧预设只有单键字段，读出来仍然生效。
+        assertEquals(listOf(52), SwapPair(1, 2, 52, 53).onKeys)
+        // 新预设用多键：1234 任意一个都能触发同一对交换。
+        assertEquals(
+            listOf(8, 9, 10, 11),
+            SwapPair(1, 2, 0, 53, swapOnKeyCodes = listOf(8, 9, 10, 11)).onKeys
+        )
+    }
+
+    @Test
     fun editingCopiedLayoutCannotMutateOriginal() {
         val original = source()
         val copied = original.independentCopy("b", "载具")

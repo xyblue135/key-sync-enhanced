@@ -121,6 +121,8 @@ fun SettingsScreen(
     onSetMouseModeLatch: (Boolean) -> Unit = {},
     screenSizeCacheEnabled: Boolean = true,
     onSetScreenSizeCache: (Boolean) -> Unit = {},
+    discardDragEnabled: Boolean = false,
+    onSetDiscardDragEnabled: (Boolean) -> Unit = {},
     onStopOverlay: () -> Unit = {},
     wasdHumanization: Boolean = false,
     keyHumanization: Boolean = false,
@@ -468,6 +470,24 @@ fun SettingsScreen(
                             Switch(
                                 checked = screenSizeCacheEnabled,
                                 onCheckedChange = onSetScreenSizeCache
+                            )
+                        }
+                        HorizontalDivider()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Alt+D 拖拽丢弃",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    "光标模式下按住 Alt 再按 D：在光标处按住物品拖到编辑态放置的「丢弃点」，松开后光标回位。射击模式与未出现光标时不生效。",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = discardDragEnabled,
+                                onCheckedChange = onSetDiscardDragEnabled
                             )
                         }
                         HorizontalDivider()
@@ -824,40 +844,8 @@ private fun ProfileAssistCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             AssistSwitchRow(
-                title = "Tab 双击 → Tab + Esc",
-                desc = "在判定窗口内连按两次 Tab 时，第二次改为点击 Tab，等待设定延迟后点击 Esc；触发后进入冷却。",
-                checked = draft.tabEscEnabled,
-                onToggle = { onDraftChange(draft.copy(tabEscEnabled = !draft.tabEscEnabled)) }
-            )
-            if (draft.tabEscEnabled) {
-                AssistTimeSlider(
-                    title = "双击判定窗口",
-                    value = draft.tabComboWindowMs,
-                    min = 300,
-                    max = 3000,
-                    step = 100,
-                    onChange = { onDraftChange(draft.copy(tabComboWindowMs = it)) }
-                )
-                AssistTimeSlider(
-                    title = "Tab → Esc 延迟",
-                    value = draft.tabEscDelayMs,
-                    min = 0,
-                    max = 5000,
-                    step = 100,
-                    onChange = { onDraftChange(draft.copy(tabEscDelayMs = it)) }
-                )
-                AssistTimeSlider(
-                    title = "触发后冷却",
-                    value = draft.tabComboCooldownMs,
-                    min = 0,
-                    max = 5000,
-                    step = 100,
-                    onChange = { onDraftChange(draft.copy(tabComboCooldownMs = it)) }
-                )
-            }
-            AssistSwitchRow(
                 title = "Tab 防连按",
-                desc = "在间隔内的重复 Tab 直接吞掉；双击组合开启时不生效，连按本身就是触发条件。",
+                desc = "在间隔内的重复 Tab 直接吞掉，避免手速过快时多余的 Tab 落到游戏里。",
                 checked = draft.tabDebounceEnabled,
                 onToggle = {
                     onDraftChange(draft.copy(tabDebounceEnabled = !draft.tabDebounceEnabled))
@@ -1672,7 +1660,7 @@ private fun SwapPairsDialog(
     var pairs by remember(profile) { mutableStateOf(profile.swapPairs) }
     var aItemId by remember { mutableStateOf<Int?>(null) }
     var bItemId by remember { mutableStateOf<Int?>(null) }
-    var swapOn by remember { mutableStateOf<Int?>(null) }
+    var swapOnCodes by remember { mutableStateOf(listOf<Int>()) }
     var swapOff by remember { mutableStateOf<Int?>(null) }
     var capturing by remember { mutableStateOf<SwapKeyTarget?>(null) }
     val focusRequester = remember { FocusRequester() }
@@ -1710,7 +1698,11 @@ private fun SwapPairsDialog(
                             val code = native.keyCode
                             if (code > NativeKeyEvent.KEYCODE_UNKNOWN) {
                                 when (target) {
-                                    SwapKeyTarget.On -> swapOn = code
+                                    // 换位键支持多个：1234 这类武器槽任意一个都能触发，
+                                    // 重复按同一个键只保留一次。
+                                    SwapKeyTarget.On -> if (code !in swapOnCodes) {
+                                        swapOnCodes = swapOnCodes + code
+                                    }
                                     SwapKeyTarget.Off -> swapOff = code
                                 }
                             }
@@ -1732,7 +1724,11 @@ private fun SwapPairsDialog(
                     pairs.forEach { pair ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                "${itemLabel(pair.aItemId)} ↔ ${itemLabel(pair.bItemId)}　换${pair.swapOnKeyCode.keyCodeToString().removePrefix("KEYCODE_")} / 回${pair.swapOffKeyCode.keyCodeToString().removePrefix("KEYCODE_")}",
+                                "${itemLabel(pair.aItemId)} ↔ ${itemLabel(pair.bItemId)}　换${
+                                    pair.onKeys.joinToString("/") {
+                                        it.keyCodeToString().removePrefix("KEYCODE_")
+                                    }
+                                } / 回${pair.swapOffKeyCode.keyCodeToString().removePrefix("KEYCODE_")}",
                                 modifier = Modifier.weight(1f),
                                 style = MaterialTheme.typography.bodySmall
                             )
@@ -1748,15 +1744,24 @@ private fun SwapPairsDialog(
                     onPick = { aItemId = it })
                 ItemChipRow(label = "B 按钮", items = pickable, selected = bItemId,
                     onPick = { bItemId = it })
-                SwapKeyRow(
-                    title = "换位键（按此键交换）",
-                    code = swapOn,
-                    capturing = capturing == SwapKeyTarget.On,
-                    onStart = {
+                // 换位键可多个：已添加的显示成可点掉的键名，再按“添加”捕获新键。
+                Text("换位键（可添加多个，任意一个触发交换）", style = MaterialTheme.typography.bodySmall)
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    swapOnCodes.forEach { code ->
+                        TextButton(onClick = { swapOnCodes = swapOnCodes - code }) {
+                            Text(code.keyCodeToString().removePrefix("KEYCODE_"))
+                        }
+                    }
+                    TextButton(onClick = {
                         capturing = SwapKeyTarget.On
                         focusRequester.requestFocus()
+                    }) {
+                        Text(if (capturing == SwapKeyTarget.On) "请按键…" else "添加换位键")
                     }
-                )
+                }
                 SwapKeyRow(
                     title = "还原键（按此键还原）",
                     code = swapOff,
@@ -1768,11 +1773,12 @@ private fun SwapPairsDialog(
                 )
                 TextButton(
                     enabled = aItemId != null && bItemId != null && aItemId != bItemId &&
-                        swapOn != null && swapOff != null,
+                        swapOnCodes.isNotEmpty() && swapOff != null,
                     onClick = {
                         pairs = pairs + SwapPair(aItemId = aItemId!!, bItemId = bItemId!!,
-                            swapOnKeyCode = swapOn!!, swapOffKeyCode = swapOff!!)
-                        aItemId = null; bItemId = null; swapOn = null; swapOff = null
+                            swapOnKeyCode = 0, swapOffKeyCode = swapOff!!,
+                            swapOnKeyCodes = swapOnCodes)
+                        aItemId = null; bItemId = null; swapOnCodes = emptyList(); swapOff = null
                     }
                 ) { Text("添加") }
             }

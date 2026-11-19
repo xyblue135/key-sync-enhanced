@@ -99,8 +99,8 @@ class DataStoreManager internal constructor(
         val WASD_TRANSITION = booleanPreferencesKey("wasd_transition")
         /** WASD 换向过渡时长（ms），默认 80。 */
         val WASD_TRANSITION_MS = intPreferencesKey("wasd_transition_ms")
-        /** Tab 双击判定窗口默认值从 2000 改为 500 的一次性迁移标记。 */
-        val TAB_WINDOW_DEFAULT_MIGRATED = booleanPreferencesKey("tab_window_default_migrated")
+        /** Alt+D 拖拽丢弃开关（全局），默认关闭，避免误触。 */
+        val DISCARD_DRAG_ENABLED = booleanPreferencesKey("discard_drag_enabled")
 
         /* -------- 鼠标高级参数（全局，与预设无关） -------- */
         /** 单帧位移断点阈值（px），默认 240。 */

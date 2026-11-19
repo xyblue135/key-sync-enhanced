@@ -111,6 +111,7 @@ class MainActivityViewModel @Inject constructor(
     val mouseJumpThresholdPx: StateFlow<Int> = stateManager.mouseJumpThresholdPx
     val mouseModeLatch: StateFlow<Boolean> = stateManager.mouseModeLatch
     val screenSizeCacheEnabled: StateFlow<Boolean> = stateManager.screenSizeCacheEnabled
+    val discardDragEnabled: StateFlow<Boolean> = stateManager.discardDragEnabled
 
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     /** 「检查更新 / 下载并安装」的状态。 */
@@ -231,6 +232,8 @@ class MainActivityViewModel @Inject constructor(
     fun setMouseJumpThreshold(px: Int) = stateManager.setMouseJumpThreshold(px)
     fun setMouseModeLatch(enabled: Boolean) = stateManager.setMouseModeLatch(enabled)
     fun setScreenSizeCache(enabled: Boolean) = stateManager.setScreenSizeCache(enabled)
+
+    fun setDiscardDragEnabled(enabled: Boolean) = stateManager.setDiscardDragEnabled(enabled)
 
     /**
      * Removes games by package name.

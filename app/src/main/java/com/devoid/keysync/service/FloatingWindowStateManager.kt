@@ -203,6 +203,11 @@ class FloatingWindowStateManager @Inject constructor(
     private var lastMouseDeviceId: Int = -1
     // 屏幕尺寸缓存；服务收到 configuration change 时清空。
     private var cachedScreenSize: Offset? = null
+    /** 光标模式是否真正出现过鼠标输入；没出现过就不允许 Alt+D 拖拽，避免盲点。 */
+    private var mouseCursorSeen = false
+    /** Alt+D 拖拽：按住 Alt 时按 D 触发，由高级功能开关控制。 */
+    val discardDragEnabled = MutableStateFlow(false)
+    private var discardDragJob: Job? = null
 
     private val _containerItems = MutableStateFlow(listOf<DraggableItem>())
     val containerItems = _containerItems.asStateFlow()
@@ -320,6 +325,8 @@ class FloatingWindowStateManager @Inject constructor(
                 dataStoreManager.getBoolean(DataStoreManager.MOUSE_MODE_LATCH).first() ?: true
             screenSizeCacheEnabled.value =
                 dataStoreManager.getBoolean(DataStoreManager.SCREEN_SIZE_CACHE).first() ?: true
+            discardDragEnabled.value =
+                dataStoreManager.getBoolean(DataStoreManager.DISCARD_DRAG_ENABLED).first() ?: false
             // 两条 init 协程的完成顺序不确定：若预设先加载完，这里要把刚读到的拟人化设置补应用一次。
             syncHumanization()
         }
@@ -383,15 +390,6 @@ class FloatingWindowStateManager @Inject constructor(
             stored = listOf(Profile(id = UUID.randomUUID().toString(), name = "默认"))
         }
 
-        // Tab 双击判定窗口旧默认值是 2000ms，会让 0.5 秒内的连按永远落在窗口内、
-        // 同时也让防连按与组合互相打架。一次性把仍是旧默认值的预设改到 500ms。
-        migrateLegacyTabWindow(stored).let { migrated ->
-            if (migrated != null) {
-                stored = migrated
-                dataStoreManager.saveProfiles(stored)
-            }
-        }
-
         // Virtual mouse buttons used to be persisted as 64/128/256. Those
         // numbers are legitimate Android KeyEvent codes, so the input layer
         // now uses a negative private namespace. Migrate only the semantic
@@ -433,21 +431,6 @@ class FloatingWindowStateManager @Inject constructor(
         // 悬浮层还没布局时先不投影：currentScreenSize() 是整屏 bounds（含系统栏），
         // 与预设保存的可用区域坐标系不同。等 onOverlayFrame 拿到真实尺寸后再应用。
         if (overlayViewport != null) applyActiveProfile()
-    }
-
-    /**
-     * Tab 双击判定窗口的旧默认值是 2000ms。仍停留在该值的预设一次性改到 500ms，
-     * 并写入迁移标记，之后用户手动改回 2000ms 不会再被覆盖。
-     */
-    private suspend fun migrateLegacyTabWindow(stored: List<Profile>): List<Profile>? {
-        if (dataStoreManager.getBoolean(DataStoreManager.TAB_WINDOW_DEFAULT_MIGRATED).first() == true) {
-            return null
-        }
-        dataStoreManager.save(DataStoreManager.TAB_WINDOW_DEFAULT_MIGRATED, true)
-        val migrated = stored.map { profile ->
-            if (profile.tabComboWindowMs == 2000) profile.copy(tabComboWindowMs = 500) else profile
-        }
-        return migrated.takeIf { it != stored }
     }
 
     private fun migrateLegacyVirtualMouseCodes(stored: List<Profile>): List<Profile>? {
@@ -498,6 +481,9 @@ class FloatingWindowStateManager @Inject constructor(
         const val legacyLayoutScreenHeight = 1200
         /** 鼠标断点阈值默认值；用户可在设置页的高级项里调整（全局）。 */
         const val DEFAULT_MOUSE_JUMP_THRESHOLD_PX = 240
+        /** Alt+D 拖拽：单程分几步、每步间隔（ms）；12 步 × 14ms ≈ 170ms。 */
+        const val DRAG_STEPS = 12
+        const val DRAG_STEP_MS = 14L
     }
 
     /** 旧数据未记录分辨率时，统一假定为 legacy 基准，便于 applyActiveProfile 迁移。 */
@@ -727,10 +713,6 @@ class FloatingWindowStateManager @Inject constructor(
         }
     }
 
-    private var tabEscJob: Job? = null
-    private var lastTabDownAt = 0L
-    private var tabComboCooldownUntil = 0L
-
     // 连按落点计数：同一个键在窗口内连续按下时递增，超时或换键就重新从 1 开始。
     private var extraTapKeyCode = -1
     private var extraTapCount = 0
@@ -766,15 +748,12 @@ class FloatingWindowStateManager @Inject constructor(
      * 开启后，距上一次有效 Tab 不足预设间隔（默认 1000ms，可调）的重复 Tab 整段吞掉：
      * - 快速连按 Tab 时，多余的按下不会落到游戏里（避免点到别的东西）
      *
-     * 但 Tab 双击组合开启时不再防连按：快速连按本身就是双击触发条件，
-     * 吞掉第二次 Tab 会让组合永远无法触发（表现为连按只出一次 Tab）。
-     *
      * 只拦截 Tab，其他按键不受影响；长按产生的重复事件跟随首次判定。
      */
     private fun guardTabRepeat(keyEvent: KeyEvent): Boolean {
         if (keyEvent.keyCode != KeyEvent.KEYCODE_TAB) return false
         val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
-        if (!profile.tabDebounceEnabled || profile.tabEscEnabled) {
+        if (!profile.tabDebounceEnabled) {
             swallowedTabDown = false
             return false
         }
@@ -799,52 +778,6 @@ class FloatingWindowStateManager @Inject constructor(
             }
             else -> false
         }
-    }
-
-    /**
-     * Tab 双击：在预设窗口内（默认 0.5 秒，可调）第二次按 Tab 时，改为点击 Tab，等待预设延迟（默认 1 秒）后点击 Esc。
-     *
-     * - 第一次按 Tab 走正常映射，并记下时间
-     * - 第二次按 Tab（窗口内）吞掉原始 Tab，主动注入 Tab → 延迟 → Esc
-     * - 触发后进入预设冷却（默认 2 秒，可调），冷却期内的 Tab 一律按普通 Tab 处理
-     * - Tab / Esc 任一按钮不存在就不接管，让 Tab 保持原行为
-     */
-    private fun runTabEscCombo(keyCode: Int): Boolean {
-        if (keyCode != KeyEvent.KEYCODE_TAB) return false
-        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
-        if (!profile.tabEscEnabled) return false
-        val now = SystemClock.uptimeMillis()
-        if (now < tabComboCooldownUntil) return false
-        val items = _containerItems.value
-        if (items.none { it.boundKeyCode() == KeyEvent.KEYCODE_TAB } ||
-            items.none { it.boundKeyCode() == KeyEvent.KEYCODE_ESCAPE }
-        ) return false
-        val windowMs = profile.tabComboWindowMs.coerceIn(300, 3000).toLong()
-        val cooldownMs = profile.tabComboCooldownMs.coerceIn(0, 5000).toLong()
-        val withinWindow = lastTabDownAt != 0L && now - lastTabDownAt <= windowMs
-        if (!withinWindow) {
-            lastTabDownAt = now
-            return false
-        }
-        lastTabDownAt = 0L
-        tabComboCooldownUntil = now + cooldownMs
-        if (tabEscJob?.isActive != true) {
-            tabEscJob = scope.launch {
-                listOf(KeyEvent.KEYCODE_TAB, KeyEvent.KEYCODE_ESCAPE)
-                    .forEachIndexed { index, code ->
-                        val at = SystemClock.uptimeMillis()
-                        eventHandler.handleKeyEvent(
-                            KeyEvent(at, at, KeyEvent.ACTION_DOWN, code, 0)
-                        )
-                        delay(kotlin.random.Random.nextLong(40L, 80L))
-                        eventHandler.handleKeyEvent(
-                            KeyEvent(at, at, KeyEvent.ACTION_UP, code, 0)
-                        )
-                        if (index == 0) delay(profile.tabEscDelayMs.coerceIn(0, 5000).toLong())
-                    }
-            }
-        }
-        return true
     }
 
     private var tapSequence234Job: Job? = null
@@ -935,17 +868,23 @@ class FloatingWindowStateManager @Inject constructor(
     private fun applySwap(keyCode: Int): Boolean {
         val id = _activeProfileId.value ?: return false
         val pair = _profiles.value.firstOrNull { it.id == id }?.swapPairs
-            ?.firstOrNull { it.swapOnKeyCode == keyCode || it.swapOffKeyCode == keyCode } ?: return false
+            ?.firstOrNull { keyCode in it.onKeys || it.swapOffKeyCode == keyCode } ?: return false
         val items = _containerItems.value
         val a = items.firstOrNull { it.id == pair.aItemId } ?: return false
         val b = items.firstOrNull { it.id == pair.bItemId } ?: return false
         if (a === b) return true
         a.anchorPosition = a.anchorPosition ?: a.position
         b.anchorPosition = b.anchorPosition ?: b.position
-        if (pair.swapOnKeyCode == keyCode) {
+        // 以“当前位置是否等于原始位置”作为换位锁存：已换位时再按 1/2/3/4
+        // 不再换位（否则 A→B、B→A 会来回跳），只交给普通按键处理；
+        // 还原键同理，未换位时不响应。
+        val swapped = a.position != a.anchorPosition || b.position != b.anchorPosition
+        if (keyCode in pair.onKeys) {
+            if (swapped) return false
             a.position = b.anchorPosition!!
             b.position = a.anchorPosition!!
         } else {
+            if (!swapped) return false
             a.position = a.anchorPosition!!
             b.position = b.anchorPosition!!
         }
@@ -954,7 +893,7 @@ class FloatingWindowStateManager @Inject constructor(
         // 所有触点并重建 pointer id，按一次换位键就会把正在按着的 W/开火松开。
         eventHandler.repositionItems(listOf(a, b))
         persistActiveProfile()
-        android.util.Log.i("KeySyncLayout", "swapPair ${pair.aItemId}<->${pair.bItemId} on=${pair.swapOnKeyCode == keyCode}")
+        android.util.Log.i("KeySyncLayout", "swapPair ${pair.aItemId}<->${pair.bItemId} on=${keyCode in pair.onKeys}")
         return true
     }
 
@@ -1140,6 +1079,93 @@ class FloatingWindowStateManager @Inject constructor(
         }
         persistActiveProfile()
     }
+
+    /* ---------------- 拖拽丢弃（Alt+D） ---------------- */
+
+    /** 全局开关：高级功能里控制 Alt+D 拖拽是否生效。 */
+    fun setDiscardDragEnabled(enabled: Boolean) {
+        discardDragEnabled.value = enabled
+        scope.launch { dataStoreManager.save(DataStoreManager.DISCARD_DRAG_ENABLED, enabled) }
+    }
+
+    /** 当前预设的丢弃点；未放置返回 null。 */
+    fun discardPoint(): Offset? {
+        val profile = activeProfile() ?: return null
+        val x = profile.discardX ?: return null
+        val y = profile.discardY ?: return null
+        return Offset(x, y)
+    }
+
+    /** 编辑态「丢弃点」入口：放在右侧 90% / 垂直居中，之后可拖动。 */
+    fun addDiscardPoint() {
+        val viewport = overlayViewport ?: currentScreenSize()
+        updateDiscardPoint(Offset(viewport.x * 0.9f, viewport.y * 0.5f))
+    }
+
+    fun moveDiscardPoint(position: Offset) = updateDiscardPoint(position)
+
+    private fun updateDiscardPoint(position: Offset) {
+        val id = _activeProfileId.value
+        _profiles.value = _profiles.value.map {
+            if (it.id == id) it.copy(discardX = position.x, discardY = position.y) else it
+        }
+        persistActiveProfile()
+    }
+
+    /**
+     * Alt+D：在当前光标位置按住左键 → 拖到丢弃点 → 停顿 → 松开 → 光标回位。
+     *
+     * 只在光标模式（非射击模式）且真正出现过鼠标输入时生效；按住 Alt 是硬性前提，
+     * 避免单按 D 或误触时在游戏里拖拽/转视角。
+     */
+    private fun startDiscardDrag(): Boolean {
+        if (!discardDragEnabled.value || isShootingMode.value || !mouseCursorSeen) return false
+        if (_isEditMode.value) return false
+        if (discardDragJob?.isActive == true) return false
+        val target = discardPoint() ?: return false
+        val origin = overlayOrigin ?: Offset.Zero
+        val start = _mousePointerOffset.value
+        discardDragJob = scope.launch {
+            val pointer = eventHandler.allocateDragPointer()
+            var released = false
+            try {
+                eventHandler.beginCursorDrag(pointer, start + origin)
+                delay(40)
+                repeat(DRAG_STEPS) { index ->
+                    val t = (index + 1f) / DRAG_STEPS
+                    val p = lerpOffset(start, target, t)
+                    moveCursorTo(p)
+                    eventHandler.moveCursorDrag(pointer, p + origin)
+                    delay(DRAG_STEP_MS)
+                }
+                delay(70)
+                eventHandler.endCursorDrag(pointer)
+                released = true
+                delay(70)
+                repeat(DRAG_STEPS) { index ->
+                    val t = (index + 1f) / DRAG_STEPS
+                    moveCursorTo(lerpOffset(target, start, t))
+                    delay(DRAG_STEP_MS)
+                }
+            } finally {
+                // 取消/异常时也必须松开，否则鼠标会卡在按下状态。
+                if (!released) eventHandler.endCursorDrag(pointer)
+            }
+        }
+        return true
+    }
+
+    private fun moveCursorTo(position: Offset) {
+        val viewport = overlayViewport ?: currentScreenSize()
+        _mousePointerOffset.value = Offset(
+            position.x.coerceIn(0f, (viewport.x - 1f).coerceAtLeast(0f)),
+            position.y.coerceIn(0f, (viewport.y - 1f).coerceAtLeast(0f))
+        )
+        eventHandler.mousePointerPosition = _mousePointerOffset.value + (overlayOrigin ?: Offset.Zero)
+    }
+
+    private fun lerpOffset(from: Offset, to: Offset, t: Float): Offset =
+        Offset(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)
 
     /** UI 弹出绑定框后调用，清除待绑定信号，避免下次重组又弹一次。 */
     fun updateMeasuredPosition(item: DraggableItem) {        val size = when (item) {
@@ -1621,6 +1647,11 @@ class FloatingWindowStateManager @Inject constructor(
         // Tab 防连按：必须在更新任何 UI 状态和映射之前拦截，
         // 否则被吞掉的 Tab 仍会点亮按钮、刷新最近输入。
         if (guardTabRepeat(keyEvent)) return true
+        // Alt+D：按住 Alt 才生效，工具开关打开且当前是光标模式时执行拖拽丢弃。
+        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
+            keyEvent.keyCode == KeyEvent.KEYCODE_D &&
+            keyEvent.isAltPressed && startDiscardDrag()
+        ) return true
         _lastInputLabel.value = keyEvent.keyCode.keyCodeToString() +
             if (keyEvent.action == KeyEvent.ACTION_DOWN) " 按下" else " 松开"
         // 非编辑态：同步物理按键的按下/抬起状态，供悬浮窗按钮显示「按下」高亮。
@@ -1638,8 +1669,6 @@ class FloatingWindowStateManager @Inject constructor(
             !eventHandler.isMacroTrigger(keyEvent.keyCode)) {
             // 连按落点：本体照常映射，第 2/3/4 次快速按下时额外点击预设位置。
             handleExtraTap(keyEvent.keyCode)
-            // Tab 双击负责整段 Tab+Esc 注入，命中时吞掉原始 Tab。
-            if (runTabEscCombo(keyEvent.keyCode)) return true
             // 预设级 2-3-4 连点负责整段注入，命中时吞掉原始 3，避免再点一次。
             if (runTapSequence234(keyEvent.keyCode)) return true
             if (!applySwap(keyEvent.keyCode)) applyQuickSwap(keyEvent.keyCode)
@@ -1648,6 +1677,8 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     fun onMouseEvent(motionEvent: MotionEvent): Boolean {
+        // 看到任何鼠标事件就认为光标模式可用；Alt+D 不允许在从未出现光标时盲拖。
+        mouseCursorSeen = true
         if (isEditMode.value) {
             val listener = keyCaptureListener ?: return false
             if (motionEvent.actionMasked == MotionEvent.ACTION_SCROLL) {

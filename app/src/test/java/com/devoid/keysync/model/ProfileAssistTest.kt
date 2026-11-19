@@ -12,7 +12,6 @@ class ProfileAssistTest {
         layoutScreenWidth = 2400,
         layoutScreenHeight = 1080,
         quickSwapEnabled = true,
-        tabEscEnabled = true,
         tabDebounceEnabled = true,
         stanceAssistEnabled = true,
         tapSequence234Enabled = true,
@@ -26,8 +25,6 @@ class ProfileAssistTest {
             quickSwapEnabled = false,
             tapSequence234GapMs = 120,
             stanceAssistEnabled = false,
-            tabComboWindowMs = 1200,
-            tabComboCooldownMs = 500,
             tabDebounceMs = 800,
         )
 
@@ -41,25 +38,17 @@ class ProfileAssistTest {
         assertTrue(!saved.quickSwapEnabled)
         assertEquals(120, saved.tapSequence234GapMs)
         assertTrue(!saved.stanceAssistEnabled)
-        assertEquals(1200, saved.tabComboWindowMs)
-        assertEquals(500, saved.tabComboCooldownMs)
         assertEquals(800, saved.tabDebounceMs)
         // 再取一次草稿必须和刚写回的一致，isDirty 才能归零。
         assertEquals(draft, saved.assist())
     }
 
-    @Test fun withAssistClampsTabTimingToSupportedRange() {
+    @Test fun withAssistClampsTabDebounceToSupportedRange() {
         val profile = sampleProfile()
         val saved = profile.withAssist(
-            profile.assist().copy(
-                tabComboWindowMs = 10,
-                tabComboCooldownMs = 99999,
-                tabDebounceMs = 1,
-            )
+            profile.assist().copy(tabDebounceMs = 1)
         )
 
-        assertEquals(300, saved.tabComboWindowMs)
-        assertEquals(5000, saved.tabComboCooldownMs)
         assertEquals(200, saved.tabDebounceMs)
     }
 

@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ExitToApp
@@ -131,7 +132,10 @@ fun ItemsContainer(
     extraTapPoints: List<ExtraTapPoint> = emptyList(),
     onAddExtraTapPoint: (Int) -> Unit = {},
     onMoveExtraTapPoint: (Int, Int, Offset) -> Unit = { _, _, _ -> },
-    onClearExtraTapPoints: (Int) -> Unit = {}
+    onClearExtraTapPoints: (Int) -> Unit = {},
+    /** Alt+D 拖拽丢弃的落点（竖条中心）；只在编辑态渲染。 */
+    discardPoint: Offset? = null,
+    onMoveDiscardPoint: (Offset) -> Unit = {}
 ) {
     // When the user taps the gear icon on a key, this is set so we can
     // pop up a key-capture dialog bound to that specific item.
@@ -356,6 +360,42 @@ fun ItemsContainer(
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                     }
+                }
+            }
+        }
+
+        // 编辑态显示拖拽丢弃点：竖条（约 1:5），拖动定位置，非编辑态不渲染。
+        if (editing) {
+            val density = LocalDensity.current
+            val discardBarWidthPx = with(density) { DISCARD_BAR_WIDTH_DP.dp.toPx() }
+            val discardBarHeightPx = with(density) { DISCARD_BAR_HEIGHT_DP.dp.toPx() }
+            discardPoint?.let { point ->
+                var pos by remember(point.x, point.y) { mutableStateOf(point) }
+                Box(
+                    modifier = Modifier
+                        .offset {
+                            IntOffset((pos.x - discardBarWidthPx / 2).toInt(),
+                                (pos.y - discardBarHeightPx / 2).toInt())
+                        }
+                        .size(DISCARD_BAR_WIDTH_DP.dp, DISCARD_BAR_HEIGHT_DP.dp)
+                        .alpha(0.8f)
+                        .border(1.5.dp, MaterialTheme.colorScheme.error, RoundedCornerShape(6.dp))
+                        .pointerInput(point.x, point.y) {
+                            detectDragGestures(
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    pos += dragAmount
+                                },
+                                onDragEnd = { onMoveDiscardPoint(pos) },
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "丢弃",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             }
         }
@@ -930,6 +970,7 @@ fun EditToolbar(
     onToggleStatusBarVisible: () -> Unit = {},
     onToggleEditMode: () -> Unit,
     onAddItem: (DraggableItemType) -> Unit,
+    onAddDiscardPoint: () -> Unit = {},
 ) {
     var itemsMenuVisible by remember { mutableStateOf(false) }
     // 编辑条会挡住想摆放的位置，因此允许直接拖动（按 ⠿ 手柄拖动，避免和按钮点击冲突）。
@@ -1020,6 +1061,9 @@ fun EditToolbar(
                 MenuItems(onItemClick = {
                     onAddItem(it)
                     itemsMenuVisible = false
+                }, onAddDiscardPoint = {
+                    onAddDiscardPoint()
+                    itemsMenuVisible = false
                 })
             }
         }
@@ -1030,7 +1074,8 @@ fun EditToolbar(
 @Composable
 fun MenuItems(
     modifier: Modifier = Modifier,
-    onItemClick: (DraggableItemType) -> Unit
+    onItemClick: (DraggableItemType) -> Unit,
+    onAddDiscardPoint: () -> Unit = {}
 ) {
     val itemModifier = Modifier
         .size(30.dp)
@@ -1113,9 +1158,27 @@ fun MenuItems(
                     Spacer(modifier = Modifier.size(30.dp))
                 }
             }
+
+            // ---- Tools ----
+            item("h-tools") { SectionHeader("工具") }
+            item("r-tools") {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    MenuCell(itemModifier, symbol("▮"), "丢弃点") { onAddDiscardPoint() }
+                    Spacer(modifier = Modifier.size(30.dp))
+                    Spacer(modifier = Modifier.size(30.dp))
+                    Spacer(modifier = Modifier.size(30.dp))
+                }
+            }
         }
     }
 }
+
+/** 丢弃点竖条尺寸：宽:高 ≈ 1:5。 */
+private const val DISCARD_BAR_WIDTH_DP = 36
+private const val DISCARD_BAR_HEIGHT_DP = 180
 
 @Composable
 private fun SectionHeader(text: String) {

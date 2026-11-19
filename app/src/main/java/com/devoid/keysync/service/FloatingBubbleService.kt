@@ -712,6 +712,12 @@ class FloatingBubbleService : Service() {
                                 stateManager.get().moveExtraTapPoint(keyCode, index, point)
                             },
                             onClearExtraTapPoints = { stateManager.get().clearExtraTapPoints(it) },
+                            discardPoint = profiles.firstOrNull { it.id == activeId }?.let { p ->
+                                val x = p.discardX
+                                val y = p.discardY
+                                if (x != null && y != null) androidx.compose.ui.geometry.Offset(x, y) else null
+                            },
+                            onMoveDiscardPoint = { stateManager.get().moveDiscardPoint(it) },
                         )
                         // 顶部状态提示条：预设名 · 模式 · 最近输入。
                         // 通知栏的「隐藏提示」action 只关这一行，不影响按键容器。
@@ -744,6 +750,7 @@ class FloatingBubbleService : Service() {
                             onToggleStatusBarVisible = { stateManager.get().toggleStatusBarVisible() },
                             onToggleEditMode = { stateManager.get().toggleEditMode() },
                             onAddItem = { stateManager.get().addNewItem(it) },
+                            onAddDiscardPoint = { stateManager.get().addDiscardPoint() },
                         )
                     }
                 }

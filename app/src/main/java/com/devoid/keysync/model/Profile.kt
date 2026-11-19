@@ -22,14 +22,6 @@ data class Profile(
     val tapSequence234Enabled: Boolean = true,
     /** 2-3-4 连点之间每个触点的间隔（ms），越小越快。默认 60。 */
     val tapSequence234GapMs: Int = 60,
-    /** Tab 双击（默认 0.5 秒内）改为点击 Tab + Esc 两个位置，之后进入冷却。默认开启。 */
-    val tabEscEnabled: Boolean = true,
-    /** Tab 双击判定窗口（ms）：两次 Tab 按下间隔不超过该值才算双击。默认 500。 */
-    val tabComboWindowMs: Int = 500,
-    /** 触发 Tab+Esc 后的冷却（ms），避免紧接着的 Tab 又被当成双击。默认 2000。 */
-    val tabComboCooldownMs: Int = 2000,
-    /** 双击触发后，先点 Tab，再等待该时间（ms）后点 Esc。默认 1000。 */
-    val tabEscDelayMs: Int = 1000,
     /** Tab 防连按：开启后重复 Tab 在间隔内直接吞掉，避免手速过快时多余的 Tab 落到游戏里。默认开启。 */
     val tabDebounceEnabled: Boolean = true,
     /** Tab 防连按间隔（ms）：两次有效 Tab 按下之间的最小间隔。默认 1000。 */
@@ -46,6 +38,9 @@ data class Profile(
      * 每个按键最多 [MAX_EXTRA_TAP_POINTS] 个；本体始终照常触发。
      */
     val extraTapPoints: List<ExtraTapPoint> = emptyList(),
+    /** 拖拽丢弃落点（悬浮层坐标，竖条中心）。null = 尚未放置。 */
+    val discardX: Float? = null,
+    val discardY: Float? = null,
 )
 
 /** 连按落点：归属于某个物理按键的额外触点。 */
