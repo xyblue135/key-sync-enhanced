@@ -14,21 +14,7 @@ class ProfileToolsTest {
             DraggableItem.VariableKey(1, Offset(10f, 20f), 52, 150),
             DraggableItem.WASDGroup(2, Offset(30f, 40f)),
         ),
-        swapPairs = listOf(
-            SwapPair(aItemId = 1, bItemId = 2, swapOnKeyCode = 52, swapOffKeyCode = 53),
-        ),
     )
-
-    @Test
-    fun swapPairKeepsLegacySingleKeyAndSupportsMultipleOnKeys() {
-        // 旧预设只有单键字段，读出来仍然生效。
-        assertEquals(listOf(52), SwapPair(1, 2, 52, 53).onKeys)
-        // 新预设用多键：1234 任意一个都能触发同一对交换。
-        assertEquals(
-            listOf(8, 9, 10, 11),
-            SwapPair(1, 2, 0, 53, swapOnKeyCodes = listOf(8, 9, 10, 11)).onKeys
-        )
-    }
 
     @Test
     fun editingCopiedLayoutCannotMutateOriginal() {
@@ -39,7 +25,6 @@ class ProfileToolsTest {
         assertEquals(Offset(10f, 20f), original.items[0].position)
         assertEquals(1f, (original.items[1] as DraggableItem.WASDGroup).scale, 0f)
         assertNotSame(original.items[0], copied.items[0])
-        assertEquals(original.swapPairs, copied.swapPairs)
     }
 
     @Test

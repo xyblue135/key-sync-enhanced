@@ -9,7 +9,6 @@ package com.devoid.keysync.model
  */
 data class ProfileAssist(
     val quickSwapEnabled: Boolean = true,
-    val swapPairs: List<SwapPair> = emptyList(),
     val tapSequence234Enabled: Boolean = true,
     val tapSequence234GapMs: Int = 60,
     val tabDebounceEnabled: Boolean = true,
@@ -21,7 +20,6 @@ data class ProfileAssist(
 /** 取出预设里参与草稿的字段。items / layout 等布局数据不在此列。 */
 fun Profile.assist(): ProfileAssist = ProfileAssist(
     quickSwapEnabled = quickSwapEnabled,
-    swapPairs = swapPairs,
     tapSequence234Enabled = tapSequence234Enabled,
     tapSequence234GapMs = tapSequence234GapMs,
     tabDebounceEnabled = tabDebounceEnabled,
@@ -33,7 +31,6 @@ fun Profile.assist(): ProfileAssist = ProfileAssist(
 /** 把草稿写回预设，保留布局、应用配置与分辨率记录。 */
 fun Profile.withAssist(assist: ProfileAssist): Profile = copy(
     quickSwapEnabled = assist.quickSwapEnabled,
-    swapPairs = assist.swapPairs,
     tapSequence234Enabled = assist.tapSequence234Enabled,
     tapSequence234GapMs = assist.tapSequence234GapMs.coerceIn(20, 400),
     tabDebounceEnabled = assist.tabDebounceEnabled,

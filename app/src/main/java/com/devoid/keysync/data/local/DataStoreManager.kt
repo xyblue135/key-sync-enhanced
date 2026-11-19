@@ -101,6 +101,8 @@ class DataStoreManager internal constructor(
         val WASD_TRANSITION_MS = intPreferencesKey("wasd_transition_ms")
         /** Alt+D 拖拽丢弃开关（全局），默认关闭，避免误触。 */
         val DISCARD_DRAG_ENABLED = booleanPreferencesKey("discard_drag_enabled")
+        /** Alt+D 拖拽速度倍数（1–10，默认 5 = 原速的 5 倍）。 */
+        val DISCARD_DRAG_SPEED = floatPreferencesKey("discard_drag_speed")
 
         /* -------- 鼠标高级参数（全局，与预设无关） -------- */
         /** 单帧位移断点阈值（px），默认 240。 */

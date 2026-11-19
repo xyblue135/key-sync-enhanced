@@ -325,10 +325,11 @@ class EventHandler(
     }
 
     /**
-     * 沿圆弧把触点从 [start] 滑到 [end]。
+     * 把触点从 [start] 平滑移到 [end]。
      *
-     * 真实拇指换向是绕着摇杆中心转过去，半径基本不变；直接连两点会从圆内穿过去，
-     * 游戏里表现为推动量瞬间变小、方向像抄近路。这里按最短角差插值，保持半径连续。
+     * 小角度换向沿等半径弧线走；接近 180° 的大换向（A↔D、W↔S）会把半径
+     * 在中间压到 [TRANSITION_MIN_RADIUS_FACTOR]，让触点几乎横穿中心，
+     * 轨迹是一条左右/上下的直线，同时保留最低推动量避免完全停住。
      */
     private fun startWasdTransition(
         pointerId: Int,
@@ -340,7 +341,8 @@ class EventHandler(
     ) {
         stopWasdTransition()
         val duration = wasdTransitionMs.coerceIn(MIN_WASD_TRANSITION_MS, MAX_WASD_TRANSITION_MS)
-        val steps = (duration / 20).coerceIn(2, 8)
+        // 再密的中间点也受录制采样下限约束；这里按 10ms 一步，保证短视频里能看出轨迹。
+        val steps = (duration / 10).coerceIn(3, 8)
         wasdTransitionJob = humanizeScope.launch {
             val stepDelay = (duration / steps).coerceAtLeast(8).toLong()
             for (i in 1..steps) {
@@ -365,7 +367,15 @@ class EventHandler(
         while (delta > PI) delta -= (2 * PI).toFloat()
         while (delta < -PI) delta += (2 * PI).toFloat()
         val angle = startAngle + delta * t
-        val radius = startRadius + (endRadius - startRadius) * t
+        val baseRadius = startRadius + (endRadius - startRadius) * t
+        val radius = if (abs(delta) > (PI / 2).toFloat()) {
+            // 大换向：中段把半径压到下限，形成近直线的横穿；两端仍精确落回原位。
+            val floor = maxOf(startRadius, endRadius) * TRANSITION_MIN_RADIUS_FACTOR
+            val dip = (baseRadius - floor).coerceAtLeast(0f) * sin((PI * t).toFloat())
+            (baseRadius - dip).coerceAtLeast(floor)
+        } else {
+            baseRadius
+        }
         return center + Offset(cos(angle) * radius, sin(angle) * radius)
     }
 
@@ -1421,10 +1431,19 @@ class EventHandler(
         const val MIN_HUMANIZATION_INTERVAL_MS = 200L
         const val MAX_HUMANIZATION_INTERVAL_MS = 3000L
 
-        /** WASD 换向弧线过渡：默认 80ms，可调 40–200ms。 */
-        const val DEFAULT_WASD_TRANSITION_MS = 80
+        /** WASD 换向过渡：默认 60ms，可调 40–200ms。 */
+        const val DEFAULT_WASD_TRANSITION_MS = 60
         const val MIN_WASD_TRANSITION_MS = 40
         const val MAX_WASD_TRANSITION_MS = 200
+
+        /**
+         * 大角度换向时摇杆推动量的最低比例。
+         *
+         * A↔D / W↔S 这类接近 180° 的换向，半径在中间压到这个比例（约 18%），
+         * 触点几乎横穿摇杆中心，轨迹呈现为一条从左到右（或上到下）的线；
+         * 保留一点推动量，避免游戏里出现完全归零的“停顿帧”。
+         */
+        const val TRANSITION_MIN_RADIUS_FACTOR = 0.18f
 
         /** 疾跑半径在 sprintScale 之上再随机上浮 0–12%，避免每次都是同一圈。 */
         const val SPRINT_VARIATION_RANGE = 0.12f

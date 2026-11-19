@@ -15,6 +15,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.core.view.WindowInsetsCompat
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 import com.devoid.keysync.data.local.DataStoreManager
 import com.devoid.keysync.data.local.ProfilesLoad
 import com.devoid.keysync.model.AppConfig
@@ -40,7 +41,6 @@ import com.devoid.keysync.model.EXTRA_TAP_WINDOW_MS
 import com.devoid.keysync.model.MAX_EXTRA_TAP_POINTS
 import com.devoid.keysync.model.projectLayout
 import com.devoid.keysync.model.clampToViewport
-import com.devoid.keysync.model.SwapPair
 import com.devoid.keysync.model.ProfileBundle
 import com.devoid.keysync.model.independentCopy
 import com.devoid.keysync.model.importProfileCopies
@@ -207,6 +207,8 @@ class FloatingWindowStateManager @Inject constructor(
     private var mouseCursorSeen = false
     /** Alt+D 拖拽：按住 Alt 时按 D 触发，由高级功能开关控制。 */
     val discardDragEnabled = MutableStateFlow(false)
+    /** Alt+D 拖拽速度倍数（1–10）：值越大移动越快，默认 5 = 原速的 5 倍。 */
+    val discardDragSpeed = MutableStateFlow(DEFAULT_DISCARD_DRAG_SPEED)
     private var discardDragJob: Job? = null
 
     private val _containerItems = MutableStateFlow(listOf<DraggableItem>())
@@ -327,6 +329,10 @@ class FloatingWindowStateManager @Inject constructor(
                 dataStoreManager.getBoolean(DataStoreManager.SCREEN_SIZE_CACHE).first() ?: true
             discardDragEnabled.value =
                 dataStoreManager.getBoolean(DataStoreManager.DISCARD_DRAG_ENABLED).first() ?: false
+            discardDragSpeed.value =
+                (dataStoreManager.getFloat(DataStoreManager.DISCARD_DRAG_SPEED).first()
+                    ?: DEFAULT_DISCARD_DRAG_SPEED)
+                    .coerceIn(MIN_DISCARD_DRAG_SPEED, MAX_DISCARD_DRAG_SPEED)
             // 两条 init 协程的完成顺序不确定：若预设先加载完，这里要把刚读到的拟人化设置补应用一次。
             syncHumanization()
         }
@@ -484,6 +490,19 @@ class FloatingWindowStateManager @Inject constructor(
         /** Alt+D 拖拽：单程分几步、每步间隔（ms）；12 步 × 14ms ≈ 170ms。 */
         const val DRAG_STEPS = 12
         const val DRAG_STEP_MS = 14L
+        /** 拖拽速度倍数默认值与范围（设置页滑杆）。 */
+        const val DEFAULT_DISCARD_DRAG_SPEED = 5f
+        const val MIN_DISCARD_DRAG_SPEED = 1f
+        const val MAX_DISCARD_DRAG_SPEED = 10f
+        /** 交换对固定换位键：1/2/3/4（不对用户开放配置）。 */
+        val SWAP_SLOT_KEYS = setOf(
+            KeyEvent.KEYCODE_1,
+            KeyEvent.KEYCODE_2,
+            KeyEvent.KEYCODE_3,
+            KeyEvent.KEYCODE_4,
+        )
+        /** 固定还原键：X（不对用户开放配置）。 */
+        val SWAP_RESTORE_KEY = KeyEvent.KEYCODE_X
     }
 
     /** 旧数据未记录分辨率时，统一假定为 legacy 基准，便于 applyActiveProfile 迁移。 */
@@ -816,31 +835,38 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     /**
-     * 快捷换位：按 X 让「R 键按钮」与「鼠标右键按钮」交换屏幕位置，按 1 还原。
+     * 快捷换位：按 1/2/3/4 让「R 键按钮」与「鼠标右键按钮」交换屏幕位置，按 X 还原。
      *
-     * 不依赖任何手动配置：A/B 每次按当前绑定实时解析，所以用户重绑 R 或右键后
+     * 键位固定，不做任何用户配置；只有预设级开关 [Profile.quickSwapEnabled]。
+     * 不依赖任何手动设置：A/B 每次按当前绑定实时解析，所以用户重绑 R 或右键后
      * 依然正确；位置恢复使用 anchorPosition，不会漂移。
+     *
+     * 锁存：未换位时按 1–4 换一次；已换位时再按 1–4 只当普通按键透传；
+     * 还原键 X 只在已换位时生效。锁存状态存在 [Profile.quickSwapLatched] 并持久化，
+     * 重启后位置仍是换位状态，不会被误判成未换位而再跳一次。
      */
     private fun applyQuickSwap(keyCode: Int): Boolean {
-        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
+        val id = _activeProfileId.value ?: return false
+        val profile = _profiles.value.firstOrNull { it.id == id } ?: return false
         if (!profile.quickSwapEnabled) return false
-        val swap = when (keyCode) {
-            KeyEvent.KEYCODE_X -> true
-            KeyEvent.KEYCODE_1 -> false
-            else -> return false
-        }
+        val isOnKey = keyCode in SWAP_SLOT_KEYS
+        if (!isOnKey && keyCode != SWAP_RESTORE_KEY) return false
         val items = _containerItems.value
         val r = items.firstOrNull { it.boundKeyCode() == KeyEvent.KEYCODE_R } ?: return false
         val rmb = items.firstOrNull { it.boundKeyCode() == KEYCODE_RMC } ?: return false
         if (r === rmb) return false
+        if (isOnKey == profile.quickSwapLatched) return false
         r.anchorPosition = r.anchorPosition ?: r.position
         rmb.anchorPosition = rmb.anchorPosition ?: rmb.position
-        if (swap) {
+        if (isOnKey) {
             r.position = rmb.anchorPosition!!
             rmb.position = r.anchorPosition!!
         } else {
             r.position = r.anchorPosition!!
             rmb.position = rmb.anchorPosition!!
+        }
+        _profiles.value = _profiles.value.map {
+            if (it.id != id) it else it.copy(quickSwapLatched = isOnKey)
         }
         refreshItemTouchCenters(items)
         eventHandler.repositionItems(listOf(r, rmb))
@@ -853,48 +879,6 @@ class FloatingWindowStateManager @Inject constructor(
         is DraggableItem.FixedKey -> keyCode
         is DraggableItem.CancelableKey -> keyCode
         is DraggableItem.WASDGroup -> null
-    }
-
-    /**
-     * Runs the active profile's swap pair bound to [keyCode].
-     *
-     * Only the two buttons' **layout position** is swapped (or restored);
-     * key bindings / names are untouched. [DraggableItem.anchorPosition] holds
-     * each button's normal home position and advances on a normal drag, so
-     * swapOff can always return the pair to their configured spots.
-     *
-     * @return true if a pair matched and was applied.
-     */
-    private fun applySwap(keyCode: Int): Boolean {
-        val id = _activeProfileId.value ?: return false
-        val pair = _profiles.value.firstOrNull { it.id == id }?.swapPairs
-            ?.firstOrNull { keyCode in it.onKeys || it.swapOffKeyCode == keyCode } ?: return false
-        val items = _containerItems.value
-        val a = items.firstOrNull { it.id == pair.aItemId } ?: return false
-        val b = items.firstOrNull { it.id == pair.bItemId } ?: return false
-        if (a === b) return true
-        a.anchorPosition = a.anchorPosition ?: a.position
-        b.anchorPosition = b.anchorPosition ?: b.position
-        // 以“当前位置是否等于原始位置”作为换位锁存：已换位时再按 1/2/3/4
-        // 不再换位（否则 A→B、B→A 会来回跳），只交给普通按键处理；
-        // 还原键同理，未换位时不响应。
-        val swapped = a.position != a.anchorPosition || b.position != b.anchorPosition
-        if (keyCode in pair.onKeys) {
-            if (swapped) return false
-            a.position = b.anchorPosition!!
-            b.position = a.anchorPosition!!
-        } else {
-            if (!swapped) return false
-            a.position = a.anchorPosition!!
-            b.position = b.anchorPosition!!
-        }
-        refreshItemTouchCenters(items)
-        // 只覆盖这两个按钮的注入坐标。绝不能调用 updateKeyMapping()：它会释放
-        // 所有触点并重建 pointer id，按一次换位键就会把正在按着的 W/开火松开。
-        eventHandler.repositionItems(listOf(a, b))
-        persistActiveProfile()
-        android.util.Log.i("KeySyncLayout", "swapPair ${pair.aItemId}<->${pair.bItemId} on=${keyCode in pair.onKeys}")
-        return true
     }
 
     /** After a swap, move each button's live touch center to follow its new position. */
@@ -1088,6 +1072,13 @@ class FloatingWindowStateManager @Inject constructor(
         scope.launch { dataStoreManager.save(DataStoreManager.DISCARD_DRAG_ENABLED, enabled) }
     }
 
+    /** 全局设置：Alt+D 拖拽速度倍数（1–10），立即持久化。 */
+    fun setDiscardDragSpeed(speed: Float) {
+        val safe = speed.coerceIn(MIN_DISCARD_DRAG_SPEED, MAX_DISCARD_DRAG_SPEED)
+        discardDragSpeed.value = safe
+        scope.launch { dataStoreManager.save(DataStoreManager.DISCARD_DRAG_SPEED, safe) }
+    }
+
     /** 当前预设的丢弃点；未放置返回 null。 */
     fun discardPoint(): Offset? {
         val profile = activeProfile() ?: return null
@@ -1125,6 +1116,9 @@ class FloatingWindowStateManager @Inject constructor(
         val target = discardPoint() ?: return false
         val origin = overlayOrigin ?: Offset.Zero
         val start = _mousePointerOffset.value
+        // 速度倍数只作用在移动阶段；按下/停顿时长不变，避免游戏来不及识别“放下”。
+        val stepMs = (DRAG_STEP_MS / discardDragSpeed.value.coerceIn(MIN_DISCARD_DRAG_SPEED, MAX_DISCARD_DRAG_SPEED))
+            .roundToLong().coerceAtLeast(1L)
         discardDragJob = scope.launch {
             val pointer = eventHandler.allocateDragPointer()
             var released = false
@@ -1136,7 +1130,7 @@ class FloatingWindowStateManager @Inject constructor(
                     val p = lerpOffset(start, target, t)
                     moveCursorTo(p)
                     eventHandler.moveCursorDrag(pointer, p + origin)
-                    delay(DRAG_STEP_MS)
+                    delay(stepMs)
                 }
                 delay(70)
                 eventHandler.endCursorDrag(pointer)
@@ -1145,7 +1139,7 @@ class FloatingWindowStateManager @Inject constructor(
                 repeat(DRAG_STEPS) { index ->
                     val t = (index + 1f) / DRAG_STEPS
                     moveCursorTo(lerpOffset(target, start, t))
-                    delay(DRAG_STEP_MS)
+                    delay(stepMs)
                 }
             } finally {
                 // 取消/异常时也必须松开，否则鼠标会卡在按下状态。
@@ -1669,9 +1663,10 @@ class FloatingWindowStateManager @Inject constructor(
             !eventHandler.isMacroTrigger(keyEvent.keyCode)) {
             // 连按落点：本体照常映射，第 2/3/4 次快速按下时额外点击预设位置。
             handleExtraTap(keyEvent.keyCode)
+            // 换位优先：1–4 / X 命中时先生效，按键本身仍继续透传给游戏。
+            val swapped = applyQuickSwap(keyEvent.keyCode)
             // 预设级 2-3-4 连点负责整段注入，命中时吞掉原始 3，避免再点一次。
-            if (runTapSequence234(keyEvent.keyCode)) return true
-            if (!applySwap(keyEvent.keyCode)) applyQuickSwap(keyEvent.keyCode)
+            if (!swapped && runTapSequence234(keyEvent.keyCode)) return true
         }
         return eventHandler.handleKeyEvent(keyEvent)
     }
@@ -1784,7 +1779,7 @@ class FloatingWindowStateManager @Inject constructor(
                 val codes = scrollTracker.update(vScroll, motionEvent.getAxisValue(MotionEvent.AXIS_HSCROLL))
                 codes.forEach { code ->
                     _lastInputLabel.value = code.keyCodeToString()
-                    if (!eventHandler.isMacroTrigger(code) && !applySwap(code)) applyQuickSwap(code)
+                    if (!eventHandler.isMacroTrigger(code)) applyQuickSwap(code)
                     eventHandler.handleScrollBinding(code)
                 }
                 return true
@@ -1797,7 +1792,6 @@ class FloatingWindowStateManager @Inject constructor(
         mouseButtonKeyCode(button)?.let { key ->
             _pressedKeys.value = if (pressed) _pressedKeys.value + key else _pressedKeys.value - key
             _lastInputLabel.value = key.keyCodeToString() + if (pressed) " 按下" else " 松开"
-            if (pressed && !eventHandler.isMacroTrigger(key)) applySwap(key)
         }
         eventHandler.handleMouseButton(button, pressed)
     }

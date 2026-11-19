@@ -5,7 +5,6 @@ import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -62,9 +61,6 @@ class ProfileSerializationTest {
             ),
         ),
         appConfig = AppConfig.Default.copy(buttonScale = 1.25f),
-        swapPairs = listOf(
-            SwapPair(aItemId = 2, bItemId = 3, swapOnKeyCode = 45, swapOffKeyCode = 52),
-        ),
         layoutScreenWidth = 2400,
         layoutScreenHeight = 1080,
     )
@@ -115,9 +111,9 @@ class ProfileSerializationTest {
         assertEquals(1080, decoded.layoutScreenHeight)
     }
 
-    /** Profiles written before swap pairs and baselines existed must still load. */
+    /** Profiles written before layout baselines existed must still load. */
     @Test
-    fun legacyJsonWithoutSwapPairsDecodes() {
+    fun legacyJsonWithoutLayoutBaselineDecodes() {
         val legacy = """
             {
               "id": "old",
@@ -136,7 +132,6 @@ class ProfileSerializationTest {
         """.trimIndent()
         val decoded = json.decodeFromString<Profile>(legacy)
         assertEquals(1, decoded.items.size)
-        assertTrue(decoded.swapPairs.isEmpty())
         assertEquals(0, decoded.layoutScreenWidth)
         assertEquals(AppConfig.Default.buttonScale, decoded.appConfig.buttonScale, 0f)
     }

@@ -112,6 +112,8 @@ class MainActivityViewModel @Inject constructor(
     val mouseModeLatch: StateFlow<Boolean> = stateManager.mouseModeLatch
     val screenSizeCacheEnabled: StateFlow<Boolean> = stateManager.screenSizeCacheEnabled
     val discardDragEnabled: StateFlow<Boolean> = stateManager.discardDragEnabled
+    /** Alt+D 拖拽速度倍数（1–10，默认 5）。 */
+    val discardDragSpeed: StateFlow<Float> = stateManager.discardDragSpeed
 
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     /** 「检查更新 / 下载并安装」的状态。 */
@@ -234,6 +236,7 @@ class MainActivityViewModel @Inject constructor(
     fun setScreenSizeCache(enabled: Boolean) = stateManager.setScreenSizeCache(enabled)
 
     fun setDiscardDragEnabled(enabled: Boolean) = stateManager.setDiscardDragEnabled(enabled)
+    fun setDiscardDragSpeed(speed: Float) = stateManager.setDiscardDragSpeed(speed)
 
     /**
      * Removes games by package name.

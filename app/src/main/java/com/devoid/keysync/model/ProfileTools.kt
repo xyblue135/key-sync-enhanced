@@ -5,28 +5,6 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class ProfileBundle(val version: Int = 1, val profiles: List<Profile>)
 
-/**
- * Swap on any key in [onKeys], restore on [swapOffKeyCode].
- * Moves layout position only, never the key binding / name.
- *
- * [swapOnKeyCode] is the legacy single-key field: old presets keep using it,
- * new pairs write [swapOnKeyCodes] and leave [swapOnKeyCode] as 0.
- */
-@Serializable
-data class SwapPair(
-    val aItemId: Int,
-    val bItemId: Int,
-    val swapOnKeyCode: Int,
-    val swapOffKeyCode: Int,
-    /** 换位键集合：1234 这类多武器槽都能触发同一对交换。 */
-    val swapOnKeyCodes: List<Int> = emptyList(),
-) {
-    /** 实际生效的换位键；新旧字段二选一，避免空集合时退化成无键可用。 */
-    val onKeys: List<Int>
-        get() = if (swapOnKeyCodes.isNotEmpty()) swapOnKeyCodes
-        else listOfNotNull(swapOnKeyCode.takeIf { it != 0 })
-}
-
 /** Layout items are mutable; a shallow Profile.copy would link both layouts. */
 fun Profile.independentCopy(newId: String, newName: String): Profile = copy(
     id = newId,

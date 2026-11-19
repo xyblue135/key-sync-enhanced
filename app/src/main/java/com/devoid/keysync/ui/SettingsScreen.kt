@@ -1,6 +1,5 @@
 package com.devoid.keysync.ui
 
-import android.view.KeyEvent as NativeKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -10,6 +9,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,13 +33,13 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -54,16 +54,16 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.KeyEvent
@@ -83,7 +83,6 @@ import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.ProfileAssist
 import com.devoid.keysync.model.assist
 import com.devoid.keysync.model.withAssist
-import com.devoid.keysync.model.SwapPair
 import com.devoid.keysync.model.ThemePreference
 import com.devoid.keysync.model.TouchMode
 import com.devoid.keysync.util.capitalizeFirst
@@ -123,6 +122,8 @@ fun SettingsScreen(
     onSetScreenSizeCache: (Boolean) -> Unit = {},
     discardDragEnabled: Boolean = false,
     onSetDiscardDragEnabled: (Boolean) -> Unit = {},
+    discardDragSpeed: Float = 5f,
+    onSetDiscardDragSpeed: (Float) -> Unit = {},
     onStopOverlay: () -> Unit = {},
     wasdHumanization: Boolean = false,
     keyHumanization: Boolean = false,
@@ -295,310 +296,306 @@ fun SettingsScreen(
                     onExport = onExportProfile,
                     onImport = onImportProfile,
                 )
+                SettingsSectionCard(
+                    title = "显示",
+                    scope = SettingsScope.GLOBAL,
+                    hint = "全局 · 立即生效并保存",
+                    initiallyExpanded = true,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = stringResource(R.string.slider_overlay_opacity),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text("${(overlayOpacity * 100).roundToInt()} %")
+                    }
+                    Slider(
+                        value = overlayOpacity,
+                        valueRange = 0f..1f,
+                        steps = 9,
+                        onValueChange = onSetOverlayOpacity
+                    )
+                    Text(
+                        "0% 时按键完全不显示；改动立即生效，无需点保存。",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "顶部状态提示条",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = "屏幕最上边那行「预设名 · 模式 · 最近输入」。关掉后游戏画面上不再出现，通知栏也有同名按钮，改动立即生效并会保存。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = statusBarVisible,
+                            onCheckedChange = onSetStatusBarVisible
+                        )
+                    }
+                }
+                SettingsSectionCard(
+                    title = "按钮与操作",
+                    scope = SettingsScope.PRESET,
+                    hint = "跟随当前预设 · 改动需点右上角保存",
+                    initiallyExpanded = true,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = stringResource(R.string.settings_button_size),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(stringResource(R.string.settings_button_size_value, (newConfig.buttonScale * 100).roundToInt()))
+                    }
+                    // 0.5 lower bound: at 0 the overlay buttons shrink to
+                    // nothing, leaving no handle to drag or remove them
+                    // again, and no way to recover short of a reinstall.
+                    Slider(
+                        value = newConfig.buttonScale,
+                        valueRange = 0.5f..2f,
+                        steps = 14,
+                        onValueChange = {
+                            newConfig = newConfig.copy(buttonScale = it)
+                        })
+                    Text(
+                        "所有按钮一起缩放；单个按钮可在编辑态双击它单独调整。改动需点保存生效。",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = stringResource(R.string.slider_pointer_sensitivity),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text("${(newConfig.pointerSensitivity * 100).roundToInt()} %")
+                    }
+                    Slider(
+                        value = newConfig.pointerSensitivity,
+                        valueRange = 0.1f..1f,
+                        steps = 8,
+                        onValueChange = {
+                            newConfig = newConfig.copy(pointerSensitivity = it)
+                        })
+                    Text(
+                        "跟随当前预设保存，切换预设会各自恢复；改动需点保存生效。",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 ProfileAssistCard(
                     profile = activeProfile,
                     draft = assistDraft,
                     onDraftChange = { assistDraft = it },
                 )
-                Card {
-                    Column(
-                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
-                        Text(
-                            text = "操作与显示",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                SettingsSectionCard(
+                    title = "外观与触控",
+                    scope = SettingsScope.PRESET,
+                    hint = "跟随当前预设 · 改动需点右上角保存",
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
                             Text(
-                                text = stringResource(R.string.settings_button_size),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f)
-                                    .padding(top = 8.dp),
+                                stringResource(R.string.settings_screen_mirror_compat),
                                 style = MaterialTheme.typography.titleMedium
                             )
-                            Text(stringResource(R.string.settings_button_size_value, (newConfig.buttonScale * 100).roundToInt()))
-                        }
-                        // 0.5 lower bound: at 0 the overlay buttons shrink to
-                        // nothing, leaving no handle to drag or remove them
-                        // again, and no way to recover short of a reinstall.
-                        Slider(
-                            value = newConfig.buttonScale,
-                            valueRange = 0.5f..2f,
-                            steps = 14,
-                            onValueChange = {
-                                newConfig = newConfig.copy(buttonScale = it)
-                            })
-                        Text(
-                            "所有按钮一起缩放；单个按钮可在编辑态双击它单独调整。改动需点保存生效。",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = stringResource(R.string.slider_pointer_sensitivity),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f),
-                                style = MaterialTheme.typography.titleMedium
+                                modifier = Modifier.padding(top = 4.dp),
+                                text = stringResource(R.string.settings_screen_mirror_compat_desc),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Text("${(newConfig.pointerSensitivity * 100).roundToInt()} %")
                         }
-                        Slider(
-                            value = newConfig.pointerSensitivity,
-                            valueRange = 0.1f..1f,
-                            steps = 8,
-                            onValueChange = {
-                                newConfig = newConfig.copy(pointerSensitivity = it)
-                            })
-                        Text(
-                            "跟随当前预设保存，切换预设会各自恢复；改动需点保存生效。",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = stringResource(R.string.slider_overlay_opacity),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f),
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text("${(overlayOpacity * 100).roundToInt()} %")
-                        }
-                        Slider(
-                            value = overlayOpacity,
-                            valueRange = 0f..1f,
-                            steps = 9,
-                            onValueChange = onSetOverlayOpacity
-                        )
-                        Text(
-                            "0% 时按键完全不显示；改动立即生效，无需点保存。",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "顶部状态提示条",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    text = "屏幕最上边那行「预设名 · 模式 · 最近输入」。关掉后游戏画面上不再出现，通知栏也有同名按钮，改动立即生效并会保存。",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                        Switch(
+                            checked = newConfig.screenMirrorCompatMode,
+                            onCheckedChange = {
+                                newConfig = newConfig.copy(screenMirrorCompatMode = it)
                             }
-                            Switch(
-                                checked = statusBarVisible,
-                                onCheckedChange = onSetStatusBarVisible
+                        )
+                    }
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                stringResource(R.string.settings_theme),
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                modifier = Modifier.padding(top = 4.dp),
+                                text = stringResource(R.string.settings_theme_pref),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                        ThemeSelector(
+                            value = newConfig.themePreference,
+                            onSelect = { newConfig = newConfig.copy(themePreference = it) }
+                        )
+                    }
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                stringResource(R.string.settings_cancelable_button),
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                modifier = Modifier.padding(top = 4.dp),
+                                text = stringResource(R.string.settings_touch_cancel),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TouchModeSelector(
+                            value = newConfig.cancellableTouchMode,
+                            onSelect = { newConfig = newConfig.copy(cancellableTouchMode = it) }
+                        )
+                    }
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                stringResource(R.string.settings_scope),
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                modifier = Modifier.padding(top = 4.dp),
+                                text = stringResource(R.string.settings_touch_scope),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TouchModeSelector(
+                            value = newConfig.normalBtnTouchMode,
+                            onSelect = { newConfig = newConfig.copy(normalBtnTouchMode = it) }
+                        )
                     }
                 }
-                Card {
-                    Column(
-                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                SettingsSectionCard(
+                    title = "鼠标与兼容",
+                    scope = SettingsScope.GLOBAL,
+                    hint = "全局 · 立即生效并保存",
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "兼容与高级",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.primary
+                            "单帧断点阈值",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium
                         )
-                        Text(
-                            "鼠标（全局，立即生效并保存）",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
+                        Text("${mouseJumpThresholdPx}px")
+                    }
+                    Slider(
+                        value = mouseJumpThresholdPx.toFloat().coerceIn(40f, 800f),
+                        valueRange = 40f..800f,
+                        steps = 37,
+                        onValueChange = { onSetMouseJumpThreshold(it.roundToInt()) }
+                    )
+                    Text(
+                        "正常手速一帧的位移远小于它；超过就当作光标跳变丢弃。默认 240，可按不同鼠标/投屏端微调。",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "锁定鼠标输入模式",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                "同一段操作内固定用相对轴或绝对坐标，避免设备偶尔上报相对轴时速度忽快忽慢。默认开启。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = mouseModeLatch,
+                            onCheckedChange = onSetMouseModeLatch
                         )
+                    }
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "缓存屏幕尺寸",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                "避免每个鼠标事件都查询系统窗口尺寸，默认开启；屏幕旋转或分辨率变化时自动失效。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = screenSizeCacheEnabled,
+                            onCheckedChange = onSetScreenSizeCache
+                        )
+                    }
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "Alt+D 拖拽丢弃",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                "光标模式下按住 Alt 再按 D：在光标处按住物品拖到编辑态放置的「丢弃点」，松开后光标回位。射击模式与未出现光标时不生效。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = discardDragEnabled,
+                            onCheckedChange = onSetDiscardDragEnabled
+                        )
+                    }
+                    if (discardDragEnabled) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                "单帧断点阈值",
+                                "拖拽速度",
                                 modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.titleMedium
+                                style = MaterialTheme.typography.bodyMedium
                             )
-                            Text("${mouseJumpThresholdPx}px")
+                            Text(
+                                "×${String.format(java.util.Locale.US, "%.1f", discardDragSpeed)}",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
                         }
                         Slider(
-                            value = mouseJumpThresholdPx.toFloat().coerceIn(40f, 800f),
-                            valueRange = 40f..800f,
-                            steps = 37,
-                            onValueChange = { onSetMouseJumpThreshold(it.roundToInt()) }
+                            value = discardDragSpeed.coerceIn(1f, 10f),
+                            valueRange = 1f..10f,
+                            steps = 17,
+                            onValueChange = {
+                                // 按 0.5 档量化，避免滑杆产生 4.37 这类难复现的数值。
+                                onSetDiscardDragSpeed((it * 2f).roundToInt() / 2f)
+                            }
                         )
                         Text(
-                            "正常手速一帧的位移远小于它；超过就当作光标跳变丢弃。默认 240，可按不同鼠标/投屏端微调。",
-                            style = MaterialTheme.typography.labelMedium,
+                            "1 = 原始速度，5 = 5 倍速（默认）；只影响移动过程，按下与停顿保持不变。",
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        HorizontalDivider()
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    "锁定鼠标输入模式",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    "同一段操作内固定用相对轴或绝对坐标，避免设备偶尔上报相对轴时速度忽快忽慢。默认开启。",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = mouseModeLatch,
-                                onCheckedChange = onSetMouseModeLatch
-                            )
-                        }
-                        HorizontalDivider()
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    "缓存屏幕尺寸",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    "避免每个鼠标事件都查询系统窗口尺寸，默认开启；屏幕旋转或分辨率变化时自动失效。",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = screenSizeCacheEnabled,
-                                onCheckedChange = onSetScreenSizeCache
-                            )
-                        }
-                        HorizontalDivider()
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    "Alt+D 拖拽丢弃",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    "光标模式下按住 Alt 再按 D：在光标处按住物品拖到编辑态放置的「丢弃点」，松开后光标回位。射击模式与未出现光标时不生效。",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = discardDragEnabled,
-                                onCheckedChange = onSetDiscardDragEnabled
-                            )
-                        }
-                        HorizontalDivider()
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    stringResource(R.string.settings_screen_mirror_compat),
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    modifier = Modifier.padding(top = 4.dp),
-                                    text = stringResource(R.string.settings_screen_mirror_compat_desc),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = newConfig.screenMirrorCompatMode,
-                                onCheckedChange = {
-                                    newConfig = newConfig.copy(screenMirrorCompatMode = it)
-                                }
-                            )
-                        }
-                        HorizontalDivider()
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    stringResource(R.string.settings_theme),
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    modifier = Modifier.padding(top = 4.dp),
-                                    text = stringResource(R.string.settings_theme_pref),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            ThemeSelector(
-                                value = newConfig.themePreference,
-                                onSelect = { newConfig = newConfig.copy(themePreference = it) }
-                            )
-                        }
-                        HorizontalDivider()
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    stringResource(R.string.settings_cancelable_button),
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    modifier = Modifier.padding(top = 4.dp),
-                                    text = stringResource(R.string.settings_touch_cancel),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            TouchModeSelector(
-                                value = newConfig.cancellableTouchMode,
-                                onSelect = { newConfig = newConfig.copy(cancellableTouchMode = it) }
-                            )
-                        }
-                        HorizontalDivider()
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    stringResource(R.string.settings_scope),
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    modifier = Modifier.padding(top = 4.dp),
-                                    text = stringResource(R.string.settings_touch_scope),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            TouchModeSelector(
-                                value = newConfig.normalBtnTouchMode,
-                                onSelect = { newConfig = newConfig.copy(normalBtnTouchMode = it) }
-                            )
-                        }
-                        HorizontalDivider()
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    stringResource(R.string.settings_delete_data),
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    modifier = Modifier.padding(top = 4.dp),
-                                    text = stringResource(R.string.settings_delete_keymap),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(checked = newConfig.deleteDataOnRemove, onCheckedChange = {
-                                newConfig = newConfig.copy(deleteDataOnRemove = it)
-                            })
-                        }
                     }
                 }
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            "按键拟人化",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                SettingsSectionCard(
+                    title = "按键拟人化",
+                    scope = SettingsScope.GLOBAL,
+                    hint = "全局 · 立即生效并保存",
+                ) {
                         Text(
                             "给注入的触控位置加随机抖动，避免被识别成机械死板的操作。全局生效，强度最低 1，最高 100。",
                             style = MaterialTheme.typography.labelMedium,
@@ -712,55 +709,155 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    }
                 }
-                FilledTonalButton(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = onStopOverlay
+                SettingsSectionCard(
+                    title = "维护",
+                    scope = SettingsScope.NONE,
+                    hint = "低频与危险操作",
                 ) {
-                    Row(
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                stringResource(R.string.settings_delete_data),
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                modifier = Modifier.padding(top = 4.dp),
+                                text = stringResource(R.string.settings_delete_keymap),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(checked = newConfig.deleteDataOnRemove, onCheckedChange = {
+                            newConfig = newConfig.copy(deleteDataOnRemove = it)
+                        })
+                    }
+                    HorizontalDivider()
+                    FilledTonalButton(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Start
+                        onClick = onStopOverlay
                     ) {
-                        Icon(Icons.AutoMirrored.Rounded.ExitToApp, contentDescription = null)
-                        Text(
-                            modifier = Modifier.padding(start = 16.dp),
-                            text = stringResource(R.string.overlay_close_overlay),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Start
+                        ) {
+                            Icon(Icons.AutoMirrored.Rounded.ExitToApp, contentDescription = null)
+                            Text(
+                                modifier = Modifier.padding(start = 16.dp),
+                                text = stringResource(R.string.overlay_close_overlay),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                    FilledTonalButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        ),
+                        onClick = { showResetConfirm = true }
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Start
+                        ) {
+                            Icon(Icons.Rounded.Refresh, contentDescription = null)
+                            Text(
+                                modifier = Modifier.padding(start = 16.dp),
+                                text = stringResource(R.string.settings_reset_defaults),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                    FilledTonalButton(modifier = Modifier.fillMaxWidth(), onClick = onNavigateAbout) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Start
+                        ) {
+                            Icon(Icons.Rounded.Info, contentDescription = null)
+                            Text(
+                                modifier = Modifier.padding(start = 16.dp),
+                                text = stringResource(R.string.settings_about),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
-                FilledTonalButton(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = { showResetConfirm = true }
+            }
+        }
+    }
+}
+
+/** 设置分区的作用域标签：预设级跟随当前预设，全局级对所有预设统一生效。 */
+private enum class SettingsScope(val label: String) {
+    PRESET("预设级"),
+    GLOBAL("全局"),
+    NONE(""),
+}
+
+/**
+ * 设置页统一分区卡片：标题 + 作用域标签 + 说明，点标题行折叠/展开。
+ *
+ * 折叠后只保留标题行，避免低频设置（拟人化、兼容、维护）把常用项挤到很下面。
+ */
+@Composable
+private fun SettingsSectionCard(
+    title: String,
+    scope: SettingsScope = SettingsScope.NONE,
+    hint: String = "",
+    initiallyExpanded: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    // 用标题做 key：不同分区互不影响，重建页面时保持各自的展开状态。
+    var expanded by rememberSaveable(title) { mutableStateOf(initiallyExpanded) }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                if (scope != SettingsScope.NONE) {
+                    Text(
+                        modifier = Modifier.padding(start = 8.dp),
+                        text = scope.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (scope == SettingsScope.PRESET)
+                            MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                Icon(
+                    imageVector = Icons.Rounded.KeyboardArrowDown,
+                    contentDescription = if (expanded) "收起" else "展开",
+                    modifier = Modifier.rotate(if (expanded) 180f else 0f)
+                )
+            }
+            if (hint.isNotBlank()) {
+                Text(
+                    text = hint,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (expanded) {
+                Column(
+                    modifier = Modifier.padding(top = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Start
-                    ) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = null)
-                        Text(
-                            modifier = Modifier.padding(start = 16.dp),
-                            text = stringResource(R.string.settings_reset_defaults),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
-                FilledTonalButton(modifier = Modifier.fillMaxWidth(), onClick = onNavigateAbout) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Start
-                    ) {
-                        Icon(Icons.Rounded.Info, contentDescription = null)
-                        Text(
-                            modifier = Modifier.padding(start = 16.dp),
-                            text = stringResource(R.string.settings_about),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
+                    content()
                 }
             }
         }
@@ -816,33 +913,22 @@ private fun ProfileAssistCard(
     draft: ProfileAssist,
     onDraftChange: (ProfileAssist) -> Unit,
 ) {
-    var showSwapPairs by remember { mutableStateOf(false) }
     var showMacros by remember { mutableStateOf(false) }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text(
-                "按键辅助",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.primary
-            )
+    SettingsSectionCard(
+        title = "按键辅助",
+        scope = SettingsScope.PRESET,
+        hint = if (profile == null) "先在「预设」里选择一个预设"
+        else "当前预设：${profile.name} · 改动需点右上角保存",
+    ) {
             if (profile == null) {
                 Text(
                     "先在「预设」里选择一个预设，这些辅助会跟随该预设保存。",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                return@Column
+                return@SettingsSectionCard
             }
-            Text(
-                "当前预设：${profile.name} · 改动需点右上角保存",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
             AssistSwitchRow(
                 title = "Tab 防连按",
                 desc = "在间隔内的重复 Tab 直接吞掉，避免手速过快时多余的 Tab 落到游戏里。",
@@ -863,26 +949,13 @@ private fun ProfileAssistCard(
             }
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             AssistSwitchRow(
-                title = "R ↔ 右键（X 换位 / 1 还原）",
-                desc = "按换位键让 R 与鼠标右键按钮交换位置，按还原键各自归位。只改位置，不动键位绑定。",
+                title = "R ↔ 右键（1/2/3/4 换位 / X 还原）",
+                desc = "按 1–4 任意一个让 R 与鼠标右键按钮交换位置；按 X 各自归位。已换位时再按 1–4 不再换位，只当普通按键透传。",
                 checked = draft.quickSwapEnabled,
                 onToggle = {
                     onDraftChange(draft.copy(quickSwapEnabled = !draft.quickSwapEnabled))
                 }
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("双键交换对", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "自定义 A/B 两个按钮的换位键与还原键。",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                TextButton(onClick = { showSwapPairs = true }) {
-                    Text(if (draft.swapPairs.isEmpty()) "添加" else "编辑（${draft.swapPairs.size}）")
-                }
-            }
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             AssistSwitchRow(
                 title = "按 3 依次点 2/3/4",
@@ -932,17 +1005,9 @@ private fun ProfileAssistCard(
                     Text(if (draft.macros.isEmpty()) "添加" else "编辑（${draft.macros.size}）")
                 }
             }
-        }
     }
 
     if (profile == null) return
-    if (showSwapPairs) {
-        SwapPairsDialog(
-            profile = profile.withAssist(draft),
-            onDismiss = { showSwapPairs = false },
-            onSave = { onDraftChange(draft.copy(swapPairs = it)) }
-        )
-    }
     if (showMacros) {
         ClickMacrosDialog(
             profile = profile.withAssist(draft),
@@ -1650,208 +1715,4 @@ fun ProfileImportDialog(
 }
 
 
-/** 双键交换对：为该预设维护 SwapPair 列表（A/B 两按钮 + 换位键 + 还原键）。 */
-@Composable
-private fun SwapPairsDialog(
-    profile: Profile,
-    onDismiss: () -> Unit,
-    onSave: (List<SwapPair>) -> Unit,
-) {
-    var pairs by remember(profile) { mutableStateOf(profile.swapPairs) }
-    var aItemId by remember { mutableStateOf<Int?>(null) }
-    var bItemId by remember { mutableStateOf<Int?>(null) }
-    var swapOnCodes by remember { mutableStateOf(listOf<Int>()) }
-    var swapOff by remember { mutableStateOf<Int?>(null) }
-    var capturing by remember { mutableStateOf<SwapKeyTarget?>(null) }
-    val focusRequester = remember { FocusRequester() }
-    // WASD 组没有可交换的单点，直接从候选里去掉，避免出现"选了没反应"的空档。
-    val pickable = profile.items.filterNot { it is DraggableItem.WASDGroup }
 
-    fun itemLabel(id: Int): String {
-        val item = profile.items.firstOrNull { it.id == id } ?: return "按钮#$id(不存在)"
-        val code = when (item) {
-            is DraggableItem.FixedKey -> item.keyCode
-            is DraggableItem.VariableKey -> item.keyCode
-            is DraggableItem.CancelableKey -> item.keyCode
-            is DraggableItem.WASDGroup -> null
-        }
-        return code?.keyCodeToString()?.removePrefix("KEYCODE_") ?: "按钮#$id"
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("双键交换对") },
-        text = {
-            // 在对话框根节点统一捕获按键：不再依赖某个 Text 的焦点，鼠标点一下
-            // 输入框后按任意键都能生效，也不会因为列表变长被挤出可视区。
-            LaunchedEffect(Unit) { focusRequester.requestFocus() }
-            Column(
-                modifier = Modifier
-                    .heightIn(max = 420.dp)
-                    .verticalScroll(rememberScrollState())
-                    .focusRequester(focusRequester)
-                    .focusable()
-                    .onPreviewKeyEvent { event ->
-                        val target = capturing ?: return@onPreviewKeyEvent false
-                        val native = event.nativeKeyEvent
-                        if (native.action == NativeKeyEvent.ACTION_DOWN && native.repeatCount == 0) {
-                            val code = native.keyCode
-                            if (code > NativeKeyEvent.KEYCODE_UNKNOWN) {
-                                when (target) {
-                                    // 换位键支持多个：1234 这类武器槽任意一个都能触发，
-                                    // 重复按同一个键只保留一次。
-                                    SwapKeyTarget.On -> if (code !in swapOnCodes) {
-                                        swapOnCodes = swapOnCodes + code
-                                    }
-                                    SwapKeyTarget.Off -> swapOff = code
-                                }
-                            }
-                            capturing = null
-                        }
-                        true
-                    },
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    "按下「换位键」时，A / B 两按钮的布局位置互换；按「还原键」各自回到默认位置。只改位置，不动键位绑定。",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (pairs.isEmpty()) {
-                    Text("（本预设暂无交换对）", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } else {
-                    pairs.forEach { pair ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "${itemLabel(pair.aItemId)} ↔ ${itemLabel(pair.bItemId)}　换${
-                                    pair.onKeys.joinToString("/") {
-                                        it.keyCodeToString().removePrefix("KEYCODE_")
-                                    }
-                                } / 回${pair.swapOffKeyCode.keyCodeToString().removePrefix("KEYCODE_")}",
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            TextButton(onClick = { pairs = pairs - pair }) {
-                                Icon(Icons.Rounded.Delete, contentDescription = "删除")
-                            }
-                        }
-                    }
-                }
-                HorizontalDivider()
-                Text("添加交换对", style = MaterialTheme.typography.titleSmall)
-                ItemChipRow(label = "A 按钮", items = pickable, selected = aItemId,
-                    onPick = { aItemId = it })
-                ItemChipRow(label = "B 按钮", items = pickable, selected = bItemId,
-                    onPick = { bItemId = it })
-                // 换位键可多个：已添加的显示成可点掉的键名，再按“添加”捕获新键。
-                Text("换位键（可添加多个，任意一个触发交换）", style = MaterialTheme.typography.bodySmall)
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    swapOnCodes.forEach { code ->
-                        TextButton(onClick = { swapOnCodes = swapOnCodes - code }) {
-                            Text(code.keyCodeToString().removePrefix("KEYCODE_"))
-                        }
-                    }
-                    TextButton(onClick = {
-                        capturing = SwapKeyTarget.On
-                        focusRequester.requestFocus()
-                    }) {
-                        Text(if (capturing == SwapKeyTarget.On) "请按键…" else "添加换位键")
-                    }
-                }
-                SwapKeyRow(
-                    title = "还原键（按此键还原）",
-                    code = swapOff,
-                    capturing = capturing == SwapKeyTarget.Off,
-                    onStart = {
-                        capturing = SwapKeyTarget.Off
-                        focusRequester.requestFocus()
-                    }
-                )
-                TextButton(
-                    enabled = aItemId != null && bItemId != null && aItemId != bItemId &&
-                        swapOnCodes.isNotEmpty() && swapOff != null,
-                    onClick = {
-                        pairs = pairs + SwapPair(aItemId = aItemId!!, bItemId = bItemId!!,
-                            swapOnKeyCode = 0, swapOffKeyCode = swapOff!!,
-                            swapOnKeyCodes = swapOnCodes)
-                        aItemId = null; bItemId = null; swapOnCodes = emptyList(); swapOff = null
-                    }
-                ) { Text("添加") }
-            }
-        },
-        confirmButton = { TextButton(onClick = { onSave(pairs); onDismiss() }) { Text("保存") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
-    )
-}
-
-/** 交换对的按键捕获目标。 */
-private enum class SwapKeyTarget { On, Off }
-
-/**
- * 从预设的按钮列表里选一个成员（A 或 B）。
- *
- * 用横向滚动的 Chip 取代 DropdownMenu：对话框内的下拉菜单会被窗口裁剪，且
- * 按钮一多就有成员点不到（表现为"有空位点不了"）。
- */
-@Composable
-private fun ItemChipRow(
-    label: String,
-    items: List<DraggableItem>,
-    selected: Int?,
-    onPick: (Int) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(text = label, style = MaterialTheme.typography.bodyMedium)
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            items.forEach { item ->
-                FilterChip(
-                    selected = selected == item.id,
-                    onClick = { onPick(item.id) },
-                    label = { Text(SwapItemLabel.of(items, item.id)) }
-                )
-            }
-        }
-    }
-}
-
-/** 换位键 / 还原键的捕获按钮。点击后由对话框根节点接管下一次按键。 */
-@Composable
-private fun SwapKeyRow(
-    title: String,
-    code: Int?,
-    capturing: Boolean,
-    onStart: () -> Unit,
-) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(text = title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        Button(onClick = onStart) {
-            Text(
-                when {
-                    capturing -> "请按键…"
-                    code != null -> code.keyCodeToString().removePrefix("KEYCODE_")
-                    else -> "未设置"
-                }
-            )
-        }
-    }
-}
-
-private object SwapItemLabel {
-    fun of(items: List<DraggableItem>, id: Int?): String {
-        val item = id?.let { i -> items.firstOrNull { it.id == i } } ?: return "选择按钮"
-        val code = when (item) {
-            is DraggableItem.FixedKey -> item.keyCode
-            is DraggableItem.VariableKey -> item.keyCode
-            is DraggableItem.CancelableKey -> item.keyCode
-            is DraggableItem.WASDGroup -> null
-        }
-        return code?.keyCodeToString()?.removePrefix("KEYCODE_") ?: "按钮#${item.id}"
-    }
-}

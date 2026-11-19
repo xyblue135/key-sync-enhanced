@@ -14,10 +14,10 @@ data class Profile(
     val name: String,
     val items: List<DraggableItem> = emptyList(),
     val appConfig: AppConfig = AppConfig.Default,
-    /** Swap pairs: A/B button layout positions swap on swapOn, restore on swapOff. Moves position only. */
-    val swapPairs: List<SwapPair> = emptyList(),
-    /** 预设级快捷换位：X 让 R 与鼠标右键按钮交换位置，1 还原。默认开启。 */
+    /** 预设级快捷换位：1/2/3/4 让 R 与鼠标右键按钮交换位置，X 还原。默认开启。 */
     val quickSwapEnabled: Boolean = true,
+    /** 快捷换位锁存：已换位时再按 1–4 不再交换，直到 X 还原。持久化避免重启后误判。 */
+    val quickSwapLatched: Boolean = false,
     /** 按 3 时依次点击 2 → 3 → 4，用于一键切换武器组。默认开启。 */
     val tapSequence234Enabled: Boolean = true,
     /** 2-3-4 连点之间每个触点的间隔（ms），越小越快。默认 60。 */

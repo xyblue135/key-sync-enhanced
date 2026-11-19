@@ -229,6 +229,7 @@ class MainActivity : ComponentActivity() {
                         val mouseModeLatch by viewModel.mouseModeLatch.collectAsStateWithLifecycle()
                         val screenSizeCacheEnabled by viewModel.screenSizeCacheEnabled.collectAsStateWithLifecycle()
                         val discardDragEnabled by viewModel.discardDragEnabled.collectAsStateWithLifecycle()
+                        val discardDragSpeed by viewModel.discardDragSpeed.collectAsStateWithLifecycle()
                         // Collected so a change applied outside the save button
                         // (the profile-switch master switch) is reflected
                         // instead of being overwritten by a stale newConfig.
@@ -274,6 +275,8 @@ class MainActivity : ComponentActivity() {
                             onSetScreenSizeCache = viewModel::setScreenSizeCache,
                             discardDragEnabled = discardDragEnabled,
                             onSetDiscardDragEnabled = viewModel::setDiscardDragEnabled,
+                            discardDragSpeed = discardDragSpeed,
+                            onSetDiscardDragSpeed = viewModel::setDiscardDragSpeed,
                             onStopOverlay = {
                                 stopService(
                                     Intent(

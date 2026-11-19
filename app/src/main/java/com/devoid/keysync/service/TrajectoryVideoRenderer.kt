@@ -362,15 +362,16 @@ object TrajectoryVideoRenderer {
 
         p.text.color = MUTED
         p.text.textSize = 16f
-        canvas.drawText("虚拟摇杆向量 · 断线 = 松手或瞬移", left, top + size + 56f, p.text)
+        canvas.drawText("虚拟摇杆向量 · 断线 = 松手或长时间无输入", left, top + size + 56f, p.text)
     }
 
     /**
      * 把采样点拆成「一次连续按压」的线段。
      *
-     * 松手、超过 300ms 没有新样本、方向角突变超过 35° 或半径突变时断开。
-     * 以前整段连成一条折线，A 松手再按 D 会画出一条穿过中心的横线，
-     * W→WD→D 则连成八边形；断开后这些都不再出现。
+     * 只在松手（零向量）或超过 300ms 没有新样本时断开。
+     * 方向/半径突变不再断线：A→D 这类大换向会在过渡中几乎横穿中心，
+     * 关掉这两条规则后整段才会连成一条从左到右的完整轨迹，
+     * 而“A 松开很久再按 D”仍会被零向量/超时分开。
      */
     private fun wasdSegments(samples: List<WasdTrajectorySample>): List<List<WasdTrajectorySample>> {
         val result = ArrayList<List<WasdTrajectorySample>>()
@@ -396,16 +397,8 @@ object TrajectoryVideoRenderer {
         return result
     }
 
-    private fun wasdBreak(a: WasdTrajectorySample, b: WasdTrajectorySample): Boolean {
-        if (b.timeMs - a.timeMs > 300) return true
-        val radiusA = kotlin.math.hypot(a.x, a.y)
-        val radiusB = kotlin.math.hypot(b.x, b.y)
-        if (radiusA < 0.001f || radiusB < 0.001f) return true
-        if (abs(radiusB - radiusA) > 0.25f) return true
-        val cosine = ((a.x * b.x + a.y * b.y) / (radiusA * radiusB)).coerceIn(-1f, 1f)
-        val degrees = Math.toDegrees(kotlin.math.acos(cosine).toDouble())
-        return degrees > 35.0
-    }
+    private fun wasdBreak(a: WasdTrajectorySample, b: WasdTrajectorySample): Boolean =
+        b.timeMs - a.timeMs > 300
 
     private fun drawMousePanel(
         canvas: Canvas,
