@@ -1138,6 +1138,23 @@ class EventHandler(
         if (shootingMode != enabled) toggleShootingMode()
     }
 
+    /**
+     * 幂等重建瞄准触点：仅在射击模式下生效。
+     *
+     * 游戏切换界面时可能把注入的触点丢掉，而 App 仍认为还在瞄准。这里先抬起再按下，
+     * 保证游戏侧一定能收到一次新的 DOWN；摄像头方向不会跳，因为触点位置没变。
+     */
+    fun ensureAimContact() {
+        if (!shootingMode) return
+        val key = shootingModeKeyCode
+        val pointerId = pointerIds[key] ?: return
+        val center = clampAimToBounds(keyMap[key]?.position ?: aimCenter)
+        aimCenter = center
+        aimPosition = center
+        eventInjector.releasePointer(pointerId)
+        eventInjector.injectPointer(pointerId, center)
+    }
+
     private fun toggleShootingMode() {
         stopWheel()
         val newState = !shootingMode

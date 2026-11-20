@@ -231,6 +231,7 @@ class MainActivity : ComponentActivity() {
                         val discardDragEnabled by viewModel.discardDragEnabled.collectAsStateWithLifecycle()
                         val discardDragSpeed by viewModel.discardDragSpeed.collectAsStateWithLifecycle()
                         val mapMouseToggleEnabled by viewModel.mapMouseToggleEnabled.collectAsStateWithLifecycle()
+                        val tabEscAimEnabled by viewModel.tabEscAimEnabled.collectAsStateWithLifecycle()
                         // Collected so a change applied outside the save button
                         // (the profile-switch master switch) is reflected
                         // instead of being overwritten by a stale newConfig.
@@ -280,6 +281,8 @@ class MainActivity : ComponentActivity() {
                             onSetDiscardDragSpeed = viewModel::setDiscardDragSpeed,
                             mapMouseToggleEnabled = mapMouseToggleEnabled,
                             onSetMapMouseToggleEnabled = viewModel::setMapMouseToggleEnabled,
+                            tabEscAimEnabled = tabEscAimEnabled,
+                            onSetTabEscAimEnabled = viewModel::setTabEscAimEnabled,
                             onStopOverlay = {
                                 stopService(
                                     Intent(

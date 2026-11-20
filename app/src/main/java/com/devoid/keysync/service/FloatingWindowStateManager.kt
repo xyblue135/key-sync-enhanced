@@ -214,6 +214,10 @@ class FloatingWindowStateManager @Inject constructor(
     val mapMouseToggleEnabled = MutableStateFlow(true)
     /** M 键当前是否处于「地图已打开」状态；重启服务后归零。 */
     private var mapToggleOpen = false
+    /** ESC / Tab 关闭界面后自动回瞄准（全局），默认开启。 */
+    val tabEscAimEnabled = MutableStateFlow(true)
+    /** 回瞄准延迟任务：等游戏把界面关掉再重建瞄准触点。 */
+    private var aimReturnJob: Job? = null
 
     private val _containerItems = MutableStateFlow(listOf<DraggableItem>())
     val containerItems = _containerItems.asStateFlow()
@@ -339,6 +343,8 @@ class FloatingWindowStateManager @Inject constructor(
                     .coerceIn(MIN_DISCARD_DRAG_SPEED, MAX_DISCARD_DRAG_SPEED)
             mapMouseToggleEnabled.value =
                 dataStoreManager.getBoolean(DataStoreManager.MAP_MOUSE_TOGGLE_ENABLED).first() ?: true
+            tabEscAimEnabled.value =
+                dataStoreManager.getBoolean(DataStoreManager.TAB_ESC_AIM_ENABLED).first() ?: true
             // 两条 init 协程的完成顺序不确定：若预设先加载完，这里要把刚读到的拟人化设置补应用一次。
             syncHumanization()
         }
@@ -1084,6 +1090,30 @@ class FloatingWindowStateManager @Inject constructor(
         scope.launch { dataStoreManager.save(DataStoreManager.MAP_MOUSE_TOGGLE_ENABLED, enabled) }
     }
 
+    /** 全局开关：物理 ESC / Tab 关闭界面后自动回射击模式（默认开启）。 */
+    fun setTabEscAimEnabled(enabled: Boolean) {
+        tabEscAimEnabled.value = enabled
+        if (!enabled) aimReturnJob?.cancel()
+        scope.launch { dataStoreManager.save(DataStoreManager.TAB_ESC_AIM_ENABLED, enabled) }
+    }
+
+    /**
+     * 延迟回瞄准：游戏关闭背包/地图需要几帧，立即注入会被丢掉。
+     * 110ms 后若仍在射击模式则幂等重建准心触点，否则切入射击模式。
+     */
+    private fun scheduleAimReturn() {
+        aimReturnJob?.cancel()
+        // 已经在射击模式时不做任何事，避免按 Tab 看比分、ESC 开菜单时重建触点。
+        if (isShootingMode.value) return
+        aimReturnJob = scope.launch {
+            delay(110L)
+            eventHandler.setShootingModeEnabled(true)
+            // 界面还在收尾时注入的 DOWN 可能被游戏丢掉，等它彻底关闭后再补一次。
+            delay(150L)
+            eventHandler.ensureAimContact()
+        }
+    }
+
     /**
      * M 键：第一次按下开图并把鼠标切出来（退出射击模式），M 键本身继续走正常映射；
      * 第二次按下点 ESC 映射位置并收回鼠标（进入射击模式），本次 M 被吞掉。
@@ -1690,6 +1720,19 @@ class FloatingWindowStateManager @Inject constructor(
         ) {
             eventHandler.doubleTapExtraPoint(eventHandler.mousePointerPosition)
             return true
+        }
+        // 手动切模式（`）时取消待执行的回瞄准，避免把用户刚切出的光标又收回。
+        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
+            keyEvent.keyCode == eventHandler.shootingModeKeyCode
+        ) {
+            aimReturnJob?.cancel()
+        }
+        // 物理 ESC / Tab：关闭背包、地图后延迟回瞄准；不吞按键，游戏照常收到。
+        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
+            tabEscAimEnabled.value &&
+            (keyEvent.keyCode == KeyEvent.KEYCODE_ESCAPE || keyEvent.keyCode == KeyEvent.KEYCODE_TAB)
+        ) {
+            scheduleAimReturn()
         }
         _lastInputLabel.value = keyEvent.keyCode.keyCodeToString() +
             if (keyEvent.action == KeyEvent.ACTION_DOWN) " 按下" else " 松开"

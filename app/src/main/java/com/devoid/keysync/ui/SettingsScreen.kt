@@ -126,6 +126,8 @@ fun SettingsScreen(
     onSetDiscardDragSpeed: (Float) -> Unit = {},
     mapMouseToggleEnabled: Boolean = true,
     onSetMapMouseToggleEnabled: (Boolean) -> Unit = {},
+    tabEscAimEnabled: Boolean = true,
+    onSetTabEscAimEnabled: (Boolean) -> Unit = {},
     onStopOverlay: () -> Unit = {},
     wasdHumanization: Boolean = false,
     keyHumanization: Boolean = false,
@@ -550,6 +552,24 @@ fun SettingsScreen(
                         Switch(
                             checked = screenSizeCacheEnabled,
                             onCheckedChange = onSetScreenSizeCache
+                        )
+                    }
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "ESC / Tab 关闭界面后回瞄准",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                "按物理 ESC 或 Tab 关掉背包/地图后，自动切回射击模式并重建准心触点；光标模式下按 ` 仍可手动切回。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = tabEscAimEnabled,
+                            onCheckedChange = onSetTabEscAimEnabled
                         )
                     }
                     HorizontalDivider()
