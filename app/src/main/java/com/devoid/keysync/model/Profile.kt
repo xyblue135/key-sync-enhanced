@@ -18,7 +18,7 @@ data class Profile(
     val quickSwapEnabled: Boolean = true,
     /** 快捷换位锁存：已换位时再按 1/2/4 不再交换，直到 X 还原。持久化避免重启后误判。 */
     val quickSwapLatched: Boolean = false,
-    /** 按 3 时依次点击 2 → 4 → 3，保证无论武器如何重排都切到近战。默认开启。 */
+    /** 按 3 时依次点击 2 → 3 → 4。需要游戏里 3 号位=手枪、4 号位=近战：最后一下 4 必落在近战，不会回退到主武器 1。默认开启。 */
     val tapSequence234Enabled: Boolean = true,
     /** 切近战序列每个触点之间的间隔（ms），越小越快。默认 10。 */
     val tapSequence234GapMs: Int = 10,

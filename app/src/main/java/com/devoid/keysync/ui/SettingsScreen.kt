@@ -1026,9 +1026,9 @@ private fun ProfileAssistCard(
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             AssistSwitchRow(
-                title = "按 3 切近战（2 → 4 → 3）",
-                desc = "按 3 时依次点击 2 → 4 → 3：无主武器/一把主武器时 2 是刀，两把主武器时 4 是刀，" +
-                    "两把主武器+手枪时 3 是刀；点空格不会切走，所以最终一定落到近战。" +
+                title = "按 3 切近战（2 → 3 → 4）",
+                desc = "按 3 时依次点击 2 → 3 → 4。请把游戏里的 3 号位配置为手枪、4 号位配置为近战：" +
+                    "2 号位扫掉第二主武器，3 号位扫掉手枪，最后 4 号位一定落在近战上，不会停在主武器 1。" +
                     "间隔越小越跟手，但太小可能被游戏合并或切枪冷却吞掉，建议 10–60ms。2/3/4 缺任意一个按钮时不接管。",
                 checked = draft.tapSequence234Enabled,
                 onToggle = {
@@ -1061,7 +1061,7 @@ private fun ProfileAssistCard(
                     Text("${draft.meleeSwapDelayMs} ms", style = MaterialTheme.typography.bodyMedium)
                 }
                 Text(
-                    "两个按钮已对调（通常是开大后）时，按 3 会立刻执行一次 2 → 4 → 3，" +
+                    "两个按钮已对调（通常是开大后）时，按 3 会立刻执行一次 2 → 3 → 4，" +
                         "等这段时间后再补一次，避开卸盾动作把第一轮吞掉；默认 1000ms。没对调时只执行一次。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1137,7 +1137,7 @@ private fun ProfileAssistCard(
                                         triggerName = it
                                         triggerError = false
                                     },
-                                    label = { Text("按键名，如 9、F5、X") },
+                                    label = { Text("按键名，如 9、F5、X（1–9 指主键盘左侧数字行）") },
                                     singleLine = true,
                                     isError = triggerError
                                 )
@@ -1191,7 +1191,7 @@ private fun ProfileAssistCard(
                         text = {
                             Column {
                                 Text(
-                                    "每行 D/U/T/W：D 1 50=按下1等50ms，U 1 50=放开1，T 1 50=点击1，W 50=纯等待；RMB 为鼠标右键，# 开头为注释。",
+                                    "每行 D/U/T/W：D 1 50=按下1等50ms，U 1 50=放开1，T 1 50=点击1，W 50=纯等待；RMB 为鼠标右键，# 开头为注释。1–9 指主键盘左侧数字行，小键盘数字不推荐（NumLock 关闭时可能无效）。",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -2063,7 +2063,7 @@ private fun KeyMacroSection(
                             triggerName = it
                             triggerError = false
                         },
-                        label = { Text("按键名，如 9、F5、X") },
+                        label = { Text("按键名，如 9、F5、X（1–9 指主键盘左侧数字行）") },
                         singleLine = true,
                         isError = triggerError
                     )
@@ -2105,7 +2105,7 @@ private fun KeyMacroSection(
             text = {
                 Column {
                     Text(
-                        "每行 D/U/T/W：D 1 50=按下1等50ms，U 1 50=放开1，T 1 50=点击1，W 50=纯等待；RMB 为鼠标右键，# 开头为注释。",
+                        "每行 D/U/T/W：D 1 50=按下1等50ms，U 1 50=放开1，T 1 50=点击1，W 50=纯等待；RMB 为鼠标右键，# 开头为注释。1–9 指主键盘左侧数字行，小键盘数字不推荐（NumLock 关闭时可能无效）。",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

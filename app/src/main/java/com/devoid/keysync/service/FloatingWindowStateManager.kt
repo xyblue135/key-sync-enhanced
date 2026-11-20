@@ -815,11 +815,11 @@ class FloatingWindowStateManager @Inject constructor(
     private var keyMacroJob: Job? = null
 
     /**
-     * 按 3 切近战：依次点击 2 → 4 → 3。
+     * 按 3 切近战：依次点击 2 → 3 → 4。
      *
-     * 游戏会按持有武器数量重排四个格子，近战可能出现在 2/3/4 任意一格；
-     * 点空格不会切走当前武器，所以最后落在 3 之前先点 2 和 4，能把近战覆盖全：
-     * 无主武器/一把主武器 → 2 是刀；两把主武器 → 4 是刀；两把主武器+手枪 → 3 是刀。
+     * 需要把游戏里的 3 号位配置为手枪、4 号位配置为近战：
+     * 2 号位扫掉可能存在的第二主武器，3 号位扫掉手枪，最后 4 号位一定落在近战上。
+     * 这样即使只有一把武器，也不会出现“最后一下点到空位、被游戏回退到主武器 1”的问题。
      *
      * 三个触点都走正常的按键映射（`eventHandler.handleKeyEvent`），所以用户把
      * 2/3/4 绑到哪个位置就点哪里。整个过程串行执行，重复按 3 不会叠加。
@@ -832,7 +832,7 @@ class FloatingWindowStateManager @Inject constructor(
         val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
         if (!profile.tapSequence234Enabled) return false
         // 三个按钮缺一就不接管，让 3 走原本的单键映射，避免按了没反应。
-        val targets = listOf(KeyEvent.KEYCODE_2, KeyEvent.KEYCODE_4, KeyEvent.KEYCODE_3)
+        val targets = listOf(KeyEvent.KEYCODE_2, KeyEvent.KEYCODE_3, KeyEvent.KEYCODE_4)
         val items = _containerItems.value
         if (targets.any { code -> items.none { it.boundKeyCode() == code } }) return false
         if (tapSequence234Job?.isActive == true) return true
@@ -845,7 +845,7 @@ class FloatingWindowStateManager @Inject constructor(
             0L
         }
         tapSequence234Job = scope.launch {
-            // 第一次：按下 3 立刻走一轮 2 → 4 → 3。
+            // 第一次：按下 3 立刻走一轮 2 → 3 → 4。
             injectMeleeSequence(targets, baseGap)
             // 已对调（开大后）再等卸盾动作结束，补第二轮，确保最终停在刀上。
             if (swapDelayMs > 0) {
@@ -856,7 +856,7 @@ class FloatingWindowStateManager @Inject constructor(
         return true
     }
 
-    /** 串行注入一轮 2 → 4 → 3，每个触点走正常按键映射，段间带 ±10% 抖动。 */
+    /** 串行注入一轮 2 → 3 → 4，每个触点走正常按键映射，段间带 ±10% 抖动。 */
     private suspend fun injectMeleeSequence(targets: List<Int>, baseGap: Int) {
         targets.forEach { code ->
             val now = SystemClock.uptimeMillis()
