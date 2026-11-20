@@ -1016,9 +1016,9 @@ private fun ProfileAssistCard(
             }
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             AssistSwitchRow(
-                title = "R ↔ 右键（1/2/4 换位 / X 还原）",
-                desc = "按 1、2、4 任意一个让 R 与鼠标右键按钮交换位置，按 X 各自归位。交换立即生效、不重建触点，" +
-                    "所以不会断触或卡刀；3 固定用于切近战，不参与换位；已换位时再按只当普通按键透传。锁存状态随预设保存，重启后保持。",
+                title = "R ↔ 右键（1/2 换位 / X 还原）",
+                desc = "按 1、2 任意一个让 R 与鼠标右键按钮交换位置，按 X 各自归位。交换立即生效、不重建触点，" +
+                    "所以不会断触或卡刀；3/4 固定用于近战流程，不参与换位；已换位时再按只当普通按键透传。锁存状态随预设保存，重启后保持。",
                 checked = draft.quickSwapEnabled,
                 onToggle = {
                     onDraftChange(draft.copy(quickSwapEnabled = !draft.quickSwapEnabled))
@@ -1077,8 +1077,9 @@ private fun ProfileAssistCard(
             }
             AssistSwitchRow(
                 title = "快速切枪宏（默认 Alt+9）",
-                desc = "按触发键执行自定义按键序列（默认内置 G502 快速切枪序列）。每一步直接注入触点，" +
-                    "不参与 R/右键换位、不改变锁存，宏里的 1/X 不会把按钮翻来翻去；最多 128 步。",
+                desc = "按触发键执行自定义按键序列（默认内置 G502 快速切枪序列）。中间每一步直接注入触点，" +
+                    "不参与 R/右键换位、不改变锁存，宏里的 1/X 不会把按钮翻来翻去；" +
+                    "宏正常跑完后，如果最后一步是 1/2，会补一次换位（默认序列以 1 结尾）；最多 128 步。",
                 checked = draft.keyMacro.enabled,
                 onToggle = {
                     onDraftChange(

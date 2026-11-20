@@ -507,11 +507,10 @@ class FloatingWindowStateManager @Inject constructor(
         const val DEFAULT_DISCARD_DRAG_SPEED = 5f
         const val MIN_DISCARD_DRAG_SPEED = 1f
         const val MAX_DISCARD_DRAG_SPEED = 10f
-        /** 快捷换位触发键：1/2/4（3 固定用于切近战，不参与换位）。 */
+        /** 快捷换位触发键：1/2（3/4 固定用于近战流程，不参与换位）。 */
         val SWAP_SLOT_KEYS = setOf(
             KeyEvent.KEYCODE_1,
             KeyEvent.KEYCODE_2,
-            KeyEvent.KEYCODE_4,
         )
         /** 固定还原键：X（不对用户开放配置）。 */
         val SWAP_RESTORE_KEY = KeyEvent.KEYCODE_X
@@ -874,8 +873,10 @@ class FloatingWindowStateManager @Inject constructor(
     /**
      * 快速切枪宏：触发键（默认 Alt+9）按下后，按预设步骤直接注入原始触点。
      *
-     * 刻意不经过 applyQuickSwap / runTapSequence234 / handleExtraTap：
+     * 中间步骤刻意不经过 applyQuickSwap / runTapSequence234 / handleExtraTap：
      * 宏里的 1、X 只作为游戏按键生效，不会翻转 R/右键布局，也不会改变换位锁存。
+     * 但宏正常跑完后，如果最后一步落在换位键（1/2）上，会补一次换位，
+     * 相当于游戏里最后真的按了一次那个键（快速切枪宏默认以 1 结尾）。
      * 每一步在对应按钮的当前位置按下 holdMs 再抬起，然后等待该步的延迟。
      */
     private fun runKeyMacro(keyEvent: KeyEvent): Boolean {
@@ -909,9 +910,13 @@ class FloatingWindowStateManager @Inject constructor(
         keyMacroJob = scope.launch {
             // DOWN 的触点要跨步骤保持，UP 时按同一个 keyCode 释放。
             val held = mutableMapOf<Int, Int>()
+            var completed = true
             try {
                 for (step in macro.steps) {
-                    if (_isEditMode.value || _mappingPaused.value) break
+                    if (_isEditMode.value || _mappingPaused.value) {
+                        completed = false
+                        break
+                    }
                     when (step.action) {
                         SeqAction.WAIT -> Unit
                         SeqAction.DOWN -> {
@@ -945,19 +950,27 @@ class FloatingWindowStateManager @Inject constructor(
                 // 异常/中途退出时把仍按着的触点松开，避免卡键。
                 held.values.forEach { eventHandler.releaseSeqPointer(it) }
             }
+            // 正常跑完后补一次换位：宏最后一步是 1/2 时，等同于游戏里最后按了该键。
+            // 中间步骤仍然不换位，避免一次宏里反复翻转按钮。
+            if (completed) {
+                macro.steps.lastOrNull { it.action != SeqAction.WAIT }
+                    ?.keyCode
+                    ?.takeIf { it in SWAP_SLOT_KEYS }
+                    ?.let { applyQuickSwap(it) }
+            }
         }
         return true
     }
 
     /**
-     * 快捷换位：按 1/2/4 让「R 键按钮」与「鼠标右键按钮」交换屏幕位置，按 X 还原。
+     * 快捷换位：按 1/2 让「R 键按钮」与「鼠标右键按钮」交换屏幕位置，按 X 还原。
      *
      * 键位固定，不做任何用户配置；只有预设级开关 [Profile.quickSwapEnabled]。
-     * 3 固定用于切近战，不参与换位。
+     * 3/4 固定用于近战流程，不参与换位。
      * 不依赖任何手动设置：A/B 每次按当前绑定实时解析，所以用户重绑 R 或右键后
      * 依然正确；位置恢复使用 anchorPosition，不会漂移。
      *
-     * 锁存：未换位时按 1/2/4 换一次；已换位时再按只当普通按键透传；
+     * 锁存：未换位时按 1/2 换一次；已换位时再按只当普通按键透传；
      * 还原键 X 只在已换位时生效。锁存状态存在 [Profile.quickSwapLatched] 并持久化，
      * 重启后位置仍是换位状态，不会被误判成未换位而再跳一次。
      */
@@ -1861,7 +1874,7 @@ class FloatingWindowStateManager @Inject constructor(
             !eventHandler.isMacroTrigger(keyEvent.keyCode)) {
             // 连按落点：本体照常映射，第 2/3/4 次快速按下时额外点击预设位置。
             handleExtraTap(keyEvent.keyCode)
-            // 换位优先：1/2/4 / X 命中时先生效，按键本身仍继续透传给游戏。
+            // 换位优先：1/2 / X 命中时先生效，按键本身仍继续透传给游戏。
             val swapped = applyQuickSwap(keyEvent.keyCode)
             // 预设级按 3 切近战负责整段注入，命中时吞掉原始 3，避免再点一次。
             if (!swapped && runTapSequence234(keyEvent.keyCode)) return true
