@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -82,6 +83,16 @@ import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.ProfileAssist
 import com.devoid.keysync.model.assist
+import com.devoid.keysync.model.defaultQuickSwapSteps
+import com.devoid.keysync.model.defaultScallopDashSteps
+import com.devoid.keysync.model.defaultScallopSteps
+import com.devoid.keysync.model.defaultShieldSteps
+import com.devoid.keysync.model.KeySeqMacro
+import com.devoid.keysync.model.KeySeqStep
+import com.devoid.keysync.model.keyCodeForName
+import com.devoid.keysync.model.keyName
+import com.devoid.keysync.model.keySequenceToText
+import com.devoid.keysync.model.parseKeySequence
 import com.devoid.keysync.model.withAssist
 import com.devoid.keysync.model.ThemePreference
 import com.devoid.keysync.model.TouchMode
@@ -514,7 +525,8 @@ fun SettingsScreen(
                         onValueChange = { onSetMouseJumpThreshold(it.roundToInt()) }
                     )
                     Text(
-                        "正常手速一帧的位移远小于它；超过就当作光标跳变丢弃。默认 240，可按不同鼠标/投屏端微调。",
+                        "鼠标单帧位移超过该值就当作光标跳变丢弃，不参与瞄准或光标移动。默认 240px；" +
+                            "正常手速远低于它，投屏端或高 DPI 鼠标可调高。逐事件判定，本身不引入延迟。",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -526,7 +538,8 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "同一段操作内固定用相对轴或绝对坐标，避免设备偶尔上报相对轴时速度忽快忽慢。默认开启。",
+                                "开启后同一段操作只采用一种解析方式（相对轴或绝对坐标），避免设备偶尔上报相对轴时" +
+                                    "速度忽快忽慢；关闭后每个鼠标事件各自判断。默认开启，切换设备后重新选择。",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -544,7 +557,8 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "避免每个鼠标事件都查询系统窗口尺寸，默认开启；屏幕旋转或分辨率变化时自动失效。",
+                                "缓存当前屏幕尺寸，避免每个鼠标事件都查询系统窗口；默认开启。" +
+                                    "屏幕旋转或分辨率变化时自动失效并重新读取，不会用旧尺寸算错坐标。",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -562,7 +576,9 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "按物理 ESC 或 Tab 关掉背包/地图后，自动切回射击模式并重建准心触点；光标模式下按 ` 仍可手动切回。",
+                                "按物理 ESC 或 Tab 关掉背包/地图后，约 110ms 切回射击模式，再等 150ms 幂等重建准心触点，" +
+                                    "避免界面切换瞬间注入的触点被游戏丢掉。已在射击模式时不动作；不吞按键；" +
+                                    "光标模式下按 ` 仍可手动切回。",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -580,7 +596,9 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "第一下按 M 打开地图并把鼠标切出来，再按一下改为点 ESC 位置关图、收回鼠标。适合开地图后用鼠标点标记/道具。",
+                                "第一下按 M 正常触发 M 映射（开图）并立即切出鼠标；第二下不再按 M，改为点击 ESC 按钮的" +
+                                    "映射位置（按下约 50–125ms 后抬起）再收回鼠标。适合开图后用鼠标点标记/道具；" +
+                                    "预设里没有 ESC 按钮时只切鼠标模式。",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -598,7 +616,9 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "光标模式下按住 Alt 再按 D：在光标处按住物品拖到编辑态放置的「丢弃点」，松开后光标回位。射击模式与未出现光标时不生效。",
+                                "光标模式下按住 Alt 再按 D：在光标处按住物品，分 12 步拖到编辑态放置的「丢弃点」" +
+                                    "（默认 ×5 速，每步约 3ms），停顿 70ms 后松开，再按同样速度把光标送回原位。" +
+                                    "射击模式、还没出现过鼠标、或没按住 Alt 时不生效。",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -630,7 +650,8 @@ fun SettingsScreen(
                             }
                         )
                         Text(
-                            "1 = 原始速度，5 = 5 倍速（默认）；只影响移动过程，按下与停顿保持不变。",
+                            "1 = 原始速度（每步 14ms），5 = 5 倍速（默认，每步约 3ms），10 = 10 倍速。" +
+                                "只影响移动过程；按下前 40ms、松开前 70ms 的停顿保持不变。",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -723,13 +744,13 @@ fun SettingsScreen(
                             steps = 15,
                             onValueChange = { onSetWasdTransitionMs(it.roundToInt()) }
                         )
-                        Text(
-                            "换向时沿圆弧补 2–8 个中间点；按下/松开 Shift 时从当前落点沿同一方向缓慢拉到疾跑半径，" +
-                                "而不是瞬间跳过去。松手仍然立即停止。默认 80ms；调小更跟手，调大更像拇指推杆。" +
-                                "关闭后换向与疾跑切换都恢复瞬移。",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Text(
+                        "换向时补 2–8 个中间点：角度 ≥ 90°（如 A↔D、W↔S）走直线穿过中心，中段推动量保留 18%；" +
+                            "小角度仍沿圆弧。按下/松开 Shift 时沿同一方向缓慢拉到疾跑半径，而不是瞬移；松手立即停止。" +
+                            "默认 60ms；调小更跟手，调大更像拇指推杆。关闭后换向与疾跑切换都恢复瞬移。",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 "随机偏移间隔",
@@ -976,7 +997,8 @@ private fun ProfileAssistCard(
             }
             AssistSwitchRow(
                 title = "Tab 防连按",
-                desc = "在间隔内的重复 Tab 直接吞掉，避免手速过快时多余的 Tab 落到游戏里。",
+                desc = "距上一次有效 Tab 不足间隔的重复 Tab 整段吞掉（按下和抬起都不落到游戏里），" +
+                    "避免手速过快时多按的 Tab 点到别处；长按产生的重复跟随首次判定。默认间隔 1000ms。",
                 checked = draft.tabDebounceEnabled,
                 onToggle = {
                     onDraftChange(draft.copy(tabDebounceEnabled = !draft.tabDebounceEnabled))
@@ -994,8 +1016,9 @@ private fun ProfileAssistCard(
             }
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             AssistSwitchRow(
-                title = "R ↔ 右键（1/2/3/4 换位 / X 还原）",
-                desc = "按 1–4 任意一个让 R 与鼠标右键按钮交换位置；按 X 各自归位。已换位时再按 1–4 不再换位，只当普通按键透传。",
+                title = "R ↔ 右键（1/2/4 换位 / X 还原）",
+                desc = "按 1、2、4 任意一个让 R 与鼠标右键按钮交换位置，按 X 各自归位。交换立即生效、不重建触点，" +
+                    "所以不会断触或卡刀；3 固定用于切近战，不参与换位；已换位时再按只当普通按键透传。锁存状态随预设保存，重启后保持。",
                 checked = draft.quickSwapEnabled,
                 onToggle = {
                     onDraftChange(draft.copy(quickSwapEnabled = !draft.quickSwapEnabled))
@@ -1003,8 +1026,10 @@ private fun ProfileAssistCard(
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             AssistSwitchRow(
-                title = "按 3 依次点 2/3/4",
-                desc = "一键切换武器组：按 3 时依次点击 2 → 3 → 4 的位置。",
+                title = "按 3 切近战（2 → 4 → 3）",
+                desc = "按 3 时依次点击 2 → 4 → 3：无主武器/一把主武器时 2 是刀，两把主武器时 4 是刀，" +
+                    "两把主武器+手枪时 3 是刀；点空格不会切走，所以最终一定落到近战。" +
+                    "间隔越小越跟手，但太小可能被游戏合并或切枪冷却吞掉，建议 10–60ms。2/3/4 缺任意一个按钮时不接管。",
                 checked = draft.tapSequence234Enabled,
                 onToggle = {
                     onDraftChange(draft.copy(tapSequence234Enabled = !draft.tapSequence234Enabled))
@@ -1020,17 +1045,224 @@ private fun ProfileAssistCard(
                     Text("${draft.tapSequence234GapMs} ms", style = MaterialTheme.typography.bodyMedium)
                 }
                 Slider(
-                    value = draft.tapSequence234GapMs.toFloat().coerceIn(20f, 300f),
-                    valueRange = 20f..300f,
-                    steps = 27,
+                    value = draft.tapSequence234GapMs.toFloat().coerceIn(5f, 1000f),
+                    valueRange = 5f..1000f,
+                    steps = 198,
                     onValueChange = {
                         onDraftChange(draft.copy(tapSequence234GapMs = it.roundToInt()))
                     }
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "开大/已对调时延迟",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text("${draft.meleeSwapDelayMs} ms", style = MaterialTheme.typography.bodyMedium)
+                }
+                Text(
+                    "两个按钮已对调（通常是开大后）时，按 3 会立刻执行一次 2 → 4 → 3，" +
+                        "等这段时间后再补一次，避开卸盾动作把第一轮吞掉；默认 1000ms。没对调时只执行一次。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Slider(
+                    value = draft.meleeSwapDelayMs.toFloat().coerceIn(0f, 3000f),
+                    valueRange = 0f..3000f,
+                    steps = 29,
+                    onValueChange = {
+                        onDraftChange(draft.copy(meleeSwapDelayMs = it.roundToInt()))
+                    }
+                )
             }
             AssistSwitchRow(
+                title = "快速切枪宏（默认 Alt+9）",
+                desc = "按触发键执行自定义按键序列（默认内置 G502 快速切枪序列）。每一步直接注入触点，" +
+                    "不参与 R/右键换位、不改变锁存，宏里的 1/X 不会把按钮翻来翻去；最多 128 步。",
+                checked = draft.keyMacro.enabled,
+                onToggle = {
+                    onDraftChange(
+                        draft.copy(keyMacro = draft.keyMacro.copy(enabled = !draft.keyMacro.enabled))
+                    )
+                }
+            )
+            if (draft.keyMacro.enabled) {
+                var showTriggerDialog by remember { mutableStateOf(false) }
+                var showStepsDialog by remember { mutableStateOf(false) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("触发键", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            (if (draft.keyMacro.requireAlt) "Alt + " else "") +
+                                keyName(draft.keyMacro.triggerKeyCode),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(onClick = { showTriggerDialog = true }) { Text("修改") }
+                    TextButton(onClick = { showStepsDialog = true }) {
+                        Text("编辑序列（${draft.keyMacro.steps.size} 步）")
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "每步按住时长",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text("${draft.keyMacro.holdMs} ms", style = MaterialTheme.typography.bodyMedium)
+                }
+                Slider(
+                    value = draft.keyMacro.holdMs.toFloat().coerceIn(5f, 100f),
+                    valueRange = 5f..100f,
+                    steps = 18,
+                    onValueChange = {
+                        onDraftChange(
+                            draft.copy(keyMacro = draft.keyMacro.copy(holdMs = it.roundToInt()))
+                        )
+                    }
+                )
+                if (showTriggerDialog) {
+                    var triggerName by remember { mutableStateOf(keyName(draft.keyMacro.triggerKeyCode)) }
+                    var triggerAlt by remember { mutableStateOf(draft.keyMacro.requireAlt) }
+                    var triggerError by remember { mutableStateOf(false) }
+                    AlertDialog(
+                        onDismissRequest = { showTriggerDialog = false },
+                        title = { Text("快速切枪触发键") },
+                        text = {
+                            Column {
+                                OutlinedTextField(
+                                    value = triggerName,
+                                    onValueChange = {
+                                        triggerName = it
+                                        triggerError = false
+                                    },
+                                    label = { Text("按键名，如 9、F5、X") },
+                                    singleLine = true,
+                                    isError = triggerError
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("需要按住 Alt", modifier = Modifier.weight(1f))
+                                    Switch(
+                                        checked = triggerAlt,
+                                        onCheckedChange = { triggerAlt = it }
+                                    )
+                                }
+                                if (triggerError) {
+                                    Text(
+                                        "无法识别这个键名",
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                val code = keyCodeForName(triggerName)
+                                if (code == null) {
+                                    triggerError = true
+                                } else {
+                                    onDraftChange(
+                                        draft.copy(
+                                            keyMacro = draft.keyMacro.copy(
+                                                triggerKeyCode = code,
+                                                requireAlt = triggerAlt
+                                            )
+                                        )
+                                    )
+                                    showTriggerDialog = false
+                                }
+                            }) { Text("保存") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showTriggerDialog = false }) { Text("取消") }
+                        }
+                    )
+                }
+                if (showStepsDialog) {
+                    var seqText by remember {
+                        mutableStateOf(keySequenceToText(draft.keyMacro.steps))
+                    }
+                    var seqError by remember { mutableStateOf<String?>(null) }
+                    AlertDialog(
+                        onDismissRequest = { showStepsDialog = false },
+                        title = { Text("快速切枪序列") },
+                        text = {
+                            Column {
+                                Text(
+                                    "每行 D/U/T/W：D 1 50=按下1等50ms，U 1 50=放开1，T 1 50=点击1，W 50=纯等待；RMB 为鼠标右键，# 开头为注释。",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                OutlinedTextField(
+                                    value = seqText,
+                                    onValueChange = {
+                                        seqText = it
+                                        seqError = null
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(200.dp),
+                                    textStyle = MaterialTheme.typography.bodySmall
+                                )
+                                seqError?.let {
+                                    Text(
+                                        it,
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                                TextButton(onClick = {
+                                    seqText = keySequenceToText(defaultQuickSwapSteps())
+                                    seqError = null
+                                }) { Text("载入默认序列") }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                val steps = parseKeySequence(seqText)
+                                if (steps == null) {
+                                    seqError = "格式不对：每行 D/U/T/W，最多 128 步，延迟 0–5000"
+                                } else {
+                                    onDraftChange(
+                                        draft.copy(keyMacro = draft.keyMacro.copy(steps = steps))
+                                    )
+                                    showStepsDialog = false
+                                }
+                            }) { Text("保存") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showStepsDialog = false }) { Text("取消") }
+                        }
+                    )
+                }
+            }
+            KeyMacroSection(
+                title = "快速合盾（默认 Alt+8）",
+                desc = "按住 V 点一下 X 再松开 V，然后按住 G 点一下 X 再松开 G；事件间隔默认 10ms，可编辑。",
+                macro = draft.shieldMacro,
+                defaultSteps = { defaultShieldSteps() },
+                onChange = { onDraftChange(draft.copy(shieldMacro = it)) }
+            )
+            KeyMacroSection(
+                title = "扇贝盾（默认 Alt+7）",
+                desc = "按 1 → G → V → X，间隔默认 5ms。",
+                macro = draft.scallopMacro,
+                defaultSteps = { defaultScallopSteps() },
+                onChange = { onDraftChange(draft.copy(scallopMacro = it)) }
+            )
+            KeyMacroSection(
+                title = "扇贝盾冲刺（默认 Alt+6）",
+                desc = "按 1 → G → V → X → 鼠标右键，间隔默认 5ms。",
+                macro = draft.scallopDashMacro,
+                defaultSteps = { defaultScallopDashSteps() },
+                onChange = { onDraftChange(draft.copy(scallopDashMacro = it)) }
+            )
+            AssistSwitchRow(
                 title = "Shift 取消蹲/趴（C/Z/Ctrl）",
-                desc = "按下 Shift 时取消最后一次切换的蹲下 / 趴下姿态。",
+                desc = "按 Shift 时，如果最近一次蹲/趴是我们帮你点开的，会补点一次同一个键取消姿态再起跑，" +
+                    "每段点击仍按正常点击时长（50–125ms）。你自己手动切换的姿态不介入；未绑定 C/Z/Ctrl 时不生效。",
                 checked = draft.stanceAssistEnabled,
                 onToggle = {
                     onDraftChange(draft.copy(stanceAssistEnabled = !draft.stanceAssistEnabled))
@@ -1041,7 +1273,8 @@ private fun ProfileAssistCard(
                 Column(Modifier.weight(1f)) {
                     Text("点击宏（顺序点位）", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "按顺序依次点击屏幕上的点位，与普通键位绑定互不影响。",
+                        "按顺序依次点击屏幕上的点位，与普通键位绑定互不影响；每条宏可单独设置触发键和各点坐标，" +
+                            "适合连续开箱、连点确认这类操作。",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1767,6 +2000,155 @@ fun ProfileImportDialog(
             }
         }
     )
+}
+
+/** 一个按键序列宏的通用编辑卡：开关、触发键、按住时长、文本序列。 */
+@Composable
+private fun KeyMacroSection(
+    title: String,
+    desc: String,
+    macro: KeySeqMacro,
+    defaultSteps: () -> List<KeySeqStep>,
+    onChange: (KeySeqMacro) -> Unit,
+) {
+    AssistSwitchRow(
+        title = title,
+        desc = desc,
+        checked = macro.enabled,
+        onToggle = { onChange(macro.copy(enabled = !macro.enabled)) }
+    )
+    if (!macro.enabled) return
+    var showTriggerDialog by remember { mutableStateOf(false) }
+    var showStepsDialog by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("触发键", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                (if (macro.requireAlt) "Alt + " else "") + keyName(macro.triggerKeyCode),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        TextButton(onClick = { showTriggerDialog = true }) { Text("修改") }
+        TextButton(onClick = { showStepsDialog = true }) {
+            Text("编辑序列（${macro.steps.size} 步）")
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "每步按住时长",
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Text("${macro.holdMs} ms", style = MaterialTheme.typography.bodyMedium)
+    }
+    Slider(
+        value = macro.holdMs.toFloat().coerceIn(5f, 100f),
+        valueRange = 5f..100f,
+        steps = 18,
+        onValueChange = { onChange(macro.copy(holdMs = it.roundToInt())) }
+    )
+    if (showTriggerDialog) {
+        var triggerName by remember { mutableStateOf(keyName(macro.triggerKeyCode)) }
+        var triggerAlt by remember { mutableStateOf(macro.requireAlt) }
+        var triggerError by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { showTriggerDialog = false },
+            title = { Text("$title 触发键") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = triggerName,
+                        onValueChange = {
+                            triggerName = it
+                            triggerError = false
+                        },
+                        label = { Text("按键名，如 9、F5、X") },
+                        singleLine = true,
+                        isError = triggerError
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("需要按住 Alt", modifier = Modifier.weight(1f))
+                        Switch(checked = triggerAlt, onCheckedChange = { triggerAlt = it })
+                    }
+                    if (triggerError) {
+                        Text(
+                            "无法识别这个键名",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val code = keyCodeForName(triggerName)
+                    if (code == null) {
+                        triggerError = true
+                    } else {
+                        onChange(macro.copy(triggerKeyCode = code, requireAlt = triggerAlt))
+                        showTriggerDialog = false
+                    }
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTriggerDialog = false }) { Text("取消") }
+            }
+        )
+    }
+    if (showStepsDialog) {
+        var seqText by remember { mutableStateOf(keySequenceToText(macro.steps)) }
+        var seqError by remember { mutableStateOf<String?>(null) }
+        AlertDialog(
+            onDismissRequest = { showStepsDialog = false },
+            title = { Text(title) },
+            text = {
+                Column {
+                    Text(
+                        "每行 D/U/T/W：D 1 50=按下1等50ms，U 1 50=放开1，T 1 50=点击1，W 50=纯等待；RMB 为鼠标右键，# 开头为注释。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = seqText,
+                        onValueChange = {
+                            seqText = it
+                            seqError = null
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp),
+                        textStyle = MaterialTheme.typography.bodySmall
+                    )
+                    seqError?.let {
+                        Text(
+                            it,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    TextButton(onClick = {
+                        seqText = keySequenceToText(defaultSteps())
+                        seqError = null
+                    }) { Text("载入默认序列") }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val steps = parseKeySequence(seqText)
+                    if (steps == null) {
+                        seqError = "格式不对：每行 D/U/T/W，最多 128 步，延迟 0–5000"
+                    } else {
+                        onChange(macro.copy(steps = steps))
+                        showStepsDialog = false
+                    }
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showStepsDialog = false }) { Text("取消") }
+            }
+        )
+    }
 }
 
 

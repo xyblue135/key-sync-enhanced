@@ -10,7 +10,12 @@ package com.devoid.keysync.model
 data class ProfileAssist(
     val quickSwapEnabled: Boolean = true,
     val tapSequence234Enabled: Boolean = true,
-    val tapSequence234GapMs: Int = 60,
+    val tapSequence234GapMs: Int = 10,
+    val meleeSwapDelayMs: Int = 1000,
+    val keyMacro: KeySeqMacro = KeySeqMacro(),
+    val shieldMacro: KeySeqMacro = defaultShieldMacro(),
+    val scallopMacro: KeySeqMacro = defaultScallopMacro(),
+    val scallopDashMacro: KeySeqMacro = defaultScallopDashMacro(),
     val tabDebounceEnabled: Boolean = true,
     val tabDebounceMs: Int = 1000,
     val stanceAssistEnabled: Boolean = true,
@@ -22,6 +27,11 @@ fun Profile.assist(): ProfileAssist = ProfileAssist(
     quickSwapEnabled = quickSwapEnabled,
     tapSequence234Enabled = tapSequence234Enabled,
     tapSequence234GapMs = tapSequence234GapMs,
+    meleeSwapDelayMs = meleeSwapDelayMs,
+    keyMacro = keyMacro,
+    shieldMacro = shieldMacro,
+    scallopMacro = scallopMacro,
+    scallopDashMacro = scallopDashMacro,
     tabDebounceEnabled = tabDebounceEnabled,
     tabDebounceMs = tabDebounceMs,
     stanceAssistEnabled = stanceAssistEnabled,
@@ -32,9 +42,20 @@ fun Profile.assist(): ProfileAssist = ProfileAssist(
 fun Profile.withAssist(assist: ProfileAssist): Profile = copy(
     quickSwapEnabled = assist.quickSwapEnabled,
     tapSequence234Enabled = assist.tapSequence234Enabled,
-    tapSequence234GapMs = assist.tapSequence234GapMs.coerceIn(20, 400),
+    tapSequence234GapMs = assist.tapSequence234GapMs.coerceIn(5, 1000),
+    meleeSwapDelayMs = assist.meleeSwapDelayMs.coerceIn(0, 3000),
+    keyMacro = assist.keyMacro.sanitized(),
+    shieldMacro = assist.shieldMacro.sanitized(),
+    scallopMacro = assist.scallopMacro.sanitized(),
+    scallopDashMacro = assist.scallopDashMacro.sanitized(),
     tabDebounceEnabled = assist.tabDebounceEnabled,
     tabDebounceMs = assist.tabDebounceMs.coerceIn(200, 3000),
     stanceAssistEnabled = assist.stanceAssistEnabled,
     macros = assist.macros,
+)
+
+/** 宏参数的统一兜底：按住时长、步数、单步延迟。 */
+private fun KeySeqMacro.sanitized(): KeySeqMacro = copy(
+    holdMs = holdMs.coerceIn(5, 100),
+    steps = steps.take(128).map { it.copy(delayMs = it.delayMs.coerceIn(0, 5000)) },
 )

@@ -138,6 +138,21 @@ class EventHandler(
         eventInjector.releasePointer(pointerId)
     }
 
+    // 快速切枪宏使用独立触点号段，和拖拽/按键触点错开。
+    private val seqPointerBase = 1_400_000
+    private var seqPointerCursor = 0
+
+    fun allocateSeqPointer(): Int = seqPointerBase + (seqPointerCursor++ % 8)
+
+    /** 宏的一步：在指定位置按下，不经过任何按键模式/换位逻辑。 */
+    fun pressSeqPointer(pointerId: Int, position: Offset) {
+        eventInjector.injectPointer(pointerId, position)
+    }
+
+    fun releaseSeqPointer(pointerId: Int) {
+        eventInjector.releasePointer(pointerId)
+    }
+
     fun setMacros(value: List<ClickMacro>, viewport: Offset, origin: Offset) {
         macroRunner.cancel()
         macros = value

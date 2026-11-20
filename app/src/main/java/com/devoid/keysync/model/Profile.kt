@@ -14,14 +14,24 @@ data class Profile(
     val name: String,
     val items: List<DraggableItem> = emptyList(),
     val appConfig: AppConfig = AppConfig.Default,
-    /** 预设级快捷换位：1/2/3/4 让 R 与鼠标右键按钮交换位置，X 还原。默认开启。 */
+    /** 预设级快捷换位：1/2/4 让 R 与鼠标右键按钮交换位置，X 还原；3 固定切近战。默认开启。 */
     val quickSwapEnabled: Boolean = true,
-    /** 快捷换位锁存：已换位时再按 1–4 不再交换，直到 X 还原。持久化避免重启后误判。 */
+    /** 快捷换位锁存：已换位时再按 1/2/4 不再交换，直到 X 还原。持久化避免重启后误判。 */
     val quickSwapLatched: Boolean = false,
-    /** 按 3 时依次点击 2 → 3 → 4，用于一键切换武器组。默认开启。 */
+    /** 按 3 时依次点击 2 → 4 → 3，保证无论武器如何重排都切到近战。默认开启。 */
     val tapSequence234Enabled: Boolean = true,
-    /** 2-3-4 连点之间每个触点的间隔（ms），越小越快。默认 60。 */
-    val tapSequence234GapMs: Int = 60,
+    /** 切近战序列每个触点之间的间隔（ms），越小越快。默认 10。 */
+    val tapSequence234GapMs: Int = 10,
+    /** 两个按钮处于对调状态（通常是开大后）时，按 3 先等待的卸盾延迟（ms）。默认 1000。 */
+    val meleeSwapDelayMs: Int = 1000,
+    /** 快速切枪宏：按 Alt+9 执行自定义按键序列，预设级。 */
+    val keyMacro: KeySeqMacro = KeySeqMacro(),
+    /** 快速合盾宏：默认 Alt+8。 */
+    val shieldMacro: KeySeqMacro = defaultShieldMacro(),
+    /** 扇贝盾宏：默认 Alt+7。 */
+    val scallopMacro: KeySeqMacro = defaultScallopMacro(),
+    /** 扇贝盾冲刺宏：默认 Alt+6。 */
+    val scallopDashMacro: KeySeqMacro = defaultScallopDashMacro(),
     /** Tab 防连按：开启后重复 Tab 在间隔内直接吞掉，避免手速过快时多余的 Tab 落到游戏里。默认开启。 */
     val tabDebounceEnabled: Boolean = true,
     /** Tab 防连按间隔（ms）：两次有效 Tab 按下之间的最小间隔。默认 1000。 */

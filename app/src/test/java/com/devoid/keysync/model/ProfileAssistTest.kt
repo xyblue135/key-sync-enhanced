@@ -57,7 +57,7 @@ class ProfileAssistTest {
         val tooFast = profile.withAssist(profile.assist().copy(tapSequence234GapMs = 1))
         val tooSlow = profile.withAssist(profile.assist().copy(tapSequence234GapMs = 9999))
 
-        assertEquals(20, tooFast.tapSequence234GapMs)
-        assertEquals(400, tooSlow.tapSequence234GapMs)
+        assertEquals(5, tooFast.tapSequence234GapMs)
+        assertEquals(1000, tooSlow.tapSequence234GapMs)
     }
 }

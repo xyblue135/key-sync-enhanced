@@ -29,6 +29,7 @@ import com.devoid.keysync.model.ClickMacro
 import com.devoid.keysync.model.ProfileAssist
 import com.devoid.keysync.model.validateClickMacros
 import com.devoid.keysync.model.withAssist
+import com.devoid.keysync.model.SeqAction
 import com.devoid.keysync.util.keyCodeToString
 import com.devoid.keysync.domain.EventHandler
 import com.devoid.keysync.domain.KEYCODE_LMC
@@ -506,11 +507,10 @@ class FloatingWindowStateManager @Inject constructor(
         const val DEFAULT_DISCARD_DRAG_SPEED = 5f
         const val MIN_DISCARD_DRAG_SPEED = 1f
         const val MAX_DISCARD_DRAG_SPEED = 10f
-        /** 交换对固定换位键：1/2/3/4（不对用户开放配置）。 */
+        /** 快捷换位触发键：1/2/4（3 固定用于切近战，不参与换位）。 */
         val SWAP_SLOT_KEYS = setOf(
             KeyEvent.KEYCODE_1,
             KeyEvent.KEYCODE_2,
-            KeyEvent.KEYCODE_3,
             KeyEvent.KEYCODE_4,
         )
         /** 固定还原键：X（不对用户开放配置）。 */
@@ -812,48 +812,152 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     private var tapSequence234Job: Job? = null
+    private var keyMacroJob: Job? = null
 
     /**
-     * 按 3 时依次点击 2 → 3 → 4。
+     * 按 3 切近战：依次点击 2 → 4 → 3。
      *
-     * 三个触点都走正常的按键映射（`eventHandler.handleKeyEvent`），所以用户把 2/3/4
-     * 绑到哪个位置就点哪里。整个过程串行执行，重复按 3 不会叠加成多条序列。
+     * 游戏会按持有武器数量重排四个格子，近战可能出现在 2/3/4 任意一格；
+     * 点空格不会切走当前武器，所以最后落在 3 之前先点 2 和 4，能把近战覆盖全：
+     * 无主武器/一把主武器 → 2 是刀；两把主武器 → 4 是刀；两把主武器+手枪 → 3 是刀。
+     *
+     * 三个触点都走正常的按键映射（`eventHandler.handleKeyEvent`），所以用户把
+     * 2/3/4 绑到哪个位置就点哪里。整个过程串行执行，重复按 3 不会叠加。
+     *
+     * 已对调（通常是开大后）时：按下 3 先立刻走一轮，等 meleeSwapDelayMs 后再补一轮，
+     * 避开卸盾动作把第一轮吞掉的情况。
      */
     private fun runTapSequence234(keyCode: Int): Boolean {
         if (keyCode != KeyEvent.KEYCODE_3) return false
         val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
         if (!profile.tapSequence234Enabled) return false
         // 三个按钮缺一就不接管，让 3 走原本的单键映射，避免按了没反应。
-        val targets = listOf(KeyEvent.KEYCODE_2, KeyEvent.KEYCODE_3, KeyEvent.KEYCODE_4)
+        val targets = listOf(KeyEvent.KEYCODE_2, KeyEvent.KEYCODE_4, KeyEvent.KEYCODE_3)
         val items = _containerItems.value
         if (targets.any { code -> items.none { it.boundKeyCode() == code } }) return false
         if (tapSequence234Job?.isActive == true) return true
-        // 间隔由预设决定（20–400ms），按住时长取间隔的一半左右，整体节奏随间隔缩放。
-        val baseGap = profile.tapSequence234GapMs.coerceIn(20, 400)
+        // 间隔由预设决定（5–1000ms），按住时长取间隔的一半左右，整体节奏随间隔缩放。
+        val baseGap = profile.tapSequence234GapMs.coerceIn(5, 1000)
+        // 两个按钮处于对调状态时（通常是开大后），3 会先触发卸盾动作；等动作结束再注入。
+        val swapDelayMs = if (profile.quickSwapLatched) {
+            profile.meleeSwapDelayMs.coerceIn(0, 3000).toLong()
+        } else {
+            0L
+        }
         tapSequence234Job = scope.launch {
-            targets.forEach { code ->
-                val now = SystemClock.uptimeMillis()
-                eventHandler.handleKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
-                val hold = (baseGap / 2 + kotlin.random.Random.nextLong(-5L, 6L))
-                    .coerceIn(15L, 80L)
-                delay(hold)
-                eventHandler.handleKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
-                // 间隔本身也加 ±10% 抖动，避免固定节拍。
-                val jittered = (baseGap * (0.9f + kotlin.random.Random.nextFloat() * 0.2f)).toLong()
-                delay(jittered.coerceAtLeast(10L))
+            // 第一次：按下 3 立刻走一轮 2 → 4 → 3。
+            injectMeleeSequence(targets, baseGap)
+            // 已对调（开大后）再等卸盾动作结束，补第二轮，确保最终停在刀上。
+            if (swapDelayMs > 0) {
+                delay(swapDelayMs)
+                injectMeleeSequence(targets, baseGap)
+            }
+        }
+        return true
+    }
+
+    /** 串行注入一轮 2 → 4 → 3，每个触点走正常按键映射，段间带 ±10% 抖动。 */
+    private suspend fun injectMeleeSequence(targets: List<Int>, baseGap: Int) {
+        targets.forEach { code ->
+            val now = SystemClock.uptimeMillis()
+            eventHandler.handleKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
+            val hold = (baseGap / 2 + kotlin.random.Random.nextLong(-5L, 6L))
+                .coerceIn(15L, 80L)
+            delay(hold)
+            eventHandler.handleKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
+            // 间隔本身也加 ±10% 抖动，避免固定节拍。
+            val jittered = (baseGap * (0.9f + kotlin.random.Random.nextFloat() * 0.2f)).toLong()
+            delay(jittered.coerceAtLeast(2L))
+        }
+    }
+
+    /**
+     * 快速切枪宏：触发键（默认 Alt+9）按下后，按预设步骤直接注入原始触点。
+     *
+     * 刻意不经过 applyQuickSwap / runTapSequence234 / handleExtraTap：
+     * 宏里的 1、X 只作为游戏按键生效，不会翻转 R/右键布局，也不会改变换位锁存。
+     * 每一步在对应按钮的当前位置按下 holdMs 再抬起，然后等待该步的延迟。
+     */
+    private fun runKeyMacro(keyEvent: KeyEvent): Boolean {
+        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
+        val macros = listOf(
+            profile.keyMacro,
+            profile.shieldMacro,
+            profile.scallopMacro,
+            profile.scallopDashMacro,
+        )
+        // 宏运行期间吞掉所有宏触发键，避免两段宏叠加。
+        if (keyMacroJob?.isActive == true) {
+            return macros.any {
+                it.enabled && it.triggerKeyCode == keyEvent.keyCode &&
+                    (!it.requireAlt || keyEvent.isAltPressed)
+            }
+        }
+        val macro = macros.firstOrNull {
+            it.enabled && it.steps.isNotEmpty() &&
+                it.triggerKeyCode == keyEvent.keyCode &&
+                (!it.requireAlt || keyEvent.isAltPressed)
+        } ?: return false
+        val items = _containerItems.value
+        if (macro.steps.none { step ->
+                step.action == SeqAction.WAIT || items.any { it.boundKeyCode() == step.keyCode }
+            }
+        ) {
+            return false
+        }
+        val hold = macro.holdMs.coerceIn(5, 100).toLong()
+        keyMacroJob = scope.launch {
+            // DOWN 的触点要跨步骤保持，UP 时按同一个 keyCode 释放。
+            val held = mutableMapOf<Int, Int>()
+            try {
+                for (step in macro.steps) {
+                    if (_isEditMode.value || _mappingPaused.value) break
+                    when (step.action) {
+                        SeqAction.WAIT -> Unit
+                        SeqAction.DOWN -> {
+                            if (held[step.keyCode] == null) {
+                                val item = items.firstOrNull { it.boundKeyCode() == step.keyCode }
+                                    ?: continue
+                                val center = item.touchCenter ?: continue
+                                val pointer = eventHandler.allocateSeqPointer()
+                                eventHandler.pressSeqPointer(pointer, center)
+                                held[step.keyCode] = pointer
+                            }
+                        }
+                        SeqAction.UP -> {
+                            held.remove(step.keyCode)?.let {
+                                eventHandler.releaseSeqPointer(it)
+                            }
+                        }
+                        SeqAction.TAP -> {
+                            val item = items.firstOrNull { it.boundKeyCode() == step.keyCode }
+                                ?: continue
+                            val center = item.touchCenter ?: continue
+                            val pointer = eventHandler.allocateSeqPointer()
+                            eventHandler.pressSeqPointer(pointer, center)
+                            delay(hold)
+                            eventHandler.releaseSeqPointer(pointer)
+                        }
+                    }
+                    if (step.delayMs > 0) delay(step.delayMs.toLong())
+                }
+            } finally {
+                // 异常/中途退出时把仍按着的触点松开，避免卡键。
+                held.values.forEach { eventHandler.releaseSeqPointer(it) }
             }
         }
         return true
     }
 
     /**
-     * 快捷换位：按 1/2/3/4 让「R 键按钮」与「鼠标右键按钮」交换屏幕位置，按 X 还原。
+     * 快捷换位：按 1/2/4 让「R 键按钮」与「鼠标右键按钮」交换屏幕位置，按 X 还原。
      *
      * 键位固定，不做任何用户配置；只有预设级开关 [Profile.quickSwapEnabled]。
+     * 3 固定用于切近战，不参与换位。
      * 不依赖任何手动设置：A/B 每次按当前绑定实时解析，所以用户重绑 R 或右键后
      * 依然正确；位置恢复使用 anchorPosition，不会漂移。
      *
-     * 锁存：未换位时按 1–4 换一次；已换位时再按 1–4 只当普通按键透传；
+     * 锁存：未换位时按 1/2/4 换一次；已换位时再按只当普通按键透传；
      * 还原键 X 只在已换位时生效。锁存状态存在 [Profile.quickSwapLatched] 并持久化，
      * 重启后位置仍是换位状态，不会被误判成未换位而再跳一次。
      */
@@ -1747,13 +1851,19 @@ class FloatingWindowStateManager @Inject constructor(
             // 蹲/趴与 Shift 的协调：只记录/补点姿态，原按键照常透传。
             trackStanceAssist(keyEvent.keyCode)
         }
+        // 快速切枪宏：默认 Alt+9，命中时吞掉触发键，由宏自己注入原始触点。
+        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
+            runKeyMacro(keyEvent)
+        ) {
+            return true
+        }
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
             !eventHandler.isMacroTrigger(keyEvent.keyCode)) {
             // 连按落点：本体照常映射，第 2/3/4 次快速按下时额外点击预设位置。
             handleExtraTap(keyEvent.keyCode)
-            // 换位优先：1–4 / X 命中时先生效，按键本身仍继续透传给游戏。
+            // 换位优先：1/2/4 / X 命中时先生效，按键本身仍继续透传给游戏。
             val swapped = applyQuickSwap(keyEvent.keyCode)
-            // 预设级 2-3-4 连点负责整段注入，命中时吞掉原始 3，避免再点一次。
+            // 预设级按 3 切近战负责整段注入，命中时吞掉原始 3，避免再点一次。
             if (!swapped && runTapSequence234(keyEvent.keyCode)) return true
         }
         return eventHandler.handleKeyEvent(keyEvent)
