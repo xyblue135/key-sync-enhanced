@@ -30,7 +30,7 @@ data class Profile(
     val scallopMacro: KeySeqMacro = defaultScallopMacro(),
     /** 扇贝盾冲刺宏：默认 Alt+6。 */
     val scallopDashMacro: KeySeqMacro = defaultScallopDashMacro(),
-    /** 快速近战宏：默认 Alt+5，点一次近战键 → 延迟 → 点一次 1；按住触发键循环。 */
+    /** 快速近战宏：默认 Alt+0，点一次近战键 → 延迟 → 点一次 1；按住触发键循环。 */
     val quickMeleeMacro: QuickMeleeMacro = QuickMeleeMacro(),
     /** Shift 按下时取消最后按下的蹲/趴姿态（C / Z / Ctrl）。默认开启。 */
     val stanceAssistEnabled: Boolean = true,

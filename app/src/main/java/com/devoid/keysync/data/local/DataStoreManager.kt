@@ -117,6 +117,8 @@ class DataStoreManager internal constructor(
         val TAB_ESC_AIM_ENABLED = booleanPreferencesKey("tab_esc_aim_enabled")
         /** 快速近战默认键已从 V 迁移到右侧小键盘 num0 的一次性标记。 */
         val QUICK_MELEE_NUMPAD_MIGRATED = booleanPreferencesKey("quick_melee_numpad_migrated")
+        /** 快速近战触发键已从 Alt+5 迁移到 Alt+0 的一次性标记。 */
+        val QUICK_MELEE_TRIGGER_ZERO_MIGRATED = booleanPreferencesKey("quick_melee_trigger_zero_migrated")
 
         /* -------- 鼠标高级参数（全局，与预设无关） -------- */
         /** 单帧位移断点阈值（px），默认 240。 */

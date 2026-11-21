@@ -503,6 +503,24 @@ class FloatingWindowStateManager @Inject constructor(
             dataStoreManager.save(DataStoreManager.QUICK_MELEE_NUMPAD_MIGRATED, true)
         }
 
+        // 一次性迁移：快速近战触发键从默认 Alt+5 改为 Alt+0。
+        // 只在旧默认值（5）上执行；用户之后手动改回 5 不会被再次覆盖。
+        if (dataStoreManager.getBoolean(DataStoreManager.QUICK_MELEE_TRIGGER_ZERO_MIGRATED).first() != true) {
+            var triggerChanged = false
+            stored = stored.map { profile ->
+                if (profile.quickMeleeMacro.triggerKeyCode == KeyEvent.KEYCODE_5) {
+                    triggerChanged = true
+                    profile.copy(
+                        quickMeleeMacro = profile.quickMeleeMacro.copy(
+                            triggerKeyCode = KeyEvent.KEYCODE_0,
+                        )
+                    )
+                } else profile
+            }
+            if (triggerChanged) dataStoreManager.saveProfiles(stored)
+            dataStoreManager.save(DataStoreManager.QUICK_MELEE_TRIGGER_ZERO_MIGRATED, true)
+        }
+
         val activeId = storedActiveId?.takeIf { id -> stored.any { it.id == id } }
             ?: stored.first().id
         if (activeId != storedActiveId) {
@@ -904,7 +922,7 @@ class FloatingWindowStateManager @Inject constructor(
      * 每一步在对应按钮的当前位置按下 holdMs 再抬起，然后等待该步的延迟。
      */
     /**
-     * 快速近战宏：默认按住 Alt+5 触发。
+     * 快速近战宏：默认按住 Alt+0 触发。
      *
      * 每一轮：点一次「快速近战」绑定的映射位置 → 等 delayMs（默认 80ms）→ 点一次 1 号键。
      * 按住触发键会一直循环同一套动作，松开立刻停止；键盘长按产生的重复 DOWN 直接被吞掉。
@@ -2090,7 +2108,7 @@ class FloatingWindowStateManager @Inject constructor(
             // 蹲/趴与 Shift 的协调：只记录/补点姿态，原按键照常透传。
             trackStanceAssist(keyEvent.keyCode)
         }
-        // 快速近战宏：默认 Alt+5，按住循环「近战键 → 延迟 → 1 号键」，松开立即停。
+        // 快速近战宏：默认 Alt+0，按住循环「近战键 → 延迟 → 1 号键」，松开立即停。
         if (runQuickMeleeMacro(keyEvent)) return true
         // 快速切枪宏：默认 Alt+9，命中时吞掉触发键，由宏自己注入原始触点。
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&

@@ -2155,7 +2155,7 @@ private fun QuickMeleeSection(
     onChange: (QuickMeleeMacro) -> Unit,
 ) {
     AssistSwitchRow(
-        title = "快速近战（默认按住 Alt+5）",
+        title = "快速近战（默认按住 Alt+0）",
         desc = "按住触发键时循环执行：点一次「快速近战」映射位置 → 等设定延迟 → 点一次 1 号键；" +
             "松开立即停止。键盘长按的重复事件会被吞掉，不会重复启动，也不会额外注册监听。" +
             "需要先在布局里放好快速近战键和 1 号键的映射。",
