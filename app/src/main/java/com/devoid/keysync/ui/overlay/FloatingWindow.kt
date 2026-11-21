@@ -137,7 +137,13 @@ fun ItemsContainer(
     onClearExtraTapPoints: (Int) -> Unit = {},
     /** Alt+D 拖拽丢弃的落点（竖条中心）；只在编辑态渲染。 */
     discardPoint: Offset? = null,
-    onMoveDiscardPoint: (Offset) -> Unit = {}
+    onMoveDiscardPoint: (Offset) -> Unit = {},
+    /** 编辑态图层：true = 高级层（丢弃点 + 左右滚动锚点可拖动，按键层半透明预览）。 */
+    advancedLayerActive: Boolean = false,
+    /** F 光标滚轮操控的左/右滚动锚点（悬浮层坐标）。 */
+    scrollLeftPoint: Offset? = null,
+    scrollRightPoint: Offset? = null,
+    onMoveScrollAnchor: (Boolean, Offset) -> Unit = { _, _ -> },
 ) {
     // When the user taps the gear icon on a key, this is set so we can
     // pop up a key-capture dialog bound to that specific item.
@@ -146,9 +152,13 @@ fun ItemsContainer(
     var configuringVariableKey by remember { mutableStateOf<DraggableItem.VariableKey?>(null) }
     var configuringCancelableKey by remember { mutableStateOf<DraggableItem.CancelableKey?>(null) }
 
+    // 编辑态分层：高级层激活时，普通按键半透明预览且不接收拖动，避免互相抢触摸。
+    val keysLayerInteractive = !advancedLayerActive
+    val keysLayerAlpha = if (advancedLayerActive) 0.25f else 1f
     // 任何配置弹框打开时都禁用底层按钮的拖动，避免弹框里的手势把按钮挪走。
-    val draggingEnabled = configuringWasd == null && configuringFixedKey == null &&
-        configuringVariableKey == null && configuringCancelableKey == null
+    val draggingEnabled = keysLayerInteractive && configuringWasd == null &&
+        configuringFixedKey == null && configuringVariableKey == null &&
+        configuringCancelableKey == null
 
     // 新建「按钮」后自动弹出绑定框：StateManager 会发出 pendingBindId 信号，
     // 这里捕获后直接打开对应按钮的按键捕获对话框，避免留下一个显示 "?" 的空按钮。
@@ -189,7 +199,8 @@ fun ItemsContainer(
                             id = item.id,
                             offset = position,
                             enabled = draggingEnabled,
-                            onDoubleTap = if (editing) ({ configuringCancelableKey = item }) else null,
+                            alpha = keysLayerAlpha,
+                            onDoubleTap = if (editing && keysLayerInteractive) ({ configuringCancelableKey = item }) else null,
                             onScreenCenter = { item.touchCenter = it; onItemMeasured(item) },
                             onOffsetChange = {
                                 val target = clampToViewport(
@@ -214,6 +225,7 @@ fun ItemsContainer(
                             id = item.id,
                             offset = cancelableKeyPosition,
                             enabled = draggingEnabled,
+                            alpha = keysLayerAlpha,
                             onScreenCenter = { item.cancelTouchCenter = it; onItemMeasured(item) },
                             onOffsetChange = {
                                 val target = clampToViewport(
@@ -238,7 +250,8 @@ fun ItemsContainer(
                     id = item.id,
                     offset = position,
                     enabled = draggingEnabled,
-                    onDoubleTap = if (editing) ({
+                    alpha = keysLayerAlpha,
+                    onDoubleTap = if (editing && keysLayerInteractive) ({
                         when (item) {
                             is DraggableItem.VariableKey -> configuringVariableKey = item
                             is DraggableItem.WASDGroup -> configuringWasd = item
@@ -340,9 +353,10 @@ fun ItemsContainer(
                         modifier = Modifier
                             .offset { IntOffset((pos.x - radiusPx).toInt(), (pos.y - radiusPx).toInt()) }
                             .size(28.dp)
-                            .alpha(0.75f)
+                            .alpha(0.75f * keysLayerAlpha)
                             .border(1.5.dp, MaterialTheme.colorScheme.tertiary, CircleShape)
-                            .pointerInput(point.keyCode, point.x, point.y) {
+                            .pointerInput(point.keyCode, point.x, point.y, keysLayerInteractive) {
+                                if (!keysLayerInteractive) return@pointerInput
                                 detectDragGestures(
                                     onDrag = { change, dragAmount ->
                                         change.consume()
@@ -380,9 +394,10 @@ fun ItemsContainer(
                                 (pos.y - discardBarHeightPx / 2).toInt())
                         }
                         .size(DISCARD_BAR_WIDTH_DP.dp, DISCARD_BAR_HEIGHT_DP.dp)
-                        .alpha(0.8f)
+                        .alpha(if (advancedLayerActive) 0.8f else 0.25f)
                         .border(1.5.dp, MaterialTheme.colorScheme.error, RoundedCornerShape(6.dp))
-                        .pointerInput(point.x, point.y) {
+                        .pointerInput(point.x, point.y, advancedLayerActive) {
+                            if (!advancedLayerActive) return@pointerInput
                             detectDragGestures(
                                 onDrag = { change, dragAmount ->
                                     change.consume()
@@ -398,6 +413,43 @@ fun ItemsContainer(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error
                     )
+                }
+            }
+
+            // F 光标滚轮操控：左右两条滚动条的短滑锚点。
+            listOf(
+                Triple(true, scrollLeftPoint, "左滚"),
+                Triple(false, scrollRightPoint, "右滚"),
+            ).forEach { (isLeft, point, label) ->
+                point?.let { anchor ->
+                    var pos by remember(anchor.x, anchor.y) { mutableStateOf(anchor) }
+                    val radiusPx = with(density) { 16.dp.toPx() }
+                    Box(
+                        modifier = Modifier
+                            .offset {
+                                IntOffset((pos.x - radiusPx).toInt(), (pos.y - radiusPx).toInt())
+                            }
+                            .size(32.dp)
+                            .alpha(if (advancedLayerActive) 0.9f else 0.25f)
+                            .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                            .pointerInput(anchor.x, anchor.y, advancedLayerActive) {
+                                if (!advancedLayerActive) return@pointerInput
+                                detectDragGestures(
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        pos += dragAmount
+                                    },
+                                    onDragEnd = { onMoveScrollAnchor(isLeft, pos) },
+                                )
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
             }
         }
@@ -901,6 +953,7 @@ fun DraggableItem(
     offset: Offset,
     scale: Float,
     enabled: Boolean = true,
+    alpha: Float = 1f,
     onDoubleTap: (() -> Unit)? = null,
     onOffsetChange: (Offset) -> Unit,
     onScreenCenter: (Offset) -> Unit = {},
@@ -911,6 +964,7 @@ fun DraggableItem(
     val currentOnOffsetChange by rememberUpdatedState(onOffsetChange)
     val currentOnDoubleTap by rememberUpdatedState(onDoubleTap)
     Box(modifier
+        .alpha(alpha)
         .offset {
             IntOffset(
                 offset.x.roundToInt(),
@@ -974,8 +1028,10 @@ fun EditToolbar(
     modifier: Modifier = Modifier,
     keysVisible: Boolean,
     statusBarVisible: Boolean = true,
+    advancedLayerActive: Boolean = false,
     onToggleKeysVisible: () -> Unit,
     onToggleStatusBarVisible: () -> Unit = {},
+    onToggleAdvancedLayer: () -> Unit = {},
     onToggleEditMode: () -> Unit,
     onAddItem: (DraggableItemType) -> Unit,
     onAddDiscardPoint: () -> Unit = {},
@@ -1056,6 +1112,10 @@ fun EditToolbar(
                     if (statusBarVisible) stringResource(R.string.overlay_hide_status)
                     else stringResource(R.string.overlay_show_status)
                 )
+            }
+            // 编辑态图层：按键层与高级层（丢弃点/滚动锚点）分开，避免互相挡住拖动。
+            TextButton(onClick = onToggleAdvancedLayer) {
+                Text(if (advancedLayerActive) "高级层" else "按键层")
             }
             TextButton(onClick = onToggleEditMode) {
                 Text(stringResource(R.string.overlay_done))

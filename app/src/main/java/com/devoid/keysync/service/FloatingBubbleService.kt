@@ -85,7 +85,6 @@ import com.devoid.keysync.ui.overlay.EditToolbar
 import com.devoid.keysync.ui.overlay.ItemsContainer
 import com.devoid.keysync.ui.overlay.ServiceLifecycleOwner
 import com.devoid.keysync.ui.theme.KeySyncTheme
-import com.devoid.keysync.util.TouchToMouseTranslator
 import dagger.Lazy
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -537,12 +536,6 @@ class FloatingBubbleService : Service() {
         itemsContainerLP.copyFrom(baseLP)
 
         val sm = stateManager.get()
-        val touchTranslator = TouchToMouseTranslator(
-            onMouseEvent = { event -> sm.onMouseEvent(event) },
-            isInIgnoreZone = { x, y -> isOnKeySyncButton(x, y, sm) },
-            onGestureStart = { sm.resetMouseRawBaseline() },
-        )
-
         containerView =
             getItemsContainerView(
                 onRemove = { id ->
@@ -557,7 +550,6 @@ class FloatingBubbleService : Service() {
                 onUpdateItemSize = { id, sizeDp ->
                     sm.updateItemSize(id, sizeDp)
                 },
-                touchTranslator = touchTranslator,
             )
 
         scope.launch {
@@ -629,7 +621,6 @@ class FloatingBubbleService : Service() {
         onUpdateKeyCode: (Int, Int, TouchMode?) -> Unit,
         onUpdateVariableKeyCode: (Int, Int, TouchMode?) -> Unit,
         onUpdateItemSize: (Int, Float) -> Unit,
-        touchTranslator: TouchToMouseTranslator
     ): ComposeView {
         val composeView = ComposeView(this)
         // Measure the actual overlay viewport, including changes from rotation/insets.
@@ -665,6 +656,7 @@ class FloatingBubbleService : Service() {
                 val lastInput by stateManager.get().lastInputLabel.collectAsState()
                 val profiles by stateManager.get().profiles.collectAsState()
                 val activeId by stateManager.get().activeProfileId.collectAsState()
+                val advancedLayerActive by stateManager.get().editAdvancedLayer.collectAsState()
                 Box {
                     // 光标：用半透明触摸指示圈代替箭头，视觉上更接近"手指触点"。
                     if (!isEditMode && !mappingPaused && !isShootingMode && wheelCursor == null) {
@@ -723,6 +715,20 @@ class FloatingBubbleService : Service() {
                                 if (x != null && y != null) androidx.compose.ui.geometry.Offset(x, y) else null
                             },
                             onMoveDiscardPoint = { stateManager.get().moveDiscardPoint(it) },
+                            advancedLayerActive = advancedLayerActive,
+                            scrollLeftPoint = profiles.firstOrNull { it.id == activeId }?.let { p ->
+                                val x = p.scrollLeftX
+                                val y = p.scrollLeftY
+                                if (x != null && y != null) androidx.compose.ui.geometry.Offset(x, y) else null
+                            },
+                            scrollRightPoint = profiles.firstOrNull { it.id == activeId }?.let { p ->
+                                val x = p.scrollRightX
+                                val y = p.scrollRightY
+                                if (x != null && y != null) androidx.compose.ui.geometry.Offset(x, y) else null
+                            },
+                            onMoveScrollAnchor = { left, point ->
+                                stateManager.get().moveScrollAnchor(left, point)
+                            },
                         )
                         // 顶部状态提示条：预设名 · 模式 · 最近输入。
                         // 通知栏的「隐藏提示」action 只关这一行，不影响按键容器。
@@ -751,6 +757,10 @@ class FloatingBubbleService : Service() {
                                 .padding(8.dp),
                             keysVisible = keysVisible,
                             statusBarVisible = statusBarVisible,
+                            advancedLayerActive = advancedLayerActive,
+                            onToggleAdvancedLayer = {
+                                stateManager.get().setEditAdvancedLayer(!advancedLayerActive)
+                            },
                             onToggleKeysVisible = { stateManager.get().toggleKeysVisible() },
                             onToggleStatusBarVisible = { stateManager.get().toggleStatusBarVisible() },
                             onToggleEditMode = { stateManager.get().toggleEditMode() },
@@ -831,50 +841,10 @@ class FloatingBubbleService : Service() {
                 motionEvent.isFromSource(InputDevice.SOURCE_MOUSE_RELATIVE)) {
                 return@setOnTouchListener stateManager.get().onMouseEvent(motionEvent)
             }
-            val enabled = runCatching {
-                stateManager.get().keysConfig.value.screenMirrorCompatMode
-            }.getOrDefault(false)
-            if (enabled) {
-                touchTranslator.handle(motionEvent)
-            } else {
-                false
-            }
+            false
         }
         return composeView
     }
-
-    /**
-     * Returns true when the touch point (x,y) in container-window coordinates
-     * lands on a KeySync-managed draggable item. We must not translate these
-     * into mouse events, otherwise tapping a KeySync button with the PC mouse
-     * would simultaneously fire the button's own click handler *and* a
-     * mouse-left click on the game.
-     */
-    private fun isOnKeySyncButton(
-        x: Float,
-        y: Float,
-        sm: FloatingWindowStateManager,
-    ): Boolean {
-        val items = sm.containerItems.value
-        return items.any { item ->
-            // Each DraggableItem subtype may carry size differently. WASDGroup
-            // doesn't have a single size (its footprint is a square covering
-            // the four W/A/S/D buttons), so we treat it as a 100dp box around
-            // the position origin.
-            val radius = when (item) {
-                is com.devoid.keysync.model.DraggableItem.VariableKey -> item.size / 2f
-                is com.devoid.keysync.model.DraggableItem.FixedKey -> item.size / 2f
-                is com.devoid.keysync.model.DraggableItem.CancelableKey -> item.size / 2f
-                is com.devoid.keysync.model.DraggableItem.WASDGroup -> 100f
-            }
-            val cx = item.position.x + radius
-            val cy = item.position.y + radius
-            val dx = x - cx
-            val dy = y - cy
-            dx * dx + dy * dy <= radius * radius
-        }
-    }
-
 
     override fun onBind(p0: Intent?): IBinder? {
         return null

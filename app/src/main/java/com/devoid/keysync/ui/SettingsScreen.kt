@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -19,6 +20,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -50,8 +53,10 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -95,9 +100,7 @@ import com.devoid.keysync.model.keyName
 import com.devoid.keysync.model.keySequenceToText
 import com.devoid.keysync.model.parseKeySequence
 import com.devoid.keysync.model.withAssist
-import com.devoid.keysync.model.ThemePreference
 import com.devoid.keysync.model.TouchMode
-import com.devoid.keysync.util.capitalizeFirst
 import com.devoid.keysync.util.keyCodeToString
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -134,11 +137,17 @@ fun SettingsScreen(
     onSetScreenSizeCache: (Boolean) -> Unit = {},
     discardDragEnabled: Boolean = false,
     onSetDiscardDragEnabled: (Boolean) -> Unit = {},
-    discardDragSpeed: Float = 5f,
+    discardDragSpeed: Float = 50f,
     onSetDiscardDragSpeed: (Float) -> Unit = {},
+    fScrollControlEnabled: Boolean = true,
+    onSetFScrollControlEnabled: (Boolean) -> Unit = {},
+    fScrollSwipePx: Float = 120f,
+    onSetFScrollSwipePx: (Float) -> Unit = {},
+    fScrollInvert: Boolean = false,
+    onSetFScrollInvert: (Boolean) -> Unit = {},
     mapMouseToggleEnabled: Boolean = true,
     onSetMapMouseToggleEnabled: (Boolean) -> Unit = {},
-    fCursorClickEnabled: Boolean = false,
+    fCursorClickEnabled: Boolean = true,
     onSetFCursorClickEnabled: (Boolean) -> Unit = {},
     tabEscAimEnabled: Boolean = true,
     onSetTabEscAimEnabled: (Boolean) -> Unit = {},
@@ -286,7 +295,7 @@ fun SettingsScreen(
                         enabled = isDirty,
                         onClick = {
                             saveStaged()
-                            onNavigateBack()
+                            // 保存后停留在当前页，方便继续调整；返回上一级只走左上角箭头。
                         }
                     ) {
                         Text(stringResource(R.string.settings_save))
@@ -294,15 +303,42 @@ fun SettingsScreen(
                 })
         }
     ) { innerPadding ->
-        val scrollState = rememberScrollState()
-        Box(
+        // 设置页按主题分区，顶部标签或左右滑动切换；每页各自滚动。
+        val pageTitles = listOf("预设", "按键辅助", "操作", "鼠标", "高级")
+        val pagerState = rememberPagerState(pageCount = { pageTitles.size })
+        val pageScope = rememberCoroutineScope()
+        Column(
             Modifier
                 .padding(innerPadding)
-                .padding(8.dp)
-                .verticalScroll(state = scrollState)
+                .fillMaxSize()
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ProfileManagerCard(
+            ScrollableTabRow(
+                selectedTabIndex = pagerState.currentPage,
+                edgePadding = 8.dp,
+            ) {
+                pageTitles.forEachIndexed { index, title ->
+                    Tab(
+                        selected = pagerState.currentPage == index,
+                        onClick = {
+                            pageScope.launch { pagerState.animateScrollToPage(index) }
+                        },
+                        text = { Text(title) },
+                    )
+                }
+            }
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+            ) { page ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (page == 0) {
+                        ProfileManagerCard(
                     profiles = profiles,
                     activeProfileId = activeProfileId,
                     onCreate = { name -> runAfterDirtyCheck { onCreateProfile(name) } },
@@ -313,9 +349,11 @@ fun SettingsScreen(
                     onDuplicate = onDuplicateProfile,
                     onExport = onExportProfile,
                     onImport = onImportProfile,
-                )
-                SettingsSectionCard(
-                    title = "显示",
+                        )
+                    }
+                    if (page == 2) {
+                        SettingsSectionCard(
+                            title = "显示",
                     scope = SettingsScope.GLOBAL,
                     hint = "全局 · 立即生效并保存",
                     initiallyExpanded = true,
@@ -415,56 +453,21 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                ProfileAssistCard(
-                    profile = activeProfile,
-                    draft = assistDraft,
-                    onDraftChange = { assistDraft = it },
-                )
-                SettingsSectionCard(
-                    title = "外观与触控",
+                    }
+                    if (page == 1) {
+                        ProfileAssistCard(
+                            profile = activeProfile,
+                            draft = assistDraft,
+                            onDraftChange = { assistDraft = it },
+                        )
+                    }
+                    if (page == 2) {
+                        SettingsSectionCard(
+                            title = "触控方式",
                     scope = SettingsScope.PRESET,
                     hint = "跟随当前预设 · 改动需点右上角保存",
+                    initiallyExpanded = true,
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                stringResource(R.string.settings_screen_mirror_compat),
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                modifier = Modifier.padding(top = 4.dp),
-                                text = stringResource(R.string.settings_screen_mirror_compat_desc),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = newConfig.screenMirrorCompatMode,
-                            onCheckedChange = {
-                                newConfig = newConfig.copy(screenMirrorCompatMode = it)
-                            }
-                        )
-                    }
-                    HorizontalDivider()
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                stringResource(R.string.settings_theme),
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                modifier = Modifier.padding(top = 4.dp),
-                                text = stringResource(R.string.settings_theme_pref),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        ThemeSelector(
-                            value = newConfig.themePreference,
-                            onSelect = { newConfig = newConfig.copy(themePreference = it) }
-                        )
-                    }
-                    HorizontalDivider()
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(
@@ -508,10 +511,13 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                SettingsSectionCard(
-                    title = "鼠标与兼容",
+                    }
+                    if (page == 3) {
+                        SettingsSectionCard(
+                            title = "鼠标与兼容",
                     scope = SettingsScope.GLOBAL,
                     hint = "全局 · 立即生效并保存",
+                    initiallyExpanded = true,
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -659,31 +665,83 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                "×${String.format(java.util.Locale.US, "%.1f", discardDragSpeed)}",
+                                "×${String.format(java.util.Locale.US, "%.0f", discardDragSpeed)}",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
                         Slider(
-                            value = discardDragSpeed.coerceIn(1f, 10f),
-                            valueRange = 1f..10f,
-                            steps = 17,
+                            value = discardDragSpeed.coerceIn(1f, 100f),
+                            valueRange = 1f..100f,
+                            steps = 98,
                             onValueChange = {
-                                // 按 0.5 档量化，避免滑杆产生 4.37 这类难复现的数值。
-                                onSetDiscardDragSpeed((it * 2f).roundToInt() / 2f)
+                                onSetDiscardDragSpeed(it.roundToInt().toFloat())
                             }
                         )
                         Text(
-                            "1 = 原始速度（每步 14ms），5 = 5 倍速（默认，每步约 3ms），10 = 10 倍速。" +
+                            "1 = 原始速度（每步 14ms），50 = 50 倍速（默认），100 = 100 倍速（约 2ms 走完）。" +
                                 "只影响移动过程；按下前 40ms、松开前 70ms 的停顿保持不变。",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "F 光标滚轮操控",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                "F 后左键唤出光标时接管滚轮：光标在左半屏用左侧锚点、右半屏用右侧锚点，" +
+                                    "每格在锚点短滑一段后复位。按 ESC / Tab 或切回射击模式立即恢复原来的滚轮映射。" +
+                                    "左右锚点在编辑态切到「高级层」后拖动放置。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = fScrollControlEnabled,
+                            onCheckedChange = onSetFScrollControlEnabled
+                        )
+                    }
+                    if (fScrollControlEnabled) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "每格滑动距离",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                "${fScrollSwipePx.roundToInt()} px",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        Slider(
+                            value = fScrollSwipePx.coerceIn(40f, 400f),
+                            valueRange = 40f..400f,
+                            steps = 17,
+                            onValueChange = { onSetFScrollSwipePx(it.roundToInt().toFloat()) }
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("方向反转", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "默认滚轮向下 = 手指向下滑；如果列表方向相反就打开。",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(checked = fScrollInvert, onCheckedChange = onSetFScrollInvert)
+                        }
+                    }
                 }
-                SettingsSectionCard(
-                    title = "按键拟人化",
+                    }
+                    if (page == 4) {
+                        SettingsSectionCard(
+                            title = "按键拟人化",
                     scope = SettingsScope.GLOBAL,
                     hint = "全局 · 立即生效并保存",
+                    initiallyExpanded = true,
                 ) {
                         Text(
                             "给注入的触控位置加随机抖动，避免被识别成机械死板的操作。全局生效，强度最低 1，最高 100。",
@@ -803,6 +861,7 @@ fun SettingsScreen(
                     title = "维护",
                     scope = SettingsScope.NONE,
                     hint = "低频与危险操作",
+                    initiallyExpanded = true,
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -873,6 +932,8 @@ fun SettingsScreen(
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
+                    }
+                }
                     }
                 }
             }
@@ -1009,6 +1070,7 @@ private fun ProfileAssistCard(
         scope = SettingsScope.PRESET,
         hint = if (profile == null) "先在「预设」里选择一个预设"
         else "当前预设：${profile.name} · 改动需点右上角保存",
+        initiallyExpanded = true,
     ) {
             if (profile == null) {
                 Text(
@@ -1018,26 +1080,6 @@ private fun ProfileAssistCard(
                 )
                 return@SettingsSectionCard
             }
-            AssistSwitchRow(
-                title = "Tab 防连按",
-                desc = "距上一次有效 Tab 不足间隔的重复 Tab 整段吞掉（按下和抬起都不落到游戏里），" +
-                    "避免手速过快时多按的 Tab 点到别处；长按产生的重复跟随首次判定。默认间隔 1000ms。",
-                checked = draft.tabDebounceEnabled,
-                onToggle = {
-                    onDraftChange(draft.copy(tabDebounceEnabled = !draft.tabDebounceEnabled))
-                }
-            )
-            if (draft.tabDebounceEnabled) {
-                AssistTimeSlider(
-                    title = "防连按间隔",
-                    value = draft.tabDebounceMs,
-                    min = 200,
-                    max = 3000,
-                    step = 100,
-                    onChange = { onDraftChange(draft.copy(tabDebounceMs = it)) }
-                )
-            }
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             AssistSwitchRow(
                 title = "R ↔ 右键（1/2 换位 / X 还原）",
                 desc = "按 1、2 任意一个让 R 与鼠标右键按钮交换位置，按 X 各自归位。交换立即生效、不重建触点，" +
@@ -1303,29 +1345,6 @@ private fun ProfileAssistCard(
     }
 }
 
-/** 按键辅助里的毫秒滑杆：范围与步进由调用方给出。 */
-@Composable
-private fun AssistTimeSlider(
-    title: String,
-    value: Int,
-    min: Int,
-    max: Int,
-    step: Int,
-    onChange: (Int) -> Unit,
-) {
-    val safeValue = value.coerceIn(min, max)
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        Text("$safeValue ms", style = MaterialTheme.typography.bodyMedium)
-    }
-    Slider(
-        value = safeValue.toFloat(),
-        valueRange = min.toFloat()..max.toFloat(),
-        steps = ((max - min) / step - 1).coerceAtLeast(0),
-        onValueChange = { onChange(it.roundToInt()) }
-    )
-}
-
 /** 按键辅助里的一行开关：点整行或右侧 Switch 都能切换。 */
 @Composable
 private fun AssistSwitchRow(
@@ -1350,36 +1369,6 @@ private fun AssistSwitchRow(
             )
         }
         Switch(checked = checked, onCheckedChange = { onToggle() })
-    }
-}
-
-/** 主题下拉选择器。 */
-@Composable
-private fun ThemeSelector(
-    value: ThemePreference,
-    onSelect: (ThemePreference) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    OutlinedCard(onClick = { expanded = true }) {
-        Row(
-            modifier = Modifier
-                .padding(8.dp)
-                .widthIn(min = 60.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(value.name.capitalizeFirst(), style = MaterialTheme.typography.titleMedium)
-            Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null)
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            ThemePreference.entries.forEach {
-                DropdownMenuItem(
-                    text = { Text(it.name.capitalizeFirst()) },
-                    onClick = {
-                        onSelect(it)
-                        expanded = false
-                    })
-            }
-        }
     }
 }
 
@@ -2257,7 +2246,7 @@ private fun KeyNameDialog(
                         name = it
                         error = false
                     },
-                    label = { Text("按键名，如 5、V、F5（1–9 指主键盘左侧数字行）") },
+                    label = { Text("按键名，如 5、V、NUM0、F5（1–9 指主键盘数字行，NUM0 为右侧小键盘）") },
                     singleLine = true,
                     isError = error
                 )

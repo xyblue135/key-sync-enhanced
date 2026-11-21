@@ -25,7 +25,6 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
@@ -50,7 +49,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.devoid.keysync.MainActivityViewModel.UiState
-import com.devoid.keysync.model.ThemePreference
 import com.devoid.keysync.model.UpdateState
 import com.devoid.keysync.service.FloatingBubbleService
 import com.devoid.keysync.ui.AboutScreen
@@ -140,14 +138,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            KeySyncTheme(
-                darkTheme = when (appConfig.themePreference) {
-                    ThemePreference.LIGHT -> false
-                    ThemePreference.DARK -> true
-                    else -> isSystemInDarkTheme()
-                },
-                dynamicColor = appConfig.themePreference == ThemePreference.SYSTEM_DYNAMIC
-            ) {
+            KeySyncTheme {
                 NavHost(navController = navController, startDestination = MainScreen,
                     enterTransition = {
                         fadeIn(
@@ -233,6 +224,9 @@ class MainActivity : ComponentActivity() {
                         val mapMouseToggleEnabled by viewModel.mapMouseToggleEnabled.collectAsStateWithLifecycle()
                         val fCursorClickEnabled by viewModel.fCursorClickEnabled.collectAsStateWithLifecycle()
                         val tabEscAimEnabled by viewModel.tabEscAimEnabled.collectAsStateWithLifecycle()
+                        val fScrollControlEnabled by viewModel.fScrollControlEnabled.collectAsStateWithLifecycle()
+                        val fScrollSwipePx by viewModel.fScrollSwipePx.collectAsStateWithLifecycle()
+                        val fScrollInvert by viewModel.fScrollInvert.collectAsStateWithLifecycle()
                         // Collected so a change applied outside the save button
                         // (the profile-switch master switch) is reflected
                         // instead of being overwritten by a stale newConfig.
@@ -286,6 +280,12 @@ class MainActivity : ComponentActivity() {
                             onSetFCursorClickEnabled = viewModel::setFCursorClickEnabled,
                             tabEscAimEnabled = tabEscAimEnabled,
                             onSetTabEscAimEnabled = viewModel::setTabEscAimEnabled,
+                            fScrollControlEnabled = fScrollControlEnabled,
+                            onSetFScrollControlEnabled = viewModel::setFScrollControlEnabled,
+                            fScrollSwipePx = fScrollSwipePx,
+                            onSetFScrollSwipePx = viewModel::setFScrollSwipePx,
+                            fScrollInvert = fScrollInvert,
+                            onSetFScrollInvert = viewModel::setFScrollInvert,
                             onStopOverlay = {
                                 stopService(
                                     Intent(

@@ -103,12 +103,20 @@ class DataStoreManager internal constructor(
         val DISCARD_DRAG_ENABLED = booleanPreferencesKey("discard_drag_enabled")
         /** Alt+D 拖拽速度倍数（1–10，默认 5 = 原速的 5 倍）。 */
         val DISCARD_DRAG_SPEED = floatPreferencesKey("discard_drag_speed")
+        /** F 光标滚轮操控（全局），默认开启。 */
+        val F_SCROLL_CONTROL_ENABLED = booleanPreferencesKey("f_scroll_control_enabled")
+        /** 每格滚轮短滑的像素距离，默认 120。 */
+        val F_SCROLL_SWIPE_PX = floatPreferencesKey("f_scroll_swipe_px")
+        /** 滚轮方向反转（默认关闭：滚轮向下 = 手指向下滑）。 */
+        val F_SCROLL_INVERT = booleanPreferencesKey("f_scroll_invert")
         /** M 键开关地图并切换鼠标（全局），默认开启。 */
         val MAP_MOUSE_TOGGLE_ENABLED = booleanPreferencesKey("map_mouse_toggle_enabled")
-        /** F 交互后左键唤出光标（全局），默认关闭。 */
+        /** F 交互后左键唤出光标（全局），默认开启。 */
         val F_CURSOR_CLICK_ENABLED = booleanPreferencesKey("f_cursor_click_enabled")
         /** 物理 ESC / Tab 关闭界面后自动回射击模式（全局），默认开启。 */
         val TAB_ESC_AIM_ENABLED = booleanPreferencesKey("tab_esc_aim_enabled")
+        /** 快速近战默认键已从 V 迁移到右侧小键盘 num0 的一次性标记。 */
+        val QUICK_MELEE_NUMPAD_MIGRATED = booleanPreferencesKey("quick_melee_numpad_migrated")
 
         /* -------- 鼠标高级参数（全局，与预设无关） -------- */
         /** 单帧位移断点阈值（px），默认 240。 */

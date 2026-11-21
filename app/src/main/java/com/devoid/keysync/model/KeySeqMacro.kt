@@ -124,8 +124,8 @@ data class QuickMeleeMacro(
     val enabled: Boolean = true,
     val triggerKeyCode: Int = KeyEvent.KEYCODE_5,
     val requireAlt: Boolean = true,
-    /** 游戏里「快速近战」绑定的物理键，宏会点它对应的映射位置。 */
-    val meleeKeyCode: Int = KeyEvent.KEYCODE_V,
+    /** 游戏里「快速近战」绑定的物理键，宏会点它对应的映射位置；默认右侧小键盘 num0。 */
+    val meleeKeyCode: Int = KeyEvent.KEYCODE_NUMPAD_0,
     /** 近战键与 1 号键之间的延迟（ms），默认 80。 */
     val delayMs: Int = 80,
 )
@@ -143,6 +143,17 @@ private val namedKeys = mapOf(
     "DEL" to KeyEvent.KEYCODE_DEL,
     "BACKSPACE" to KeyEvent.KEYCODE_DEL,
     "RMB" to KEYCODE_RMC,
+    // 右侧小键盘数字：默认键位是 num0，也允许用户自己填 NUM1–NUM9。
+    "NUM0" to KeyEvent.KEYCODE_NUMPAD_0,
+    "NUM1" to KeyEvent.KEYCODE_NUMPAD_1,
+    "NUM2" to KeyEvent.KEYCODE_NUMPAD_2,
+    "NUM3" to KeyEvent.KEYCODE_NUMPAD_3,
+    "NUM4" to KeyEvent.KEYCODE_NUMPAD_4,
+    "NUM5" to KeyEvent.KEYCODE_NUMPAD_5,
+    "NUM6" to KeyEvent.KEYCODE_NUMPAD_6,
+    "NUM7" to KeyEvent.KEYCODE_NUMPAD_7,
+    "NUM8" to KeyEvent.KEYCODE_NUMPAD_8,
+    "NUM9" to KeyEvent.KEYCODE_NUMPAD_9,
 )
 
 /** 把 "1" / "X" / "F5" / "ESC" / "RMB" 这类名字解析成 KeyCode；无法识别返回 null。 */

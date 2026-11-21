@@ -183,7 +183,7 @@
     <string name="settings_discard_keep">继续编辑</string>
     <string name="settings_discard_leave">放弃并返回</string>
     <string name="settings_reset_title">恢复默认设置？</string>
-    <string name="settings_reset_message">所有设置项（主题、触摸模式、按钮大小等）都会恢复为默认值。键位布局不受影响。</string>
+    <string name="settings_reset_message">所有设置项（触摸模式、按钮大小等）都会恢复为默认值。键位布局不受影响。</string>
     <string name="settings_profile_delete_title">删除预设</string>
     <string name="settings_profile_delete_message">确定要删除预设「%1$s」吗？此操作无法撤销。</string>
     <string name="settings_profile_delete_active">这是当前正在使用的预设，删除后会自动切换到「%1$s」。</string>
@@ -203,21 +203,17 @@
     <string name="settings_delete_data">删除键位数据</string>
     <string name="settings_cancelable_button">背包/退出键点击方式</string>
     <string name="settings_scope">普通按钮点击方式</string>
-    <string name="settings_theme">主题</string>
     <string name="settings_button_size">按钮默认大小</string>
     <string name="settings_button_size_value">%1$d %%</string>
     <string name="settings_delete_keymap">删除已卸载应用的键位映射</string>
     <string name="settings_touch_cancel">这类按钮点击时注入的触控方式</string>
     <string name="settings_touch_scope">开火、倍镜等普通按键的触控方式</string>
-    <string name="settings_theme_pref">应用主题偏好</string>
     <string name="settings_shooting_mode_key">切换射击模式键：</string>
     <string name="settings_fire_key">开火键：</string>
     <string name="settings_scope_key">倍镜键：</string>
     <string name="settings_about">关于</string>
     <string name="settings_save">保存</string>
     <string name="settings_reset_defaults">恢复默认设置</string>
-    <string name="settings_screen_mirror_compat">投屏键鼠兼容</string>
-    <string name="settings_screen_mirror_compat_desc">使用投屏 / 键鼠映射（如熊猫映射）时开启，让 PC 鼠标输入到游戏。单指点击 = 左键，双指点击 = 右键，长按 = 中键。</string>
 
     <!-- 悬浮窗：加号菜单 -->
     <string name="overlay_advanced_settings">高级设置</string>

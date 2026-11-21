@@ -32,10 +32,6 @@ data class Profile(
     val scallopDashMacro: KeySeqMacro = defaultScallopDashMacro(),
     /** 快速近战宏：默认 Alt+5，点一次近战键 → 延迟 → 点一次 1；按住触发键循环。 */
     val quickMeleeMacro: QuickMeleeMacro = QuickMeleeMacro(),
-    /** Tab 防连按：开启后重复 Tab 在间隔内直接吞掉，避免手速过快时多余的 Tab 落到游戏里。默认开启。 */
-    val tabDebounceEnabled: Boolean = true,
-    /** Tab 防连按间隔（ms）：两次有效 Tab 按下之间的最小间隔。默认 1000。 */
-    val tabDebounceMs: Int = 1000,
     /** Shift 按下时取消最后按下的蹲/趴姿态（C / Z / Ctrl）。默认开启。 */
     val stanceAssistEnabled: Boolean = true,
     /** Ordered independent click points, separate from ordinary key bindings. */
@@ -51,6 +47,12 @@ data class Profile(
     /** 拖拽丢弃落点（悬浮层坐标，竖条中心）。null = 尚未放置。 */
     val discardX: Float? = null,
     val discardY: Float? = null,
+    /** F 光标滚轮操控：左侧滚动锚点（悬浮层坐标）。null = 尚未放置。 */
+    val scrollLeftX: Float? = null,
+    val scrollLeftY: Float? = null,
+    /** F 光标滚轮操控：右侧滚动锚点（悬浮层坐标）。null = 尚未放置。 */
+    val scrollRightX: Float? = null,
+    val scrollRightY: Float? = null,
 )
 
 /** 连按落点：归属于某个物理按键的额外触点。 */

@@ -119,6 +119,12 @@ class MainActivityViewModel @Inject constructor(
     val fCursorClickEnabled: StateFlow<Boolean> = stateManager.fCursorClickEnabled
     /** ESC / Tab 关闭界面后自动回射击模式（全局，默认开启）。 */
     val tabEscAimEnabled: StateFlow<Boolean> = stateManager.tabEscAimEnabled
+    /** F 光标滚轮操控（全局，默认开启）。 */
+    val fScrollControlEnabled: StateFlow<Boolean> = stateManager.fScrollControlEnabled
+    /** 每格滚轮的短滑距离（px）。 */
+    val fScrollSwipePx: StateFlow<Float> = stateManager.fScrollSwipePx
+    /** 滚轮方向反转。 */
+    val fScrollInvert: StateFlow<Boolean> = stateManager.fScrollInvert
 
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     /** 「检查更新 / 下载并安装」的状态。 */
@@ -245,6 +251,9 @@ class MainActivityViewModel @Inject constructor(
     fun setMapMouseToggleEnabled(enabled: Boolean) = stateManager.setMapMouseToggleEnabled(enabled)
     fun setFCursorClickEnabled(enabled: Boolean) = stateManager.setFCursorClickEnabled(enabled)
     fun setTabEscAimEnabled(enabled: Boolean) = stateManager.setTabEscAimEnabled(enabled)
+    fun setFScrollControlEnabled(enabled: Boolean) = stateManager.setFScrollControlEnabled(enabled)
+    fun setFScrollSwipePx(px: Float) = stateManager.setFScrollSwipePx(px)
+    fun setFScrollInvert(invert: Boolean) = stateManager.setFScrollInvert(invert)
 
     /**
      * Removes games by package name.

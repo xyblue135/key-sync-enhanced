@@ -35,6 +35,8 @@ import com.devoid.keysync.domain.EventHandler
 import com.devoid.keysync.domain.KEYCODE_LMC
 import com.devoid.keysync.domain.KEYCODE_MMC
 import com.devoid.keysync.domain.KEYCODE_RMC
+import com.devoid.keysync.domain.KEYCODE_SCROLL_DOWN
+import com.devoid.keysync.domain.KEYCODE_SCROLL_UP
 import com.devoid.keysync.data.external.ShizukuSystemServerAPi
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.ExtraTapPoint
@@ -60,6 +62,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -213,7 +217,7 @@ class FloatingWindowStateManager @Inject constructor(
     private var discardDragJob: Job? = null
     /** M 键开关地图并切换鼠标（全局），默认开启。 */
     val mapMouseToggleEnabled = MutableStateFlow(true)
-    /** F 交互后左键唤出光标（全局，高级功能），默认关闭。 */
+    /** F 交互后左键唤出光标（全局，高级功能），默认开启。 */
     val fCursorClickEnabled = MutableStateFlow(false)
     /** F 交互的时间戳；左键在 400ms 内命中后立即清空，保证一轮只触发一次。 */
     private var fInteractArmedAt = 0L
@@ -223,6 +227,19 @@ class FloatingWindowStateManager @Inject constructor(
     val tabEscAimEnabled = MutableStateFlow(true)
     /** 回瞄准延迟任务：等游戏把界面关掉再重建瞄准触点。 */
     private var aimReturnJob: Job? = null
+
+    /** F 光标滚轮操控（全局），默认开启；只在 F 唤出光标后临时接管滚轮。 */
+    val fScrollControlEnabled = MutableStateFlow(true)
+    /** 每格滚轮的短滑距离（px）。 */
+    val fScrollSwipePx = MutableStateFlow(DEFAULT_SCROLL_SWIPE_PX)
+    /** 滚轮方向反转：默认关闭（滚轮向下 = 手指向下滑）。 */
+    val fScrollInvert = MutableStateFlow(false)
+    /** 当前是否处于 F 唤出光标后的滚轮操控状态；ESC/Tab/切回射击模式即退出。 */
+    private var fScrollControlActive = false
+    /** 连续滚轮逐格排队执行，避免多根手指同时滑动。 */
+    private val scrollSwipeMutex = Mutex()
+    /** 编辑态图层：false = 按键层，true = 高级层（丢弃点 + 左右滚动锚点）。 */
+    val editAdvancedLayer = MutableStateFlow(false)
 
     private val _containerItems = MutableStateFlow(listOf<DraggableItem>())
     val containerItems = _containerItems.asStateFlow()
@@ -342,16 +359,39 @@ class FloatingWindowStateManager @Inject constructor(
                 dataStoreManager.getBoolean(DataStoreManager.SCREEN_SIZE_CACHE).first() ?: true
             discardDragEnabled.value =
                 dataStoreManager.getBoolean(DataStoreManager.DISCARD_DRAG_ENABLED).first() ?: false
+            val storedDragSpeed = dataStoreManager.getFloat(DataStoreManager.DISCARD_DRAG_SPEED).first()
+            // 旧刻度是 1–10，新刻度扩大到 1–100：旧值直接 ×10 迁移，用户原来的手感也随之快 10 倍。
+            val migratedDragSpeed = storedDragSpeed?.let {
+                if (it <= LEGACY_MAX_DISCARD_DRAG_SPEED) it * 10f else it
+            }
             discardDragSpeed.value =
-                (dataStoreManager.getFloat(DataStoreManager.DISCARD_DRAG_SPEED).first()
-                    ?: DEFAULT_DISCARD_DRAG_SPEED)
+                (migratedDragSpeed ?: DEFAULT_DISCARD_DRAG_SPEED)
                     .coerceIn(MIN_DISCARD_DRAG_SPEED, MAX_DISCARD_DRAG_SPEED)
+            if (migratedDragSpeed != null && migratedDragSpeed != storedDragSpeed) {
+                scope.launch {
+                    dataStoreManager.save(DataStoreManager.DISCARD_DRAG_SPEED, discardDragSpeed.value)
+                }
+            }
             mapMouseToggleEnabled.value =
                 dataStoreManager.getBoolean(DataStoreManager.MAP_MOUSE_TOGGLE_ENABLED).first() ?: true
             fCursorClickEnabled.value =
-                dataStoreManager.getBoolean(DataStoreManager.F_CURSOR_CLICK_ENABLED).first() ?: false
+                dataStoreManager.getBoolean(DataStoreManager.F_CURSOR_CLICK_ENABLED).first() ?: true
             tabEscAimEnabled.value =
                 dataStoreManager.getBoolean(DataStoreManager.TAB_ESC_AIM_ENABLED).first() ?: true
+            fScrollControlEnabled.value =
+                dataStoreManager.getBoolean(DataStoreManager.F_SCROLL_CONTROL_ENABLED).first() ?: true
+            fScrollSwipePx.value =
+                (dataStoreManager.getFloat(DataStoreManager.F_SCROLL_SWIPE_PX).first()
+                    ?: DEFAULT_SCROLL_SWIPE_PX)
+                    .coerceIn(MIN_SCROLL_SWIPE_PX, MAX_SCROLL_SWIPE_PX)
+            fScrollInvert.value =
+                dataStoreManager.getBoolean(DataStoreManager.F_SCROLL_INVERT).first() ?: false
+            // 切回射击模式（ESC/Tab/手动模式键）时立即解除滚轮操控。
+            scope.launch {
+                isShootingMode.collect { shooting ->
+                    if (shooting) fScrollControlActive = false
+                }
+            }
             // 两条 init 协程的完成顺序不确定：若预设先加载完，这里要把刚读到的拟人化设置补应用一次。
             syncHumanization()
         }
@@ -445,6 +485,24 @@ class FloatingWindowStateManager @Inject constructor(
             }
         }
 
+        // 一次性迁移：快速近战的默认键从 V 改为右侧小键盘 num0。
+        // 只在从未迁移过的旧数据上执行，用户之后手动改回 V 不会再被覆盖。
+        if (dataStoreManager.getBoolean(DataStoreManager.QUICK_MELEE_NUMPAD_MIGRATED).first() != true) {
+            var meleeChanged = false
+            stored = stored.map { profile ->
+                if (profile.quickMeleeMacro.meleeKeyCode == KeyEvent.KEYCODE_V) {
+                    meleeChanged = true
+                    profile.copy(
+                        quickMeleeMacro = profile.quickMeleeMacro.copy(
+                            meleeKeyCode = KeyEvent.KEYCODE_NUMPAD_0,
+                        )
+                    )
+                } else profile
+            }
+            if (meleeChanged) dataStoreManager.saveProfiles(stored)
+            dataStoreManager.save(DataStoreManager.QUICK_MELEE_NUMPAD_MIGRATED, true)
+        }
+
         val activeId = storedActiveId?.takeIf { id -> stored.any { it.id == id } }
             ?: stored.first().id
         if (activeId != storedActiveId) {
@@ -511,10 +569,19 @@ class FloatingWindowStateManager @Inject constructor(
         /** Alt+D 拖拽：单程分几步、每步间隔（ms）；12 步 × 14ms ≈ 170ms。 */
         const val DRAG_STEPS = 12
         const val DRAG_STEP_MS = 14L
-        /** 拖拽速度倍数默认值与范围（设置页滑杆）。 */
-        const val DEFAULT_DISCARD_DRAG_SPEED = 5f
+        /** Alt+D 拖拽速度倍数默认值与范围（设置页滑杆）。 */
+        const val DEFAULT_DISCARD_DRAG_SPEED = 50f
         const val MIN_DISCARD_DRAG_SPEED = 1f
-        const val MAX_DISCARD_DRAG_SPEED = 10f
+        const val MAX_DISCARD_DRAG_SPEED = 100f
+        /** 旧版本滑杆上限；读到 1–10 的旧值按 10 倍换算到新刻度。 */
+        private const val LEGACY_MAX_DISCARD_DRAG_SPEED = 10f
+        /** F 光标滚轮操控：每格短滑的像素距离默认值与范围。 */
+        const val DEFAULT_SCROLL_SWIPE_PX = 120f
+        const val MIN_SCROLL_SWIPE_PX = 40f
+        const val MAX_SCROLL_SWIPE_PX = 400f
+        /** 滚轮短滑分几步、每步间隔（ms）；5 步 × 7ms ≈ 35ms。 */
+        private const val SCROLL_SWIPE_STEPS = 5
+        private const val SCROLL_SWIPE_STEP_MS = 7L
         /** 快捷换位触发键：1/2（3/4 固定用于近战流程，不参与换位）。 */
         val SWAP_SLOT_KEYS = setOf(
             KeyEvent.KEYCODE_1,
@@ -695,10 +762,6 @@ class FloatingWindowStateManager @Inject constructor(
         val updatedProfile = target.withAssist(assist)
         _profiles.value = _profiles.value.map { if (it.id == profileId) updatedProfile else it }
         if (_activeProfileId.value == profileId) {
-            if (!assist.tabDebounceEnabled) {
-                lastAcceptedTabAt = 0L
-                swallowedTabDown = false
-            }
             if (!assist.stanceAssistEnabled) stanceKeyCode = null
             syncMacros()
         }
@@ -773,49 +836,6 @@ class FloatingWindowStateManager @Inject constructor(
         val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return
         val point = profile.extraTapPoints.filter { it.keyCode == keyCode }.getOrNull(index) ?: return
         eventHandler.tapExtraPoint(Offset(point.x, point.y))
-    }
-
-    // Tab 防连按：记录最后一次被接受的 Tab 按下时间，以及本次 Tab 是否已被吞掉。
-    // 被吞掉的 DOWN 必须连同 UP 一起吞，否则 UP 仍会走映射，可能出现残留状态。
-    private var lastAcceptedTabAt = 0L
-    private var swallowedTabDown = false
-
-    /**
-     * Tab 防连按（预设级子开关）。
-     *
-     * 开启后，距上一次有效 Tab 不足预设间隔（默认 1000ms，可调）的重复 Tab 整段吞掉：
-     * - 快速连按 Tab 时，多余的按下不会落到游戏里（避免点到别的东西）
-     *
-     * 只拦截 Tab，其他按键不受影响；长按产生的重复事件跟随首次判定。
-     */
-    private fun guardTabRepeat(keyEvent: KeyEvent): Boolean {
-        if (keyEvent.keyCode != KeyEvent.KEYCODE_TAB) return false
-        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
-        if (!profile.tabDebounceEnabled) {
-            swallowedTabDown = false
-            return false
-        }
-        val guardMs = profile.tabDebounceMs.coerceIn(200, 3000).toLong()
-        return when (keyEvent.action) {
-            KeyEvent.ACTION_DOWN -> {
-                if (keyEvent.repeatCount > 0) {
-                    swallowedTabDown
-                } else {
-                    val now = SystemClock.uptimeMillis()
-                    val tooSoon = lastAcceptedTabAt != 0L &&
-                        now - lastAcceptedTabAt < guardMs
-                    swallowedTabDown = tooSoon
-                    if (!tooSoon) lastAcceptedTabAt = now
-                    tooSoon
-                }
-            }
-            KeyEvent.ACTION_UP -> {
-                val swallowed = swallowedTabDown
-                swallowedTabDown = false
-                swallowed
-            }
-            else -> false
-        }
     }
 
     private var tapSequence234Job: Job? = null
@@ -1348,6 +1368,118 @@ class FloatingWindowStateManager @Inject constructor(
         persistActiveProfile()
     }
 
+    /* ---------------- F 光标滚轮操控 ---------------- */
+
+    /** 全局开关：F 唤出光标后，滚轮改走左右滚动锚点。 */
+    fun setFScrollControlEnabled(enabled: Boolean) {
+        fScrollControlEnabled.value = enabled
+        if (!enabled) fScrollControlActive = false
+        scope.launch { dataStoreManager.save(DataStoreManager.F_SCROLL_CONTROL_ENABLED, enabled) }
+    }
+
+    /** 每格滚轮的短滑距离（px）。 */
+    fun setFScrollSwipePx(px: Float) {
+        val safe = px.coerceIn(MIN_SCROLL_SWIPE_PX, MAX_SCROLL_SWIPE_PX)
+        fScrollSwipePx.value = safe
+        scope.launch { dataStoreManager.save(DataStoreManager.F_SCROLL_SWIPE_PX, safe) }
+    }
+
+    /** 滚轮方向反转。 */
+    fun setFScrollInvert(invert: Boolean) {
+        fScrollInvert.value = invert
+        scope.launch { dataStoreManager.save(DataStoreManager.F_SCROLL_INVERT, invert) }
+    }
+
+    /** 编辑态图层切换；首次进入高级层时自动放好左右锚点。 */
+    fun setEditAdvancedLayer(advanced: Boolean) {
+        editAdvancedLayer.value = advanced
+        if (advanced) ensureScrollAnchors()
+    }
+
+    /** 拖动左/右滚动锚点后写回预设。 */
+    fun moveScrollAnchor(left: Boolean, position: Offset) {
+        val id = _activeProfileId.value
+        _profiles.value = _profiles.value.map {
+            if (it.id != id) it
+            else if (left) it.copy(scrollLeftX = position.x, scrollLeftY = position.y)
+            else it.copy(scrollRightX = position.x, scrollRightY = position.y)
+        }
+        persistActiveProfile()
+    }
+
+    /** 没有锚点时默认放左右边缘垂直居中；已有的一侧不覆盖。 */
+    private fun ensureScrollAnchors() {
+        val profile = activeProfile() ?: return
+        if (profile.scrollLeftX != null && profile.scrollLeftY != null &&
+            profile.scrollRightX != null && profile.scrollRightY != null
+        ) return
+        val viewport = overlayViewport ?: currentScreenSize()
+        val left = Offset(viewport.x * 0.08f, viewport.y * 0.5f)
+        val right = Offset(viewport.x * 0.92f, viewport.y * 0.5f)
+        val id = _activeProfileId.value
+        _profiles.value = _profiles.value.map {
+            if (it.id != id) it else it.copy(
+                scrollLeftX = it.scrollLeftX ?: left.x,
+                scrollLeftY = it.scrollLeftY ?: left.y,
+                scrollRightX = it.scrollRightX ?: right.x,
+                scrollRightY = it.scrollRightY ?: right.y,
+            )
+        }
+        persistActiveProfile()
+    }
+
+    /** 按光标所在半屏选择左/右锚点；缺锚点返回 null，滚轮回落到原映射。 */
+    private fun scrollAnchorForCursor(): Offset? {
+        val profile = activeProfile() ?: return null
+        val viewport = overlayViewport ?: currentScreenSize()
+        val onLeft = _mousePointerOffset.value.x < viewport.x / 2f
+        val x = if (onLeft) profile.scrollLeftX else profile.scrollRightX
+        val y = if (onLeft) profile.scrollLeftY else profile.scrollRightY
+        if (x == null || y == null) return null
+        return Offset(x, y)
+    }
+
+    /**
+     * F 唤出光标后接管滚轮：每格在对应侧锚点注入一次短滑。
+     * 返回 false 时由调用方继续走原有滚轮映射。
+     */
+    private fun handleScrollControl(codes: List<Int>): Boolean {
+        if (!fScrollControlActive || !fScrollControlEnabled.value) return false
+        if (isShootingMode.value || _isEditMode.value || !mouseCursorSeen) return false
+        val vertical = codes.filter { it == KEYCODE_SCROLL_UP || it == KEYCODE_SCROLL_DOWN }
+        if (vertical.isEmpty()) return false
+        val anchor = scrollAnchorForCursor() ?: return false
+        val screenAnchor = anchor + (overlayOrigin ?: Offset.Zero)
+        val distance = fScrollSwipePx.value.coerceIn(MIN_SCROLL_SWIPE_PX, MAX_SCROLL_SWIPE_PX)
+        val flip = if (fScrollInvert.value) -1f else 1f
+        vertical.forEach { code ->
+            val sign = if (code == KEYCODE_SCROLL_UP) -1f else 1f
+            queueScrollSwipe(screenAnchor, distance * sign * flip)
+            _lastInputLabel.value = if (code == KEYCODE_SCROLL_UP) "滚轮上滑" else "滚轮下滑"
+        }
+        return true
+    }
+
+    /** 逐格串行执行，避免多根触点同时滑动被游戏识别成缩放。 */
+    private fun queueScrollSwipe(screenAnchor: Offset, deltaY: Float) {
+        scope.launch {
+            scrollSwipeMutex.withLock {
+                if (!fScrollControlActive || isShootingMode.value) return@withLock
+                val pointer = eventHandler.allocateDragPointer()
+                try {
+                    eventHandler.beginCursorDrag(pointer, screenAnchor)
+                    repeat(SCROLL_SWIPE_STEPS) { index ->
+                        val t = (index + 1f) / SCROLL_SWIPE_STEPS
+                        eventHandler.moveCursorDrag(pointer, screenAnchor + Offset(0f, deltaY * t))
+                        delay(SCROLL_SWIPE_STEP_MS)
+                    }
+                } finally {
+                    eventHandler.endCursorDrag(pointer)
+                }
+            }
+        }
+    }
+
     /**
      * Alt+D：在当前光标位置按住左键 → 拖到丢弃点 → 停顿 → 松开 → 光标回位。
      *
@@ -1362,16 +1494,26 @@ class FloatingWindowStateManager @Inject constructor(
         val origin = overlayOrigin ?: Offset.Zero
         val start = _mousePointerOffset.value
         // 速度倍数只作用在移动阶段；按下/停顿时长不变，避免游戏来不及识别“放下”。
-        val stepMs = (DRAG_STEP_MS / discardDragSpeed.value.coerceIn(MIN_DISCARD_DRAG_SPEED, MAX_DISCARD_DRAG_SPEED))
-            .roundToLong().coerceAtLeast(1L)
+        // 高倍速下一程可能不足 1ms/步，此时减少插值步数（最快约 2ms 走完），
+        // 否则 delay() 的最小粒度会把 100 倍速压回和 10 倍速一样快。
+        val dragSpeed = discardDragSpeed.value
+            .coerceIn(MIN_DISCARD_DRAG_SPEED, MAX_DISCARD_DRAG_SPEED)
+        val totalMs = DRAG_STEP_MS * DRAG_STEPS / dragSpeed
+        val stepCount = if (totalMs < DRAG_STEPS) {
+            totalMs.roundToInt().coerceIn(2, DRAG_STEPS)
+        } else {
+            DRAG_STEPS
+        }
+        val stepMs = if (totalMs < DRAG_STEPS) 1L
+        else (totalMs / DRAG_STEPS).roundToLong().coerceAtLeast(1L)
         discardDragJob = scope.launch {
             val pointer = eventHandler.allocateDragPointer()
             var released = false
             try {
                 eventHandler.beginCursorDrag(pointer, start + origin)
                 delay(40)
-                repeat(DRAG_STEPS) { index ->
-                    val t = (index + 1f) / DRAG_STEPS
+                repeat(stepCount) { index ->
+                    val t = (index + 1f) / stepCount
                     val p = lerpOffset(start, target, t)
                     moveCursorTo(p)
                     eventHandler.moveCursorDrag(pointer, p + origin)
@@ -1381,8 +1523,8 @@ class FloatingWindowStateManager @Inject constructor(
                 eventHandler.endCursorDrag(pointer)
                 released = true
                 delay(70)
-                repeat(DRAG_STEPS) { index ->
-                    val t = (index + 1f) / DRAG_STEPS
+                repeat(stepCount) { index ->
+                    val t = (index + 1f) / stepCount
                     moveCursorTo(lerpOffset(target, start, t))
                     delay(stepMs)
                 }
@@ -1803,7 +1945,10 @@ class FloatingWindowStateManager @Inject constructor(
         // 进/出编辑态都清空按下状态：编辑态下不维护 pressedKeys，避免切换回来时
         // 残留上一个状态的「按下」高亮。
         _pressedKeys.value = emptySet()
+        // 编辑态不接管滚轮；退出编辑时回到按键层，避免下次进入还停在高级层。
+        fScrollControlActive = false
         if (!_isEditMode.value) {
+            editAdvancedLayer.value = false
             eventHandler.updateKeyMapping(containerItems.value)
             syncMacros()
             // Position/size edits currently mutate DraggableItem in place, so
@@ -1883,9 +2028,6 @@ class FloatingWindowStateManager @Inject constructor(
             }
             return false
         }
-        // Tab 防连按：必须在更新任何 UI 状态和映射之前拦截，
-        // 否则被吞掉的 Tab 仍会点亮按钮、刷新最近输入。
-        if (guardTabRepeat(keyEvent)) return true
         // Alt+D：按住 Alt 才生效，工具开关打开且当前是光标模式时执行拖拽丢弃。
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
             keyEvent.keyCode == KeyEvent.KEYCODE_D &&
@@ -1918,6 +2060,13 @@ class FloatingWindowStateManager @Inject constructor(
         ) {
             aimReturnJob?.cancel()
             fInteractArmedAt = 0L
+            fScrollControlActive = false
+        }
+        // 物理 ESC / Tab：无论是否开启「回瞄准」，都先解除滚轮操控，回到原来的滚轮映射。
+        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
+            (keyEvent.keyCode == KeyEvent.KEYCODE_ESCAPE || keyEvent.keyCode == KeyEvent.KEYCODE_TAB)
+        ) {
+            fScrollControlActive = false
         }
         // 物理 ESC / Tab：关闭背包、地图后延迟回瞄准；不吞按键，游戏照常收到。
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
@@ -2067,6 +2216,7 @@ class FloatingWindowStateManager @Inject constructor(
                 // Existing radial-wheel selection owns scrolling while it is held open.
                 if (eventHandler.isWheelActive) { scrollTracker.reset(); return eventHandler.handleScroll(vScroll) }
                 val codes = scrollTracker.update(vScroll, motionEvent.getAxisValue(MotionEvent.AXIS_HSCROLL))
+                if (handleScrollControl(codes)) return true
                 codes.forEach { code ->
                     _lastInputLabel.value = code.keyCodeToString()
                     if (!eventHandler.isMacroTrigger(code)) applyQuickSwap(code)
@@ -2092,6 +2242,8 @@ class FloatingWindowStateManager @Inject constructor(
             fInteractArmedAt = 0L
             mouseCursorSeen = true
             eventHandler.setShootingModeEnabled(false)
+            // 进入光标模式的同时打开滚轮操控；左右滚动锚点有缺失时滚轮会自动回落到原映射。
+            fScrollControlActive = fScrollControlEnabled.value
         }
         eventHandler.handleMouseButton(button, pressed)
     }
@@ -2107,9 +2259,8 @@ class FloatingWindowStateManager @Inject constructor(
 
     /**
      * ACTION_BUTTON_* normally exposes the changed button through actionButton.
-     * TouchToMouseTranslator cannot call MotionEvent.setActionButton because it
-     * is a hidden Android API, so its synthetic events encode that one button
-     * in buttonState as an internal fallback.
+     * Some synthetic events cannot call MotionEvent.setActionButton (hidden API),
+     * so they encode that one button in buttonState as an internal fallback.
      */
     private fun modifiedMouseButton(event: MotionEvent): Int =
         event.actionButton.takeIf { it != 0 } ?: event.buttonState

@@ -12,7 +12,6 @@ class ProfileAssistTest {
         layoutScreenWidth = 2400,
         layoutScreenHeight = 1080,
         quickSwapEnabled = true,
-        tabDebounceEnabled = true,
         stanceAssistEnabled = true,
         tapSequence234Enabled = true,
         tapSequence234GapMs = 60,
@@ -21,11 +20,9 @@ class ProfileAssistTest {
     @Test fun assistRoundTripKeepsLayoutAndSwitches() {
         val profile = sampleProfile()
         val draft = profile.assist().copy(
-            tabDebounceEnabled = false,
             quickSwapEnabled = false,
             tapSequence234GapMs = 120,
             stanceAssistEnabled = false,
-            tabDebounceMs = 800,
         )
 
         val saved = profile.withAssist(draft)
@@ -34,22 +31,11 @@ class ProfileAssistTest {
         assertEquals(profile.name, saved.name)
         assertEquals(profile.layoutScreenWidth, saved.layoutScreenWidth)
         assertEquals(profile.layoutScreenHeight, saved.layoutScreenHeight)
-        assertTrue(!saved.tabDebounceEnabled)
         assertTrue(!saved.quickSwapEnabled)
         assertEquals(120, saved.tapSequence234GapMs)
         assertTrue(!saved.stanceAssistEnabled)
-        assertEquals(800, saved.tabDebounceMs)
         // 再取一次草稿必须和刚写回的一致，isDirty 才能归零。
         assertEquals(draft, saved.assist())
-    }
-
-    @Test fun withAssistClampsTabDebounceToSupportedRange() {
-        val profile = sampleProfile()
-        val saved = profile.withAssist(
-            profile.assist().copy(tabDebounceMs = 1)
-        )
-
-        assertEquals(200, saved.tabDebounceMs)
     }
 
     @Test fun withAssistClampsTapGapToSupportedRange() {
