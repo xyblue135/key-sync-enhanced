@@ -814,24 +814,29 @@ class FloatingWindowStateManager @Inject constructor(
     private var keyMacroJob: Job? = null
 
     /**
-     * 按 3 切近战：依次点击 2 → 3 → 4。
+     * 按 3 切近战：依次点击 2 → 4 → 3。
      *
-     * 需要把游戏里的 3 号位配置为手枪、4 号位配置为近战：
-     * 2 号位扫掉可能存在的第二主武器，3 号位扫掉手枪，最后 4 号位一定落在近战上。
-     * 这样即使只有一把武器，也不会出现“最后一下点到空位、被游戏回退到主武器 1”的问题。
+     * 游戏会按携带情况重排四个格子：单枪时近战在 2，双枪时近战在 4，
+     * 双枪 + 手枪时近战在 3。在 2 → 4 → 3 这个固定顺序里，三种布局的近战位
+     * 都只出现一次（单枪在 2、双枪在 4、双枪+手枪在 3），所以最终一定停在近战上。
+     * 点空位不会切走当前武器，没有副作用——这是固定顺序也能通用的前提。
+     *
+     * 真正要避免的是「近战位被点第二次」：刀已经在手上时再点同一格，游戏会
+     * 收回刀、切回主武器 1。因此一轮里近战位只出现一次；开大/已对调时也只跑
+     * 一轮（先等卸盾动作结束），绝不补第二轮。
+     *
+     * 另外游戏内需要关闭「快速切枪」：它会在切换后自动切回主武器，
+     * 破坏最后落在近战上的结果。
      *
      * 三个触点都走正常的按键映射（`eventHandler.handleKeyEvent`），所以用户把
-     * 2/3/4 绑到哪个位置就点哪里。整个过程串行执行，重复按 3 不会叠加。
-     *
-     * 已对调（通常是开大后）时：按下 3 先立刻走一轮，等 meleeSwapDelayMs 后再补一轮，
-     * 避开卸盾动作把第一轮吞掉的情况。
+     * 2/4/3 绑到哪个位置就点哪里。整个过程串行执行，重复按 3 不会叠加。
      */
     private fun runTapSequence234(keyCode: Int): Boolean {
         if (keyCode != KeyEvent.KEYCODE_3) return false
         val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
         if (!profile.tapSequence234Enabled) return false
         // 三个按钮缺一就不接管，让 3 走原本的单键映射，避免按了没反应。
-        val targets = listOf(KeyEvent.KEYCODE_2, KeyEvent.KEYCODE_3, KeyEvent.KEYCODE_4)
+        val targets = listOf(KeyEvent.KEYCODE_2, KeyEvent.KEYCODE_4, KeyEvent.KEYCODE_3)
         val items = _containerItems.value
         if (targets.any { code -> items.none { it.boundKeyCode() == code } }) return false
         if (tapSequence234Job?.isActive == true) return true
@@ -844,18 +849,14 @@ class FloatingWindowStateManager @Inject constructor(
             0L
         }
         tapSequence234Job = scope.launch {
-            // 第一次：按下 3 立刻走一轮 2 → 3 → 4。
+            // 已对调（开大后）先等卸盾动作结束；只跑一轮，避免近战位被点第二次。
+            if (swapDelayMs > 0) delay(swapDelayMs)
             injectMeleeSequence(targets, baseGap)
-            // 已对调（开大后）再等卸盾动作结束，补第二轮，确保最终停在刀上。
-            if (swapDelayMs > 0) {
-                delay(swapDelayMs)
-                injectMeleeSequence(targets, baseGap)
-            }
         }
         return true
     }
 
-    /** 串行注入一轮 2 → 3 → 4，每个触点走正常按键映射，段间带 ±10% 抖动。 */
+    /** 串行注入一轮 2 → 4 → 3，每个触点走正常按键映射，段间带 ±10% 抖动。 */
     private suspend fun injectMeleeSequence(targets: List<Int>, baseGap: Int) {
         targets.forEach { code ->
             val now = SystemClock.uptimeMillis()

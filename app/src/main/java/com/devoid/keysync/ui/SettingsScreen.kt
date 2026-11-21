@@ -1026,10 +1026,12 @@ private fun ProfileAssistCard(
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             AssistSwitchRow(
-                title = "按 3 切近战（2 → 3 → 4）",
-                desc = "按 3 时依次点击 2 → 3 → 4。请把游戏里的 3 号位配置为手枪、4 号位配置为近战：" +
-                    "2 号位扫掉第二主武器，3 号位扫掉手枪，最后 4 号位一定落在近战上，不会停在主武器 1。" +
-                    "间隔越小越跟手，但太小可能被游戏合并或切枪冷却吞掉，建议 10–60ms。2/3/4 缺任意一个按钮时不接管。",
+                title = "按 3 切近战（2 → 4 → 3）",
+                desc = "按 3 时依次点击 2 → 4 → 3。游戏会按携带情况重排格子：单枪时近战在 2、双枪时在 4、" +
+                    "双枪+手枪时在 3，三种布局的近战位在这个固定顺序里都只出现一次，所以最终一定停在近战；" +
+                    "点空位不会切走，没有副作用。真正的问题是近战位被点第二次——刀已经在手上时再点同一格，" +
+                    "会收回刀、切回主武器 1，所以每轮只点一次。另外请关闭游戏内的「快速切枪」，否则会自动切回主武器。" +
+                    "间隔建议 10–60ms，太小可能被游戏合并；2/3/4 缺任意一个按钮时不接管。",
                 checked = draft.tapSequence234Enabled,
                 onToggle = {
                     onDraftChange(draft.copy(tapSequence234Enabled = !draft.tapSequence234Enabled))
@@ -1061,8 +1063,8 @@ private fun ProfileAssistCard(
                     Text("${draft.meleeSwapDelayMs} ms", style = MaterialTheme.typography.bodyMedium)
                 }
                 Text(
-                    "两个按钮已对调（通常是开大后）时，按 3 会立刻执行一次 2 → 3 → 4，" +
-                        "等这段时间后再补一次，避开卸盾动作把第一轮吞掉；默认 1000ms。没对调时只执行一次。",
+                    "两个按钮已对调（通常是开大后）时，按 3 会先等这段时间让卸盾动作结束，再执行唯一一轮；" +
+                        "默认 1000ms。不会补第二轮，避免近战位被点第二次又切回主武器 1。没对调时立即执行。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
