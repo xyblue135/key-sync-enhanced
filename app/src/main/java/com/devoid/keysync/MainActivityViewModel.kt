@@ -116,6 +116,7 @@ class MainActivityViewModel @Inject constructor(
     val discardDragSpeed: StateFlow<Float> = stateManager.discardDragSpeed
     /** M 键开关地图并切换鼠标（全局，默认开启）。 */
     val mapMouseToggleEnabled: StateFlow<Boolean> = stateManager.mapMouseToggleEnabled
+    val fCursorClickEnabled: StateFlow<Boolean> = stateManager.fCursorClickEnabled
     /** ESC / Tab 关闭界面后自动回射击模式（全局，默认开启）。 */
     val tabEscAimEnabled: StateFlow<Boolean> = stateManager.tabEscAimEnabled
 
@@ -242,6 +243,7 @@ class MainActivityViewModel @Inject constructor(
     fun setDiscardDragEnabled(enabled: Boolean) = stateManager.setDiscardDragEnabled(enabled)
     fun setDiscardDragSpeed(speed: Float) = stateManager.setDiscardDragSpeed(speed)
     fun setMapMouseToggleEnabled(enabled: Boolean) = stateManager.setMapMouseToggleEnabled(enabled)
+    fun setFCursorClickEnabled(enabled: Boolean) = stateManager.setFCursorClickEnabled(enabled)
     fun setTabEscAimEnabled(enabled: Boolean) = stateManager.setTabEscAimEnabled(enabled)
 
     /**

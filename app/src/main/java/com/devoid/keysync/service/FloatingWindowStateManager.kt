@@ -213,6 +213,10 @@ class FloatingWindowStateManager @Inject constructor(
     private var discardDragJob: Job? = null
     /** M 键开关地图并切换鼠标（全局），默认开启。 */
     val mapMouseToggleEnabled = MutableStateFlow(true)
+    /** F 交互后左键唤出光标（全局，高级功能），默认关闭。 */
+    val fCursorClickEnabled = MutableStateFlow(false)
+    /** F 交互的时间戳；左键在 400ms 内命中后立即清空，保证一轮只触发一次。 */
+    private var fInteractArmedAt = 0L
     /** M 键当前是否处于「地图已打开」状态；重启服务后归零。 */
     private var mapToggleOpen = false
     /** ESC / Tab 关闭界面后自动回瞄准（全局），默认开启。 */
@@ -344,6 +348,8 @@ class FloatingWindowStateManager @Inject constructor(
                     .coerceIn(MIN_DISCARD_DRAG_SPEED, MAX_DISCARD_DRAG_SPEED)
             mapMouseToggleEnabled.value =
                 dataStoreManager.getBoolean(DataStoreManager.MAP_MOUSE_TOGGLE_ENABLED).first() ?: true
+            fCursorClickEnabled.value =
+                dataStoreManager.getBoolean(DataStoreManager.F_CURSOR_CLICK_ENABLED).first() ?: false
             tabEscAimEnabled.value =
                 dataStoreManager.getBoolean(DataStoreManager.TAB_ESC_AIM_ENABLED).first() ?: true
             // 两条 init 协程的完成顺序不确定：若预设先加载完，这里要把刚读到的拟人化设置补应用一次。
@@ -500,6 +506,8 @@ class FloatingWindowStateManager @Inject constructor(
         const val legacyLayoutScreenHeight = 1200
         /** 鼠标断点阈值默认值；用户可在设置页的高级项里调整（全局）。 */
         const val DEFAULT_MOUSE_JUMP_THRESHOLD_PX = 240
+        /** F 交互后允许左键唤出光标的窗口（ms）。 */
+        const val F_CURSOR_CLICK_WINDOW_MS = 400L
         /** Alt+D 拖拽：单程分几步、每步间隔（ms）；12 步 × 14ms ≈ 170ms。 */
         const val DRAG_STEPS = 12
         const val DRAG_STEP_MS = 14L
@@ -812,6 +820,9 @@ class FloatingWindowStateManager @Inject constructor(
 
     private var tapSequence234Job: Job? = null
     private var keyMacroJob: Job? = null
+    private var quickMeleeJob: Job? = null
+    /** 快速近战的触发键是否仍被按住；用它控制循环，避免依赖被吞掉的按键状态。 */
+    private var quickMeleeHeld = false
 
     /**
      * 按 3 切近战：依次点击 2 → 4 → 3。
@@ -872,6 +883,60 @@ class FloatingWindowStateManager @Inject constructor(
      * 相当于游戏里最后真的按了一次那个键（快速切枪宏默认以 1 结尾）。
      * 每一步在对应按钮的当前位置按下 holdMs 再抬起，然后等待该步的延迟。
      */
+    /**
+     * 快速近战宏：默认按住 Alt+5 触发。
+     *
+     * 每一轮：点一次「快速近战」绑定的映射位置 → 等 delayMs（默认 80ms）→ 点一次 1 号键。
+     * 按住触发键会一直循环同一套动作，松开立刻停止；键盘长按产生的重复 DOWN 直接被吞掉。
+     * 整个循环只有一个协程和两条时间戳/状态，不会注册额外监听，所以不会因为长按或狂按卡顿。
+     */
+    private fun runQuickMeleeMacro(keyEvent: KeyEvent): Boolean {
+        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
+        val macro = profile.quickMeleeMacro
+        if (!macro.enabled || keyEvent.keyCode != macro.triggerKeyCode) return false
+        // 松开必须能停：Alt 可能比 5 先松开，所以 UP 不校验 Alt 状态。
+        if (keyEvent.action == KeyEvent.ACTION_UP) {
+            val wasActive = quickMeleeJob?.isActive == true || quickMeleeHeld
+            quickMeleeHeld = false
+            quickMeleeJob?.cancel()
+            quickMeleeJob = null
+            return wasActive
+        }
+        if (keyEvent.action != KeyEvent.ACTION_DOWN) return false
+        // 循环期间连重复 DOWN 也一起吞掉，避免触发键本体漏到游戏里。
+        if (quickMeleeHeld || quickMeleeJob?.isActive == true) return true
+        if (macro.requireAlt && !keyEvent.isAltPressed) return false
+        quickMeleeHeld = true
+        val startedAt = SystemClock.uptimeMillis()
+        quickMeleeJob = scope.launch {
+            try {
+                while (quickMeleeHeld && !_isEditMode.value && !_mappingPaused.value) {
+                    // 兜底：鼠标固件万一不发 UP，最长循环 60 秒后自动停，避免无限点击。
+                    if (SystemClock.uptimeMillis() - startedAt > 60_000L) break
+                    val items = _containerItems.value
+                    val meleeItem = items.firstOrNull { it.boundKeyCode() == macro.meleeKeyCode } ?: break
+                    val slotOne = items.firstOrNull { it.boundKeyCode() == KeyEvent.KEYCODE_1 } ?: break
+                    val meleeCenter = meleeItem.touchCenter ?: break
+                    val oneCenter = slotOne.touchCenter ?: break
+                    tapSeqCenter(meleeCenter)
+                    delay(macro.delayMs.coerceIn(20, 1000).toLong())
+                    tapSeqCenter(oneCenter)
+                }
+            } finally {
+                quickMeleeHeld = false
+            }
+        }
+        return true
+    }
+
+    /** 在指定屏幕坐标注入一次短按（5ms），供循环类宏复用。 */
+    private suspend fun tapSeqCenter(center: androidx.compose.ui.geometry.Offset) {
+        val pointer = eventHandler.allocateSeqPointer()
+        eventHandler.pressSeqPointer(pointer, center)
+        delay(5)
+        eventHandler.releaseSeqPointer(pointer)
+    }
+
     private fun runKeyMacro(keyEvent: KeyEvent): Boolean {
         val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
         val macros = listOf(
@@ -1200,6 +1265,13 @@ class FloatingWindowStateManager @Inject constructor(
         scope.launch { dataStoreManager.save(DataStoreManager.MAP_MOUSE_TOGGLE_ENABLED, enabled) }
     }
 
+    /** 全局开关：F 交互后 400ms 内首次左键唤出光标（默认关闭）。 */
+    fun setFCursorClickEnabled(enabled: Boolean) {
+        fCursorClickEnabled.value = enabled
+        if (!enabled) fInteractArmedAt = 0L
+        scope.launch { dataStoreManager.save(DataStoreManager.F_CURSOR_CLICK_ENABLED, enabled) }
+    }
+
     /** 全局开关：物理 ESC / Tab 关闭界面后自动回射击模式（默认开启）。 */
     fun setTabEscAimEnabled(enabled: Boolean) {
         tabEscAimEnabled.value = enabled
@@ -1231,10 +1303,12 @@ class FloatingWindowStateManager @Inject constructor(
     private fun handleMapMouseToggle(): Boolean {
         if (!mapToggleOpen) {
             mapToggleOpen = true
+            fInteractArmedAt = 0L
             eventHandler.setShootingModeEnabled(false)
             return false
         }
         mapToggleOpen = false
+        fInteractArmedAt = 0L
         val esc = _containerItems.value.firstOrNull {
             it.boundKeyCode() == KeyEvent.KEYCODE_ESCAPE
         }
@@ -1823,6 +1897,13 @@ class FloatingWindowStateManager @Inject constructor(
         ) {
             if (handleMapMouseToggle()) return true
         }
+        // F 交互后左键唤出光标：只记时间戳，不注册监听；左键命中后立即清空。
+        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
+            keyEvent.keyCode == KeyEvent.KEYCODE_F && fCursorClickEnabled.value &&
+            isShootingMode.value
+        ) {
+            fInteractArmedAt = SystemClock.uptimeMillis()
+        }
         // 光标模式（鼠标已唤起）下按 F：在光标位置快速点两下，方便拾取/打开物品。
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
             keyEvent.keyCode == KeyEvent.KEYCODE_F &&
@@ -1836,12 +1917,15 @@ class FloatingWindowStateManager @Inject constructor(
             keyEvent.keyCode == eventHandler.shootingModeKeyCode
         ) {
             aimReturnJob?.cancel()
+            fInteractArmedAt = 0L
         }
         // 物理 ESC / Tab：关闭背包、地图后延迟回瞄准；不吞按键，游戏照常收到。
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
             tabEscAimEnabled.value &&
             (keyEvent.keyCode == KeyEvent.KEYCODE_ESCAPE || keyEvent.keyCode == KeyEvent.KEYCODE_TAB)
         ) {
+            // 用户已主动回射击模式，F 的唤出光标窗口立刻作废。
+            fInteractArmedAt = 0L
             scheduleAimReturn()
         }
         _lastInputLabel.value = keyEvent.keyCode.keyCodeToString() +
@@ -1857,6 +1941,8 @@ class FloatingWindowStateManager @Inject constructor(
             // 蹲/趴与 Shift 的协调：只记录/补点姿态，原按键照常透传。
             trackStanceAssist(keyEvent.keyCode)
         }
+        // 快速近战宏：默认 Alt+5，按住循环「近战键 → 延迟 → 1 号键」，松开立即停。
+        if (runQuickMeleeMacro(keyEvent)) return true
         // 快速切枪宏：默认 Alt+9，命中时吞掉触发键，由宏自己注入原始触点。
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
             runKeyMacro(keyEvent)
@@ -1996,6 +2082,16 @@ class FloatingWindowStateManager @Inject constructor(
         mouseButtonKeyCode(button)?.let { key ->
             _pressedKeys.value = if (pressed) _pressedKeys.value + key else _pressedKeys.value - key
             _lastInputLabel.value = key.keyCodeToString() + if (pressed) " 按下" else " 松开"
+        }
+        // F 交互后 400ms 内首次左键：先切出光标，再转发这一下左键，
+        // 让它按「光标模式」在光标位置点击；触发后立刻清空时间戳，一轮只生效一次。
+        if (pressed && button == MotionEvent.BUTTON_PRIMARY && fCursorClickEnabled.value &&
+            isShootingMode.value && fInteractArmedAt > 0L &&
+            SystemClock.uptimeMillis() - fInteractArmedAt <= F_CURSOR_CLICK_WINDOW_MS
+        ) {
+            fInteractArmedAt = 0L
+            mouseCursorSeen = true
+            eventHandler.setShootingModeEnabled(false)
         }
         eventHandler.handleMouseButton(button, pressed)
     }

@@ -231,6 +231,7 @@ class MainActivity : ComponentActivity() {
                         val discardDragEnabled by viewModel.discardDragEnabled.collectAsStateWithLifecycle()
                         val discardDragSpeed by viewModel.discardDragSpeed.collectAsStateWithLifecycle()
                         val mapMouseToggleEnabled by viewModel.mapMouseToggleEnabled.collectAsStateWithLifecycle()
+                        val fCursorClickEnabled by viewModel.fCursorClickEnabled.collectAsStateWithLifecycle()
                         val tabEscAimEnabled by viewModel.tabEscAimEnabled.collectAsStateWithLifecycle()
                         // Collected so a change applied outside the save button
                         // (the profile-switch master switch) is reflected
@@ -281,6 +282,8 @@ class MainActivity : ComponentActivity() {
                             onSetDiscardDragSpeed = viewModel::setDiscardDragSpeed,
                             mapMouseToggleEnabled = mapMouseToggleEnabled,
                             onSetMapMouseToggleEnabled = viewModel::setMapMouseToggleEnabled,
+                            fCursorClickEnabled = fCursorClickEnabled,
+                            onSetFCursorClickEnabled = viewModel::setFCursorClickEnabled,
                             tabEscAimEnabled = tabEscAimEnabled,
                             onSetTabEscAimEnabled = viewModel::setTabEscAimEnabled,
                             onStopOverlay = {

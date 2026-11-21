@@ -105,6 +105,8 @@ class DataStoreManager internal constructor(
         val DISCARD_DRAG_SPEED = floatPreferencesKey("discard_drag_speed")
         /** M 键开关地图并切换鼠标（全局），默认开启。 */
         val MAP_MOUSE_TOGGLE_ENABLED = booleanPreferencesKey("map_mouse_toggle_enabled")
+        /** F 交互后左键唤出光标（全局），默认关闭。 */
+        val F_CURSOR_CLICK_ENABLED = booleanPreferencesKey("f_cursor_click_enabled")
         /** 物理 ESC / Tab 关闭界面后自动回射击模式（全局），默认开启。 */
         val TAB_ESC_AIM_ENABLED = booleanPreferencesKey("tab_esc_aim_enabled")
 

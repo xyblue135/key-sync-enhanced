@@ -115,6 +115,21 @@ fun defaultScallopDashMacro(): KeySeqMacro = KeySeqMacro(
     steps = defaultScallopDashSteps(),
 )
 
+/**
+ * 快速近战宏：按住触发键（默认 Alt+5）循环执行「点一次快速近战键 → 延迟 → 点一次 1 号键」。
+ * 松开触发键立即停止；只使用已有映射点位，不新增额外监听。
+ */
+@Serializable
+data class QuickMeleeMacro(
+    val enabled: Boolean = true,
+    val triggerKeyCode: Int = KeyEvent.KEYCODE_5,
+    val requireAlt: Boolean = true,
+    /** 游戏里「快速近战」绑定的物理键，宏会点它对应的映射位置。 */
+    val meleeKeyCode: Int = KeyEvent.KEYCODE_V,
+    /** 近战键与 1 号键之间的延迟（ms），默认 80。 */
+    val delayMs: Int = 80,
+)
+
 private val namedKeys = mapOf(
     "ESC" to KeyEvent.KEYCODE_ESCAPE,
     "ESCAPE" to KeyEvent.KEYCODE_ESCAPE,

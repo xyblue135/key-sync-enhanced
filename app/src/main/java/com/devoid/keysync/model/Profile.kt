@@ -30,6 +30,8 @@ data class Profile(
     val scallopMacro: KeySeqMacro = defaultScallopMacro(),
     /** 扇贝盾冲刺宏：默认 Alt+6。 */
     val scallopDashMacro: KeySeqMacro = defaultScallopDashMacro(),
+    /** 快速近战宏：默认 Alt+5，点一次近战键 → 延迟 → 点一次 1；按住触发键循环。 */
+    val quickMeleeMacro: QuickMeleeMacro = QuickMeleeMacro(),
     /** Tab 防连按：开启后重复 Tab 在间隔内直接吞掉，避免手速过快时多余的 Tab 落到游戏里。默认开启。 */
     val tabDebounceEnabled: Boolean = true,
     /** Tab 防连按间隔（ms）：两次有效 Tab 按下之间的最小间隔。默认 1000。 */

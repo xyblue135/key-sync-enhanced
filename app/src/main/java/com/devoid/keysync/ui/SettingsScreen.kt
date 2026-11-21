@@ -82,6 +82,7 @@ import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.ProfileAssist
+import com.devoid.keysync.model.QuickMeleeMacro
 import com.devoid.keysync.model.assist
 import com.devoid.keysync.model.defaultQuickSwapSteps
 import com.devoid.keysync.model.defaultScallopDashSteps
@@ -137,6 +138,8 @@ fun SettingsScreen(
     onSetDiscardDragSpeed: (Float) -> Unit = {},
     mapMouseToggleEnabled: Boolean = true,
     onSetMapMouseToggleEnabled: (Boolean) -> Unit = {},
+    fCursorClickEnabled: Boolean = false,
+    onSetFCursorClickEnabled: (Boolean) -> Unit = {},
     tabEscAimEnabled: Boolean = true,
     onSetTabEscAimEnabled: (Boolean) -> Unit = {},
     onStopOverlay: () -> Unit = {},
@@ -606,6 +609,26 @@ fun SettingsScreen(
                         Switch(
                             checked = mapMouseToggleEnabled,
                             onCheckedChange = onSetMapMouseToggleEnabled
+                        )
+                    }
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "F 交互后左键唤出光标",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                "射击模式下按 F 后的 400ms 内，第一次点鼠标左键会直接切出光标，并把这一下变成" +
+                                    "光标位置点击（适合开箱子/拾取）；每轮只触发一次，狂按 F 不会叠加。按 Tab/ESC " +
+                                    "回射击模式后立即失效。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = fCursorClickEnabled,
+                            onCheckedChange = onSetFCursorClickEnabled
                         )
                     }
                     HorizontalDivider()
@@ -1239,6 +1262,10 @@ private fun ProfileAssistCard(
                 macro = draft.scallopDashMacro,
                 defaultSteps = { defaultScallopDashSteps() },
                 onChange = { onDraftChange(draft.copy(scallopDashMacro = it)) }
+            )
+            QuickMeleeSection(
+                macro = draft.quickMeleeMacro,
+                onChange = { onDraftChange(draft.copy(quickMeleeMacro = it)) }
             )
             AssistSwitchRow(
                 title = "Shift 取消蹲/趴（C/Z/Ctrl）",
@@ -2130,6 +2157,129 @@ private fun KeyMacroSection(
             }
         )
     }
+}
+
+/** 快速近战：按住触发键循环「近战键 → 延迟 → 1 号键」。 */
+@Composable
+private fun QuickMeleeSection(
+    macro: QuickMeleeMacro,
+    onChange: (QuickMeleeMacro) -> Unit,
+) {
+    AssistSwitchRow(
+        title = "快速近战（默认按住 Alt+5）",
+        desc = "按住触发键时循环执行：点一次「快速近战」映射位置 → 等设定延迟 → 点一次 1 号键；" +
+            "松开立即停止。键盘长按的重复事件会被吞掉，不会重复启动，也不会额外注册监听。" +
+            "需要先在布局里放好快速近战键和 1 号键的映射。",
+        checked = macro.enabled,
+        onToggle = { onChange(macro.copy(enabled = !macro.enabled)) }
+    )
+    if (!macro.enabled) return
+    var editTrigger by remember { mutableStateOf(false) }
+    var editMelee by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("触发键（按住循环）", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                (if (macro.requireAlt) "Alt + " else "") + keyName(macro.triggerKeyCode),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        TextButton(onClick = { editTrigger = true }) { Text("修改") }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("快速近战键", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                keyName(macro.meleeKeyCode) + "（点它对应的映射位置）",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        TextButton(onClick = { editMelee = true }) { Text("修改") }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "近战键与 1 号键之间的延迟",
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Text("${macro.delayMs} ms", style = MaterialTheme.typography.bodyMedium)
+    }
+    Slider(
+        value = macro.delayMs.toFloat().coerceIn(20f, 1000f),
+        valueRange = 20f..1000f,
+        steps = 48,
+        onValueChange = { onChange(macro.copy(delayMs = it.roundToInt())) }
+    )
+    if (editTrigger) {
+        KeyNameDialog(
+            title = "快速近战触发键",
+            initialKeyCode = macro.triggerKeyCode,
+            onDismiss = { editTrigger = false },
+            onConfirm = {
+                onChange(macro.copy(triggerKeyCode = it))
+                editTrigger = false
+            }
+        )
+    }
+    if (editMelee) {
+        KeyNameDialog(
+            title = "快速近战键",
+            initialKeyCode = macro.meleeKeyCode,
+            onDismiss = { editMelee = false },
+            onConfirm = {
+                onChange(macro.copy(meleeKeyCode = it))
+                editMelee = false
+            }
+        )
+    }
+}
+
+/** 输入一个键名并解析成 KeyCode；无法识别时就地报错。 */
+@Composable
+private fun KeyNameDialog(
+    title: String,
+    initialKeyCode: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit,
+) {
+    var name by remember { mutableStateOf(keyName(initialKeyCode)) }
+    var error by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = {
+                        name = it
+                        error = false
+                    },
+                    label = { Text("按键名，如 5、V、F5（1–9 指主键盘左侧数字行）") },
+                    singleLine = true,
+                    isError = error
+                )
+                if (error) {
+                    Text(
+                        "无法识别这个键名",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val code = keyCodeForName(name)
+                if (code == null) error = true else onConfirm(code)
+            }) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
 }
 
 
