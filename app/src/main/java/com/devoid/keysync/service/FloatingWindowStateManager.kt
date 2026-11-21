@@ -822,8 +822,7 @@ class FloatingWindowStateManager @Inject constructor(
      * 点空位不会切走当前武器，没有副作用——这是固定顺序也能通用的前提。
      *
      * 真正要避免的是「近战位被点第二次」：刀已经在手上时再点同一格，游戏会
-     * 收回刀、切回主武器 1。因此一轮里近战位只出现一次；开大/已对调时也只跑
-     * 一轮（先等卸盾动作结束），绝不补第二轮。
+     * 收回刀、切回主武器 1。因此一轮里近战位只出现一次，绝不补第二轮。
      *
      * 另外游戏内需要关闭「快速切枪」：它会在切换后自动切回主武器，
      * 破坏最后落在近战上的结果。
@@ -842,15 +841,8 @@ class FloatingWindowStateManager @Inject constructor(
         if (tapSequence234Job?.isActive == true) return true
         // 间隔由预设决定（5–1000ms），按住时长取间隔的一半左右，整体节奏随间隔缩放。
         val baseGap = profile.tapSequence234GapMs.coerceIn(5, 1000)
-        // 两个按钮处于对调状态时（通常是开大后），3 会先触发卸盾动作；等动作结束再注入。
-        val swapDelayMs = if (profile.quickSwapLatched) {
-            profile.meleeSwapDelayMs.coerceIn(0, 3000).toLong()
-        } else {
-            0L
-        }
         tapSequence234Job = scope.launch {
-            // 已对调（开大后）先等卸盾动作结束；只跑一轮，避免近战位被点第二次。
-            if (swapDelayMs > 0) delay(swapDelayMs)
+            // 只跑一轮：开大/已对调时也不补第二轮，避免近战位被点第二次又切回主武器 1。
             injectMeleeSequence(targets, baseGap)
         }
         return true
@@ -862,7 +854,7 @@ class FloatingWindowStateManager @Inject constructor(
             val now = SystemClock.uptimeMillis()
             eventHandler.handleKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
             val hold = (baseGap / 2 + kotlin.random.Random.nextLong(-5L, 6L))
-                .coerceIn(15L, 80L)
+                .coerceIn(5L, 80L)
             delay(hold)
             eventHandler.handleKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
             // 间隔本身也加 ±10% 抖动，避免固定节拍。

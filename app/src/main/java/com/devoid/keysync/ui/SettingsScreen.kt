@@ -1031,7 +1031,7 @@ private fun ProfileAssistCard(
                     "双枪+手枪时在 3，三种布局的近战位在这个固定顺序里都只出现一次，所以最终一定停在近战；" +
                     "点空位不会切走，没有副作用。真正的问题是近战位被点第二次——刀已经在手上时再点同一格，" +
                     "会收回刀、切回主武器 1，所以每轮只点一次。另外请关闭游戏内的「快速切枪」，否则会自动切回主武器。" +
-                    "间隔建议 10–60ms，太小可能被游戏合并；2/3/4 缺任意一个按钮时不接管。",
+                    "间隔默认 5ms，越小越跟手；被游戏合并或吞掉时可调到 10–60ms。2/3/4 缺任意一个按钮时不接管。",
                 checked = draft.tapSequence234Enabled,
                 onToggle = {
                     onDraftChange(draft.copy(tapSequence234Enabled = !draft.tapSequence234Enabled))
@@ -1052,28 +1052,6 @@ private fun ProfileAssistCard(
                     steps = 198,
                     onValueChange = {
                         onDraftChange(draft.copy(tapSequence234GapMs = it.roundToInt()))
-                    }
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "开大/已对调时延迟",
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Text("${draft.meleeSwapDelayMs} ms", style = MaterialTheme.typography.bodyMedium)
-                }
-                Text(
-                    "两个按钮已对调（通常是开大后）时，按 3 会先等这段时间让卸盾动作结束，再执行唯一一轮；" +
-                        "默认 1000ms。不会补第二轮，避免近战位被点第二次又切回主武器 1。没对调时立即执行。",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Slider(
-                    value = draft.meleeSwapDelayMs.toFloat().coerceIn(0f, 3000f),
-                    valueRange = 0f..3000f,
-                    steps = 29,
-                    onValueChange = {
-                        onDraftChange(draft.copy(meleeSwapDelayMs = it.roundToInt()))
                     }
                 )
             }

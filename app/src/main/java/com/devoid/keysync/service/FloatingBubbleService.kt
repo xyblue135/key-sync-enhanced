@@ -523,6 +523,11 @@ class FloatingBubbleService : Service() {
             // reintroduces the same unreachable strip on the cutout side.
             baseLP.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            // 明确不拟合任何系统栏 inset。否则窗口在某些启动时序下（例如刚装完更新、
+            // 状态栏还显示时创建）会被整体下移一个状态栏高度，看起来就是「布局往下偏」；
+            // 重启后状态栏已隐藏、窗口从 0 开始，所以重启又能恢复。
+            baseLP.fitInsetsTypes = 0
+            baseLP.fitInsetsSides = 0
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             baseLP.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
