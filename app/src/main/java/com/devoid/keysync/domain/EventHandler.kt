@@ -217,6 +217,9 @@ class EventHandler(
     /** Shift 是否取消我们自己开启的静步；由当前预设的按键辅助开关控制。 */
     var shiftCancelWalkEnabled: Boolean = true
 
+    /** 进入光标模式时光标的落点（悬浮层坐标）；null = 回退到准心按钮位置。 */
+    var cursorSpawnPosition: Offset? = null
+
     /* ---- 地图放大手势（M 开图后双指内缩）用到的底层触点操作 ---- */
 
     fun pinchDown(pointerId: Int, position: Offset) {
@@ -1209,7 +1212,9 @@ class EventHandler(
             // 退出射击模式时释放所有鼠标键对应的触点。否则「按住左键时切出鼠标」
             // 会让开火触点一直保持按下，表现为切出后仍在持续开火。
             releaseHeldMouseMappings()
-            val center = clampAimToBounds(keyMap[shootingModeKeyCode]?.position ?: aimCenter)
+            // 光标落点由状态管理器同步（缺省为屏幕中心）；这里保留准心兜底以防未初始化。
+            val spawn = cursorSpawnPosition ?: keyMap[shootingModeKeyCode]?.position ?: aimCenter
+            val center = clampAimToBounds(spawn)
             mousePointerPosition = center
             onCursorRecenter?.invoke(center)
         }

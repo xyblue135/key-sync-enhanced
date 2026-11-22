@@ -47,6 +47,9 @@ data class Profile(
     /** 拖拽丢弃落点（悬浮层坐标，竖条中心）。null = 尚未放置。 */
     val discardX: Float? = null,
     val discardY: Float? = null,
+    /** 进入光标模式时光标出现的位置（悬浮层坐标）。null = 使用屏幕中心。 */
+    val cursorSpawnX: Float? = null,
+    val cursorSpawnY: Float? = null,
     /** F 光标滚轮操控：左侧滚动锚点（悬浮层坐标）。null = 尚未放置。 */
     val scrollLeftX: Float? = null,
     val scrollLeftY: Float? = null,

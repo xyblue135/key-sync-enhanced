@@ -757,6 +757,9 @@ class FloatingBubbleService : Service() {
                                 if (x != null && y != null) androidx.compose.ui.geometry.Offset(x, y) else null
                             },
                             onMoveDiscardPoint = { stateManager.get().moveDiscardPoint(it) },
+                            cursorSpawn = stateManager.get().cursorSpawnPoint(),
+                            onMoveCursorSpawn = { stateManager.get().moveCursorSpawn(it) },
+                            onResetCursorSpawn = { stateManager.get().resetCursorSpawn() },
                             advancedLayerActive = advancedLayerActive,
                             // 滚轮操控已改为「光标位置全屏生效」，不再使用左右锚点。
                             showKeys = keysLayerVisible,

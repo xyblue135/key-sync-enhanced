@@ -470,7 +470,7 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                text = "按右侧小键盘 Enter 循环：按键层 → 高级层（丢弃点）→ 全部隐藏 → 按键层，" +
+                                text = "按右侧小键盘 Enter 循环：按键层 → 高级层（光标落点 / 丢弃点）→ 全部隐藏 → 按键层，" +
                                     "方便快速检查映射位置。只改悬浮窗显示，不影响注入；默认开启。",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant

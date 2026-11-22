@@ -138,6 +138,10 @@ fun ItemsContainer(
     /** Alt+D 拖拽丢弃的落点（竖条中心）；只在编辑态渲染。 */
     discardPoint: Offset? = null,
     onMoveDiscardPoint: (Offset) -> Unit = {},
+    /** 进入光标模式时光标的落点；编辑态高级层可拖动，拖回中心即恢复默认。 */
+    cursorSpawn: Offset? = null,
+    onMoveCursorSpawn: (Offset) -> Unit = {},
+    onResetCursorSpawn: () -> Unit = {},
     /** 编辑态图层：true = 高级层（丢弃点可拖动，按键层半透明预览）。 */
     advancedLayerActive: Boolean = false,
     /** 运行时是否显示普通按键层（Enter 层级预览用）。 */
@@ -415,6 +419,49 @@ fun ItemsContainer(
                         "丢弃",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        }
+
+        // 光标落点：编辑态高级层可拖动；拖回屏幕中心附近即清除自定义坐标。
+        if (editing || showAdvancedMarkers) {
+            cursorSpawn?.let { point ->
+                val density = LocalDensity.current
+                val markerPx = with(density) { CURSOR_SPAWN_MARKER_DP.dp.toPx() }
+                val snapBackPx = with(density) { CURSOR_SPAWN_SNAP_BACK_DP.dp.toPx() }
+                var pos by remember(point.x, point.y) { mutableStateOf(point) }
+                Box(
+                    modifier = Modifier
+                        .offset {
+                            IntOffset((pos.x - markerPx / 2).toInt(), (pos.y - markerPx / 2).toInt())
+                        }
+                        .size(CURSOR_SPAWN_MARKER_DP.dp)
+                        .alpha(if (!editing) 1f else if (advancedLayerActive) 0.8f else 0.25f)
+                        .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                        .pointerInput(point.x, point.y, advancedLayerActive, editing, viewport) {
+                            if (!editing || !advancedLayerActive) return@pointerInput
+                            detectDragGestures(
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    pos += dragAmount
+                                },
+                                onDragEnd = {
+                                    val center = Offset(viewport.width / 2f, viewport.height / 2f)
+                                    if ((pos - center).getDistance() <= snapBackPx) {
+                                        onResetCursorSpawn()
+                                    } else {
+                                        onMoveCursorSpawn(pos)
+                                    }
+                                },
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "光标",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             }
@@ -1213,6 +1260,9 @@ fun MenuItems(
 /** 丢弃点竖条尺寸：宽:高 ≈ 1:5。 */
 private const val DISCARD_BAR_WIDTH_DP = 36
 private const val DISCARD_BAR_HEIGHT_DP = 180
+/** 光标落点标记尺寸；拖到屏幕中心这么近就视为恢复默认。 */
+private const val CURSOR_SPAWN_MARKER_DP = 56
+private const val CURSOR_SPAWN_SNAP_BACK_DP = 40
 
 @Composable
 private fun SectionHeader(text: String) {

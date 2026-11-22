@@ -809,6 +809,7 @@ class FloatingWindowStateManager @Inject constructor(
             overlayViewport ?: currentScreenSize(), overlayOrigin ?: Offset.Zero)
         eventHandler.shiftCancelWalkEnabled =
             activePlayMode.assists && (activeProfile()?.shiftCancelWalkEnabled ?: true)
+        syncCursorSpawn()
     }
 
     fun updateMacroPoint(macroId: String, stepId: String, x: Float, y: Float) {
@@ -1495,6 +1496,40 @@ class FloatingWindowStateManager @Inject constructor(
             if (it.id == id) it.copy(discardX = position.x, discardY = position.y) else it
         }
         persistActiveProfile()
+    }
+
+    /** 进入光标模式时光标出现的位置；未自定义时回到屏幕中心。 */
+    fun cursorSpawnPoint(): Offset {
+        val profile = activeProfile()
+        val x = profile?.cursorSpawnX
+        val y = profile?.cursorSpawnY
+        if (x != null && y != null) return Offset(x, y)
+        val viewport = overlayViewport ?: currentScreenSize()
+        return Offset(viewport.x / 2f, viewport.y / 2f)
+    }
+
+    /** 拖动「光标落点」：写入当前预设并立即生效。 */
+    fun moveCursorSpawn(position: Offset) {
+        val id = _activeProfileId.value ?: return
+        _profiles.value = _profiles.value.map {
+            if (it.id == id) it.copy(cursorSpawnX = position.x, cursorSpawnY = position.y) else it
+        }
+        syncCursorSpawn()
+        persistActiveProfile()
+    }
+
+    /** 把「光标落点」恢复为屏幕中心（清掉自定义坐标）。 */
+    fun resetCursorSpawn() {
+        val id = _activeProfileId.value ?: return
+        _profiles.value = _profiles.value.map {
+            if (it.id == id) it.copy(cursorSpawnX = null, cursorSpawnY = null) else it
+        }
+        syncCursorSpawn()
+        persistActiveProfile()
+    }
+
+    private fun syncCursorSpawn() {
+        eventHandler.cursorSpawnPosition = cursorSpawnPoint()
     }
 
     /* ---------------- F 光标滚轮操控 ---------------- */
