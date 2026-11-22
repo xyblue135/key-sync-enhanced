@@ -41,8 +41,8 @@ data class KeySeqMacro(
     val triggerKeyCode: Int = KeyEvent.KEYCODE_9,
     /** 是否必须按住 Alt 才触发。 */
     val requireAlt: Boolean = true,
-    /** TAP 步骤的按住时长（ms），默认 15；DOWN/UP 不受影响。 */
-    val holdMs: Int = 15,
+    /** TAP 步骤的按住时长（ms），默认 10；每个宏可单独调整，DOWN/UP 不受影响。 */
+    val holdMs: Int = 10,
     /** 按顺序执行的步骤，最多 128 步。 */
     val steps: List<KeySeqStep> = defaultQuickSwapSteps(),
 )
@@ -105,13 +105,13 @@ fun defaultShieldMacro(): KeySeqMacro = KeySeqMacro(
 
 fun defaultScallopMacro(): KeySeqMacro = KeySeqMacro(
     triggerKeyCode = KeyEvent.KEYCODE_7,
-    holdMs = 5,
+    holdMs = 10,
     steps = defaultScallopSteps(),
 )
 
 fun defaultScallopDashMacro(): KeySeqMacro = KeySeqMacro(
     triggerKeyCode = KeyEvent.KEYCODE_6,
-    holdMs = 5,
+    holdMs = 10,
     steps = defaultScallopDashSteps(),
 )
 

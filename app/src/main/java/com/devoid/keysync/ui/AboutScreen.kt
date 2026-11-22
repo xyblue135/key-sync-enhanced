@@ -132,7 +132,7 @@ fun AboutScreen(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        "akamunan@yahoo.com",
+                        "xyblue135@gmail.com",
                         modifier = Modifier
                             .clickable { }
                             .padding(top = 8.dp),

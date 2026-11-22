@@ -138,12 +138,12 @@ fun ItemsContainer(
     /** Alt+D 拖拽丢弃的落点（竖条中心）；只在编辑态渲染。 */
     discardPoint: Offset? = null,
     onMoveDiscardPoint: (Offset) -> Unit = {},
-    /** 编辑态图层：true = 高级层（丢弃点 + 左右滚动锚点可拖动，按键层半透明预览）。 */
+    /** 编辑态图层：true = 高级层（丢弃点可拖动，按键层半透明预览）。 */
     advancedLayerActive: Boolean = false,
-    /** F 光标滚轮操控的左/右滚动锚点（悬浮层坐标）。 */
-    scrollLeftPoint: Offset? = null,
-    scrollRightPoint: Offset? = null,
-    onMoveScrollAnchor: (Boolean, Offset) -> Unit = { _, _ -> },
+    /** 运行时是否显示普通按键层（Enter 层级预览用）。 */
+    showKeys: Boolean = true,
+    /** 运行时是否显示高级层标记（丢弃点），非编辑态只读。 */
+    showAdvancedMarkers: Boolean = false,
 ) {
     // When the user taps the gear icon on a key, this is set so we can
     // pop up a key-capture dialog bound to that specific item.
@@ -183,6 +183,7 @@ fun ItemsContainer(
             .fillMaxSize()
             .onSizeChanged { viewport = Size(it.width.toFloat(), it.height.toFloat()) }
     ) {
+        if (showKeys) {
         containerItems.forEach { item ->
             key(item.id) {
 
@@ -341,9 +342,10 @@ fun ItemsContainer(
                 }
             }
         }
+        }
 
         // 编辑态显示连按落点：虚线小圈直接拖动，松手才写回预设。
-        if (editing) {
+        if (editing && showKeys) {
             extraTapPoints.forEachIndexed { index, point ->
                 key("extra-${point.keyCode}-$index") {
                     var pos by remember(point.x, point.y) { mutableStateOf(Offset(point.x, point.y)) }
@@ -380,8 +382,9 @@ fun ItemsContainer(
             }
         }
 
-        // 编辑态显示拖拽丢弃点：竖条（约 1:5），拖动定位置，非编辑态不渲染。
-        if (editing) {
+        // 编辑态显示拖拽丢弃点：竖条（约 1:5），拖动定位置；
+        // 运行时的 Enter 层级预览也会渲染，但不可拖动。
+        if (editing || showAdvancedMarkers) {
             val density = LocalDensity.current
             val discardBarWidthPx = with(density) { DISCARD_BAR_WIDTH_DP.dp.toPx() }
             val discardBarHeightPx = with(density) { DISCARD_BAR_HEIGHT_DP.dp.toPx() }
@@ -394,10 +397,10 @@ fun ItemsContainer(
                                 (pos.y - discardBarHeightPx / 2).toInt())
                         }
                         .size(DISCARD_BAR_WIDTH_DP.dp, DISCARD_BAR_HEIGHT_DP.dp)
-                        .alpha(if (advancedLayerActive) 0.8f else 0.25f)
+                        .alpha(if (!editing) 1f else if (advancedLayerActive) 0.8f else 0.25f)
                         .border(1.5.dp, MaterialTheme.colorScheme.error, RoundedCornerShape(6.dp))
-                        .pointerInput(point.x, point.y, advancedLayerActive) {
-                            if (!advancedLayerActive) return@pointerInput
+                        .pointerInput(point.x, point.y, advancedLayerActive, editing) {
+                            if (!editing || !advancedLayerActive) return@pointerInput
                             detectDragGestures(
                                 onDrag = { change, dragAmount ->
                                     change.consume()
@@ -413,43 +416,6 @@ fun ItemsContainer(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error
                     )
-                }
-            }
-
-            // F 光标滚轮操控：左右两条滚动条的短滑锚点。
-            listOf(
-                Triple(true, scrollLeftPoint, "左滚"),
-                Triple(false, scrollRightPoint, "右滚"),
-            ).forEach { (isLeft, point, label) ->
-                point?.let { anchor ->
-                    var pos by remember(anchor.x, anchor.y) { mutableStateOf(anchor) }
-                    val radiusPx = with(density) { 16.dp.toPx() }
-                    Box(
-                        modifier = Modifier
-                            .offset {
-                                IntOffset((pos.x - radiusPx).toInt(), (pos.y - radiusPx).toInt())
-                            }
-                            .size(32.dp)
-                            .alpha(if (advancedLayerActive) 0.9f else 0.25f)
-                            .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
-                            .pointerInput(anchor.x, anchor.y, advancedLayerActive) {
-                                if (!advancedLayerActive) return@pointerInput
-                                detectDragGestures(
-                                    onDrag = { change, dragAmount ->
-                                        change.consume()
-                                        pos += dragAmount
-                                    },
-                                    onDragEnd = { onMoveScrollAnchor(isLeft, pos) },
-                                )
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            label,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
                 }
             }
         }

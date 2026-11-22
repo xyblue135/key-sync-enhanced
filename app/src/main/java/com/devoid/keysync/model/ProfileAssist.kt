@@ -16,7 +16,7 @@ data class ProfileAssist(
     val scallopMacro: KeySeqMacro = defaultScallopMacro(),
     val scallopDashMacro: KeySeqMacro = defaultScallopDashMacro(),
     val quickMeleeMacro: QuickMeleeMacro = QuickMeleeMacro(),
-    val stanceAssistEnabled: Boolean = true,
+    val shiftCancelWalkEnabled: Boolean = true,
     val macros: List<ClickMacro> = emptyList(),
 )
 
@@ -30,7 +30,7 @@ fun Profile.assist(): ProfileAssist = ProfileAssist(
     scallopMacro = scallopMacro,
     scallopDashMacro = scallopDashMacro,
     quickMeleeMacro = quickMeleeMacro,
-    stanceAssistEnabled = stanceAssistEnabled,
+    shiftCancelWalkEnabled = shiftCancelWalkEnabled,
     macros = macros,
 )
 
@@ -46,7 +46,7 @@ fun Profile.withAssist(assist: ProfileAssist): Profile = copy(
     quickMeleeMacro = assist.quickMeleeMacro.copy(
         delayMs = assist.quickMeleeMacro.delayMs.coerceIn(20, 1000),
     ),
-    stanceAssistEnabled = assist.stanceAssistEnabled,
+    shiftCancelWalkEnabled = assist.shiftCancelWalkEnabled,
     macros = assist.macros,
 )
 

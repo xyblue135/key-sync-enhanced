@@ -219,14 +219,22 @@ class MainActivity : ComponentActivity() {
                         val mouseJumpThresholdPx by viewModel.mouseJumpThresholdPx.collectAsStateWithLifecycle()
                         val mouseModeLatch by viewModel.mouseModeLatch.collectAsStateWithLifecycle()
                         val screenSizeCacheEnabled by viewModel.screenSizeCacheEnabled.collectAsStateWithLifecycle()
+                        val mouseGuardEnabled by viewModel.mouseGuardEnabled.collectAsStateWithLifecycle()
                         val discardDragEnabled by viewModel.discardDragEnabled.collectAsStateWithLifecycle()
                         val discardDragSpeed by viewModel.discardDragSpeed.collectAsStateWithLifecycle()
                         val mapMouseToggleEnabled by viewModel.mapMouseToggleEnabled.collectAsStateWithLifecycle()
+                        val mapZoomDelayMs by viewModel.mapZoomDelayMs.collectAsStateWithLifecycle()
                         val fCursorClickEnabled by viewModel.fCursorClickEnabled.collectAsStateWithLifecycle()
+                        val fCursorClickWindowMs by viewModel.fCursorClickWindowMs.collectAsStateWithLifecycle()
                         val tabEscAimEnabled by viewModel.tabEscAimEnabled.collectAsStateWithLifecycle()
+                        val tabEscAimDelayMs by viewModel.tabEscAimDelayMs.collectAsStateWithLifecycle()
                         val fScrollControlEnabled by viewModel.fScrollControlEnabled.collectAsStateWithLifecycle()
                         val fScrollSwipePx by viewModel.fScrollSwipePx.collectAsStateWithLifecycle()
                         val fScrollInvert by viewModel.fScrollInvert.collectAsStateWithLifecycle()
+                        val fScrollStepDelayMs by viewModel.fScrollStepDelayMs.collectAsStateWithLifecycle()
+                        val playModes by viewModel.playModes.collectAsStateWithLifecycle()
+                        val currentPlayModeIndex by viewModel.currentPlayModeIndex.collectAsStateWithLifecycle()
+                        val enterLayerPreviewEnabled by viewModel.enterLayerPreviewEnabled.collectAsStateWithLifecycle()
                         // Collected so a change applied outside the save button
                         // (the profile-switch master switch) is reflected
                         // instead of being overwritten by a stale newConfig.
@@ -270,22 +278,39 @@ class MainActivity : ComponentActivity() {
                             onSetMouseModeLatch = viewModel::setMouseModeLatch,
                             screenSizeCacheEnabled = screenSizeCacheEnabled,
                             onSetScreenSizeCache = viewModel::setScreenSizeCache,
+                            mouseGuardEnabled = mouseGuardEnabled,
+                            onSetMouseGuardEnabled = viewModel::setMouseGuardEnabled,
                             discardDragEnabled = discardDragEnabled,
                             onSetDiscardDragEnabled = viewModel::setDiscardDragEnabled,
                             discardDragSpeed = discardDragSpeed,
                             onSetDiscardDragSpeed = viewModel::setDiscardDragSpeed,
                             mapMouseToggleEnabled = mapMouseToggleEnabled,
                             onSetMapMouseToggleEnabled = viewModel::setMapMouseToggleEnabled,
+                            mapZoomDelayMs = mapZoomDelayMs,
+                            onSetMapZoomDelayMs = viewModel::setMapZoomDelayMs,
                             fCursorClickEnabled = fCursorClickEnabled,
                             onSetFCursorClickEnabled = viewModel::setFCursorClickEnabled,
+                            fCursorClickWindowMs = fCursorClickWindowMs,
+                            onSetFCursorClickWindowMs = viewModel::setFCursorClickWindowMs,
                             tabEscAimEnabled = tabEscAimEnabled,
                             onSetTabEscAimEnabled = viewModel::setTabEscAimEnabled,
+                            tabEscAimDelayMs = tabEscAimDelayMs,
+                            onSetTabEscAimDelayMs = viewModel::setTabEscAimDelayMs,
                             fScrollControlEnabled = fScrollControlEnabled,
                             onSetFScrollControlEnabled = viewModel::setFScrollControlEnabled,
                             fScrollSwipePx = fScrollSwipePx,
                             onSetFScrollSwipePx = viewModel::setFScrollSwipePx,
                             fScrollInvert = fScrollInvert,
                             onSetFScrollInvert = viewModel::setFScrollInvert,
+                            fScrollStepDelayMs = fScrollStepDelayMs,
+                            onSetFScrollStepDelayMs = viewModel::setFScrollStepDelayMs,
+                            playModes = playModes,
+                            currentPlayModeIndex = currentPlayModeIndex,
+                            onSetCurrentPlayMode = viewModel::setCurrentPlayMode,
+                            onUpdatePlayMode = viewModel::updatePlayMode,
+                            onAddPlayMode = viewModel::addPlayMode,
+                            enterLayerPreviewEnabled = enterLayerPreviewEnabled,
+                            onSetEnterLayerPreviewEnabled = viewModel::setEnterLayerPreviewEnabled,
                             onStopOverlay = {
                                 stopService(
                                     Intent(

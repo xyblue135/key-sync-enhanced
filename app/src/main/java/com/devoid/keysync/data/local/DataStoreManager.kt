@@ -103,18 +103,34 @@ class DataStoreManager internal constructor(
         val DISCARD_DRAG_ENABLED = booleanPreferencesKey("discard_drag_enabled")
         /** Alt+D 拖拽速度倍数（1–10，默认 5 = 原速的 5 倍）。 */
         val DISCARD_DRAG_SPEED = floatPreferencesKey("discard_drag_speed")
+        /** 默认拖拽速度降速一半的一次性迁移标记。 */
+        val DISCARD_SPEED_HALVED = booleanPreferencesKey("discard_speed_halved")
         /** F 光标滚轮操控（全局），默认开启。 */
         val F_SCROLL_CONTROL_ENABLED = booleanPreferencesKey("f_scroll_control_enabled")
         /** 每格滚轮短滑的像素距离，默认 120。 */
         val F_SCROLL_SWIPE_PX = floatPreferencesKey("f_scroll_swipe_px")
         /** 滚轮方向反转（默认关闭：滚轮向下 = 手指向下滑）。 */
         val F_SCROLL_INVERT = booleanPreferencesKey("f_scroll_invert")
+        /** F 光标滚轮操控：每小步延迟（ms），默认 7。 */
+        val F_SCROLL_STEP_DELAY_MS = intPreferencesKey("f_scroll_step_delay_ms")
+        /** 玩法模式定义（简易 + 高级 A/B）的 JSON。 */
+        val PLAY_MODES = stringPreferencesKey("play_modes")
+        /** 当前玩法模式下标：0 = 简易，1 = 高级 A，2 = 高级 B。 */
+        val CURRENT_PLAY_MODE = intPreferencesKey("current_play_mode")
+        /** 小键盘 Enter 层级预览开关，默认开启。 */
+        val ENTER_LAYER_PREVIEW_ENABLED = booleanPreferencesKey("enter_layer_preview_enabled")
         /** M 键开关地图并切换鼠标（全局），默认开启。 */
         val MAP_MOUSE_TOGGLE_ENABLED = booleanPreferencesKey("map_mouse_toggle_enabled")
         /** F 交互后左键唤出光标（全局），默认开启。 */
         val F_CURSOR_CLICK_ENABLED = booleanPreferencesKey("f_cursor_click_enabled")
         /** 物理 ESC / Tab 关闭界面后自动回射击模式（全局），默认开启。 */
         val TAB_ESC_AIM_ENABLED = booleanPreferencesKey("tab_esc_aim_enabled")
+        /** 回瞄准延迟（ms），默认 110。 */
+        val TAB_ESC_AIM_DELAY_MS = intPreferencesKey("tab_esc_aim_delay_ms")
+        /** F 交互后允许左键唤出光标的窗口（ms），默认 1000。 */
+        val F_CURSOR_CLICK_WINDOW_MS = intPreferencesKey("f_cursor_click_window_ms")
+        /** M 键开图后等待多久再执行地图放大手势（ms），默认 100。 */
+        val MAP_ZOOM_DELAY_MS = intPreferencesKey("map_zoom_delay_ms")
         /** 快速近战默认键已从 V 迁移到右侧小键盘 num0 的一次性标记。 */
         val QUICK_MELEE_NUMPAD_MIGRATED = booleanPreferencesKey("quick_melee_numpad_migrated")
         /** 快速近战触发键已从 Alt+5 迁移到 Alt+0 的一次性标记。 */
@@ -127,6 +143,8 @@ class DataStoreManager internal constructor(
         val MOUSE_MODE_LATCH = booleanPreferencesKey("mouse_mode_latch")
         /** 是否缓存屏幕尺寸，默认开启。 */
         val SCREEN_SIZE_CACHE = booleanPreferencesKey("screen_size_cache")
+        /** 「防止大幅甩动导致视角问题」总开关，关闭后断点过滤 / 输入锁存 / 屏幕尺寸缓存都不生效。 */
+        val MOUSE_GUARD_ENABLED = booleanPreferencesKey("mouse_guard_enabled")
 
         val KEYS_CONFIG = stringPreferencesKey("keys_config")
 

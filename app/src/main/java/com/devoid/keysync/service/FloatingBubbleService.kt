@@ -534,6 +534,9 @@ class FloatingBubbleService : Service() {
 
         val itemsContainerLP = WindowManager.LayoutParams()
         itemsContainerLP.copyFrom(baseLP)
+        // MIUI 等系统即使关闭 inset 拟合，也可能把 MATCH_PARENT 悬浮窗整体下移几像素；
+        // 直接用物理屏幕像素铺满，避免映射按键整体被顶下来。
+        fillPhysicalDisplay(itemsContainerLP)
 
         val sm = stateManager.get()
         containerView =
@@ -558,8 +561,7 @@ class FloatingBubbleService : Service() {
                 stateManager.get().mappingPaused
             ) { edit, paused -> edit to paused }.collect { (expanded, paused) ->
                 itemsContainerLP.apply {
-                    width = WindowManager.LayoutParams.MATCH_PARENT
-                    height = WindowManager.LayoutParams.MATCH_PARENT
+                    fillPhysicalDisplay(this)
                 }
                 when {
                     // 暂停映射：窗口完全不可触摸，触控与键盘穿透到当前应用，
@@ -615,6 +617,24 @@ class FloatingBubbleService : Service() {
     }
 
 
+    /** 用物理屏幕像素铺满悬浮窗，绕过 OEM 对系统栏 inset 的额外下移。 */
+    private fun fillPhysicalDisplay(lp: WindowManager.LayoutParams) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
+            lp.width = bounds.width()
+            lp.height = bounds.height()
+            lp.x = bounds.left
+            lp.y = bounds.top
+        } else {
+            @Suppress("DEPRECATION")
+            val metrics = resources.displayMetrics
+            lp.width = metrics.widthPixels
+            lp.height = metrics.heightPixels
+            lp.x = 0
+            lp.y = 0
+        }
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     private fun getItemsContainerView(
         onRemove: (Int) -> Unit,
@@ -629,6 +649,24 @@ class FloatingBubbleService : Service() {
                 if (view.isAttachedToWindow) {
                     val origin = IntArray(2)
                     view.getLocationOnScreen(origin)
+                    // 自愈：旋转或 OEM inset 导致窗口被下移/缩小时，重新按物理屏幕铺满。
+                    val wm = getSystemService(WindowManager::class.java)
+                    val target = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        wm.maximumWindowMetrics.bounds
+                    } else {
+                        @Suppress("DEPRECATION")
+                        val m = resources.displayMetrics
+                        android.graphics.Rect(0, 0, m.widthPixels, m.heightPixels)
+                    }
+                    if (view.width != target.width() || view.height != target.height() ||
+                        origin[0] != target.left || origin[1] != target.top
+                    ) {
+                        val lp = containerView?.layoutParams as? WindowManager.LayoutParams
+                        if (lp != null) {
+                            fillPhysicalDisplay(lp)
+                            wm.updateViewLayout(containerView, lp)
+                        }
+                    }
                     stateManager.get().onOverlayFrame(view.width, view.height,
                         androidx.compose.ui.geometry.Offset(origin[0].toFloat(), origin[1].toFloat()))
                 }
@@ -647,6 +685,7 @@ class FloatingBubbleService : Service() {
                 val pointerOffset by stateManager.get().pointerOffset.collectAsState()
                 val keysConfig by stateManager.get().keysConfig.collectAsState()
                 val keysVisible by stateManager.get().keysVisible.collectAsState()
+                val advancedVisible by stateManager.get().advancedVisible.collectAsState()
                 val mappingPaused by stateManager.get().mappingPaused.collectAsState()
                 val statusBarVisible by stateManager.get().statusBarVisible.collectAsState()
                 val pendingBindId by stateManager.get().pendingVariableKeyBind.collectAsState()
@@ -679,7 +718,10 @@ class FloatingBubbleService : Service() {
                         return@Box//do not compose if user set overlay opacity to 0
                     // 一键隐藏按键：keysVisible 为 false 时不渲染按键容器。
                     // 暂停映射时同样不渲染——此时窗口不可触摸，留着按钮只会误导。
-                    if (keysVisible && !mappingPaused) {
+                    // Enter 层级预览时只渲染普通按键层或高级层标记。
+                    val keysLayerVisible = isEditMode || keysVisible
+                    val advancedLayerVisible = isEditMode || advancedVisible
+                    if ((keysLayerVisible || advancedLayerVisible) && !mappingPaused) {
                         ItemsContainer(
                             Modifier.alpha(if (isEditMode) 1f else itemsContainerOpacity),
                             appConfig = keysConfig,
@@ -716,19 +758,9 @@ class FloatingBubbleService : Service() {
                             },
                             onMoveDiscardPoint = { stateManager.get().moveDiscardPoint(it) },
                             advancedLayerActive = advancedLayerActive,
-                            scrollLeftPoint = profiles.firstOrNull { it.id == activeId }?.let { p ->
-                                val x = p.scrollLeftX
-                                val y = p.scrollLeftY
-                                if (x != null && y != null) androidx.compose.ui.geometry.Offset(x, y) else null
-                            },
-                            scrollRightPoint = profiles.firstOrNull { it.id == activeId }?.let { p ->
-                                val x = p.scrollRightX
-                                val y = p.scrollRightY
-                                if (x != null && y != null) androidx.compose.ui.geometry.Offset(x, y) else null
-                            },
-                            onMoveScrollAnchor = { left, point ->
-                                stateManager.get().moveScrollAnchor(left, point)
-                            },
+                            // 滚轮操控已改为「光标位置全屏生效」，不再使用左右锚点。
+                            showKeys = keysLayerVisible,
+                            showAdvancedMarkers = advancedLayerVisible,
                         )
                         // 顶部状态提示条：预设名 · 模式 · 最近输入。
                         // 通知栏的「隐藏提示」action 只关这一行，不影响按键容器。

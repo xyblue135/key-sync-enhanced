@@ -111,20 +111,35 @@ class MainActivityViewModel @Inject constructor(
     val mouseJumpThresholdPx: StateFlow<Int> = stateManager.mouseJumpThresholdPx
     val mouseModeLatch: StateFlow<Boolean> = stateManager.mouseModeLatch
     val screenSizeCacheEnabled: StateFlow<Boolean> = stateManager.screenSizeCacheEnabled
+    /** 「防止大幅甩动导致视角问题」总开关。 */
+    val mouseGuardEnabled: StateFlow<Boolean> = stateManager.mouseGuardEnabled
     val discardDragEnabled: StateFlow<Boolean> = stateManager.discardDragEnabled
     /** Alt+D 拖拽速度倍数（1–10，默认 5）。 */
     val discardDragSpeed: StateFlow<Float> = stateManager.discardDragSpeed
     /** M 键开关地图并切换鼠标（全局，默认开启）。 */
     val mapMouseToggleEnabled: StateFlow<Boolean> = stateManager.mapMouseToggleEnabled
+    /** M 开图后执行放大手势前的延迟（ms）。 */
+    val mapZoomDelayMs: StateFlow<Int> = stateManager.mapZoomDelayMs
     val fCursorClickEnabled: StateFlow<Boolean> = stateManager.fCursorClickEnabled
+    /** F 交互后左键唤出光标的窗口（ms）。 */
+    val fCursorClickWindowMs: StateFlow<Int> = stateManager.fCursorClickWindowMs
     /** ESC / Tab 关闭界面后自动回射击模式（全局，默认开启）。 */
     val tabEscAimEnabled: StateFlow<Boolean> = stateManager.tabEscAimEnabled
+    /** ESC / Tab 回瞄准延迟（ms）。 */
+    val tabEscAimDelayMs: StateFlow<Int> = stateManager.tabEscAimDelayMs
     /** F 光标滚轮操控（全局，默认开启）。 */
     val fScrollControlEnabled: StateFlow<Boolean> = stateManager.fScrollControlEnabled
     /** 每格滚轮的短滑距离（px）。 */
     val fScrollSwipePx: StateFlow<Float> = stateManager.fScrollSwipePx
     /** 滚轮方向反转。 */
     val fScrollInvert: StateFlow<Boolean> = stateManager.fScrollInvert
+    /** F 滚轮每小步延迟（ms）。 */
+    val fScrollStepDelayMs: StateFlow<Int> = stateManager.fScrollStepDelayMs
+    /** 玩法模式：简易 + 高级 A/B。 */
+    val playModes: StateFlow<List<com.devoid.keysync.model.PlayMode>> = stateManager.playModes
+    val currentPlayModeIndex: StateFlow<Int> = stateManager.currentPlayModeIndex
+    /** 小键盘 Enter 层级预览。 */
+    val enterLayerPreviewEnabled: StateFlow<Boolean> = stateManager.enterLayerPreviewEnabled
 
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     /** 「检查更新 / 下载并安装」的状态。 */
@@ -245,15 +260,26 @@ class MainActivityViewModel @Inject constructor(
     fun setMouseJumpThreshold(px: Int) = stateManager.setMouseJumpThreshold(px)
     fun setMouseModeLatch(enabled: Boolean) = stateManager.setMouseModeLatch(enabled)
     fun setScreenSizeCache(enabled: Boolean) = stateManager.setScreenSizeCache(enabled)
+    fun setMouseGuardEnabled(enabled: Boolean) = stateManager.setMouseGuardEnabled(enabled)
 
     fun setDiscardDragEnabled(enabled: Boolean) = stateManager.setDiscardDragEnabled(enabled)
     fun setDiscardDragSpeed(speed: Float) = stateManager.setDiscardDragSpeed(speed)
     fun setMapMouseToggleEnabled(enabled: Boolean) = stateManager.setMapMouseToggleEnabled(enabled)
+    fun setMapZoomDelayMs(ms: Int) = stateManager.setMapZoomDelayMs(ms)
     fun setFCursorClickEnabled(enabled: Boolean) = stateManager.setFCursorClickEnabled(enabled)
+    fun setFCursorClickWindowMs(ms: Int) = stateManager.setFCursorClickWindowMs(ms)
     fun setTabEscAimEnabled(enabled: Boolean) = stateManager.setTabEscAimEnabled(enabled)
+    fun setTabEscAimDelayMs(ms: Int) = stateManager.setTabEscAimDelayMs(ms)
     fun setFScrollControlEnabled(enabled: Boolean) = stateManager.setFScrollControlEnabled(enabled)
     fun setFScrollSwipePx(px: Float) = stateManager.setFScrollSwipePx(px)
     fun setFScrollInvert(invert: Boolean) = stateManager.setFScrollInvert(invert)
+    fun setFScrollStepDelayMs(ms: Int) = stateManager.setFScrollStepDelayMs(ms)
+    fun setCurrentPlayMode(index: Int) = stateManager.setCurrentPlayMode(index)
+    fun updatePlayMode(index: Int, mode: com.devoid.keysync.model.PlayMode) =
+        stateManager.updatePlayMode(index, mode)
+    fun addPlayMode() = stateManager.addPlayMode()
+    fun setEnterLayerPreviewEnabled(enabled: Boolean) =
+        stateManager.setEnterLayerPreviewEnabled(enabled)
 
     /**
      * Removes games by package name.

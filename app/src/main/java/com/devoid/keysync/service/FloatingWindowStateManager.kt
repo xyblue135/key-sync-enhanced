@@ -27,6 +27,9 @@ import com.devoid.keysync.domain.mouseButtonKeyCode
 import com.devoid.keysync.domain.mouseKeyAlias
 import com.devoid.keysync.model.ClickMacro
 import com.devoid.keysync.model.ProfileAssist
+import com.devoid.keysync.model.DefaultPlayModes
+import com.devoid.keysync.model.PlayMode
+import com.devoid.keysync.model.SimplePlayMode
 import com.devoid.keysync.model.validateClickMacros
 import com.devoid.keysync.model.withAssist
 import com.devoid.keysync.model.SeqAction
@@ -97,7 +100,7 @@ class FloatingWindowStateManager @Inject constructor(
     val overlayOpacity = MutableStateFlow(0.5f)
 
     // 按键拟人化（随机偏移）：全局生效、对所有预设统一，不随预设存储。
-    val wasdHumanization = MutableStateFlow(false)
+    val wasdHumanization = MutableStateFlow(true)
     val keyHumanization = MutableStateFlow(false)
     /** 偏移强度 1–100（100 = 最大）。 */
     val humanizationStrength = MutableStateFlow(50f)
@@ -119,6 +122,8 @@ class FloatingWindowStateManager @Inject constructor(
     val mouseModeLatch = MutableStateFlow(true)
     /** 为 true 时缓存屏幕尺寸，避免每个鼠标事件都查询 WindowManager。 */
     val screenSizeCacheEnabled = MutableStateFlow(true)
+    /** 「防止大幅甩动导致视角问题」总开关；关闭后上面三项都不生效。 */
+    val mouseGuardEnabled = MutableStateFlow(true)
 
     // 悬浮窗按键的显示/隐藏开关（一键切换，不影响功能）。
     private val _keysVisible = MutableStateFlow(true)
@@ -212,19 +217,27 @@ class FloatingWindowStateManager @Inject constructor(
     private var mouseCursorSeen = false
     /** Alt+D 拖拽：按住 Alt 时按 D 触发，由高级功能开关控制。 */
     val discardDragEnabled = MutableStateFlow(false)
-    /** Alt+D 拖拽速度倍数（1–10）：值越大移动越快，默认 5 = 原速的 5 倍。 */
+    /** Alt+D 拖拽速度倍数（1–100）：值越大移动越快，默认 25。 */
     val discardDragSpeed = MutableStateFlow(DEFAULT_DISCARD_DRAG_SPEED)
     private var discardDragJob: Job? = null
     /** M 键开关地图并切换鼠标（全局），默认开启。 */
     val mapMouseToggleEnabled = MutableStateFlow(true)
+    /** M 开图后等待多久再执行双指内缩放大（ms），默认 100。 */
+    val mapZoomDelayMs = MutableStateFlow(DEFAULT_MAP_ZOOM_DELAY_MS)
+    /** 地图放大手势的进行中任务；第二次按 M 时取消并收尾。 */
+    private var mapZoomJob: Job? = null
     /** F 交互后左键唤出光标（全局，高级功能），默认开启。 */
     val fCursorClickEnabled = MutableStateFlow(false)
-    /** F 交互的时间戳；左键在 400ms 内命中后立即清空，保证一轮只触发一次。 */
+    /** F 交互后允许左键唤出光标的窗口（ms），默认 1000。 */
+    val fCursorClickWindowMs = MutableStateFlow(DEFAULT_F_CURSOR_CLICK_WINDOW_MS)
+    /** F 交互的时间戳；左键在窗口内命中后立即清空，保证一轮只触发一次。 */
     private var fInteractArmedAt = 0L
     /** M 键当前是否处于「地图已打开」状态；重启服务后归零。 */
     private var mapToggleOpen = false
     /** ESC / Tab 关闭界面后自动回瞄准（全局），默认开启。 */
     val tabEscAimEnabled = MutableStateFlow(true)
+    /** 回瞄准延迟（ms），默认 110。 */
+    val tabEscAimDelayMs = MutableStateFlow(DEFAULT_TAB_ESC_AIM_DELAY_MS)
     /** 回瞄准延迟任务：等游戏把界面关掉再重建瞄准触点。 */
     private var aimReturnJob: Job? = null
 
@@ -234,12 +247,28 @@ class FloatingWindowStateManager @Inject constructor(
     val fScrollSwipePx = MutableStateFlow(DEFAULT_SCROLL_SWIPE_PX)
     /** 滚轮方向反转：默认关闭（滚轮向下 = 手指向下滑）。 */
     val fScrollInvert = MutableStateFlow(false)
+    /** 每小步延迟（ms），默认 7。 */
+    val fScrollStepDelayMs = MutableStateFlow(7)
     /** 当前是否处于 F 唤出光标后的滚轮操控状态；ESC/Tab/切回射击模式即退出。 */
     private var fScrollControlActive = false
     /** 连续滚轮逐格排队执行，避免多根手指同时滑动。 */
     private val scrollSwipeMutex = Mutex()
-    /** 编辑态图层：false = 按键层，true = 高级层（丢弃点 + 左右滚动锚点）。 */
+    /** 编辑态图层：false = 按键层，true = 高级层（丢弃点）。 */
     val editAdvancedLayer = MutableStateFlow(false)
+
+    /** 玩法模式：0 = 简易，1 = 高级 A，2 = 高级 B。 */
+    val playModes = MutableStateFlow(DefaultPlayModes)
+    val currentPlayModeIndex = MutableStateFlow(1)
+    /** 小键盘 Enter 层级预览开关，默认开启。 */
+    val enterLayerPreviewEnabled = MutableStateFlow(true)
+    /** 运行时高级层预览（Enter 循环到第二层时为 true）。 */
+    private val _advancedVisible = MutableStateFlow(false)
+    val advancedVisible = _advancedVisible.asStateFlow()
+
+    val activePlayMode: PlayMode
+        get() = playModes.value.getOrElse(currentPlayModeIndex.value) { DefaultPlayModes[1] }
+    val isSimpleMode: Boolean
+        get() = currentPlayModeIndex.value == 0
 
     private val _containerItems = MutableStateFlow(listOf<DraggableItem>())
     val containerItems = _containerItems.asStateFlow()
@@ -324,7 +353,7 @@ class FloatingWindowStateManager @Inject constructor(
             }
             // 读取全局按键拟人化设置并立即应用到事件处理器。
             wasdHumanization.value =
-                dataStoreManager.getBoolean(DataStoreManager.WASD_HUMANIZATION).first() ?: false
+                dataStoreManager.getBoolean(DataStoreManager.WASD_HUMANIZATION).first() ?: true
             keyHumanization.value =
                 dataStoreManager.getBoolean(DataStoreManager.KEY_HUMANIZATION).first() ?: false
             // 强度已改为 1–100；旧版本存的是 0–1 的 float，这里做一次迁移。
@@ -357,17 +386,27 @@ class FloatingWindowStateManager @Inject constructor(
                 dataStoreManager.getBoolean(DataStoreManager.MOUSE_MODE_LATCH).first() ?: true
             screenSizeCacheEnabled.value =
                 dataStoreManager.getBoolean(DataStoreManager.SCREEN_SIZE_CACHE).first() ?: true
+            mouseGuardEnabled.value =
+                dataStoreManager.getBoolean(DataStoreManager.MOUSE_GUARD_ENABLED).first() ?: true
             discardDragEnabled.value =
                 dataStoreManager.getBoolean(DataStoreManager.DISCARD_DRAG_ENABLED).first() ?: false
             val storedDragSpeed = dataStoreManager.getFloat(DataStoreManager.DISCARD_DRAG_SPEED).first()
-            // 旧刻度是 1–10，新刻度扩大到 1–100：旧值直接 ×10 迁移，用户原来的手感也随之快 10 倍。
-            val migratedDragSpeed = storedDragSpeed?.let {
+            // 旧刻度是 1–10，新刻度扩大到 1–100：旧值直接 ×10 迁移。
+            var migratedDragSpeed = storedDragSpeed?.let {
                 if (it <= LEGACY_MAX_DISCARD_DRAG_SPEED) it * 10f else it
             }
+            // 默认速度整体降为原来的一半：只对仍是旧默认 50 的用户做一次性 ÷2，避免影响已自定义的值。
+            val speedHalved = dataStoreManager.getBoolean(DataStoreManager.DISCARD_SPEED_HALVED).first() ?: false
+            if (!speedHalved && migratedDragSpeed == 50f) migratedDragSpeed = 25f
             discardDragSpeed.value =
                 (migratedDragSpeed ?: DEFAULT_DISCARD_DRAG_SPEED)
                     .coerceIn(MIN_DISCARD_DRAG_SPEED, MAX_DISCARD_DRAG_SPEED)
-            if (migratedDragSpeed != null && migratedDragSpeed != storedDragSpeed) {
+            if (!speedHalved) {
+                scope.launch {
+                    dataStoreManager.save(DataStoreManager.DISCARD_SPEED_HALVED, true)
+                    dataStoreManager.save(DataStoreManager.DISCARD_DRAG_SPEED, discardDragSpeed.value)
+                }
+            } else if (migratedDragSpeed != null && migratedDragSpeed != storedDragSpeed) {
                 scope.launch {
                     dataStoreManager.save(DataStoreManager.DISCARD_DRAG_SPEED, discardDragSpeed.value)
                 }
@@ -386,6 +425,50 @@ class FloatingWindowStateManager @Inject constructor(
                     .coerceIn(MIN_SCROLL_SWIPE_PX, MAX_SCROLL_SWIPE_PX)
             fScrollInvert.value =
                 dataStoreManager.getBoolean(DataStoreManager.F_SCROLL_INVERT).first() ?: false
+            fScrollStepDelayMs.value =
+                (dataStoreManager.getInt(DataStoreManager.F_SCROLL_STEP_DELAY_MS).first()
+                    ?: 7).coerceIn(2, 40)
+            fCursorClickWindowMs.value =
+                (dataStoreManager.getInt(DataStoreManager.F_CURSOR_CLICK_WINDOW_MS).first()
+                    ?: DEFAULT_F_CURSOR_CLICK_WINDOW_MS).coerceIn(100, 3000)
+            tabEscAimDelayMs.value =
+                (dataStoreManager.getInt(DataStoreManager.TAB_ESC_AIM_DELAY_MS).first()
+                    ?: DEFAULT_TAB_ESC_AIM_DELAY_MS).coerceIn(50, 1000)
+            mapZoomDelayMs.value =
+                (dataStoreManager.getInt(DataStoreManager.MAP_ZOOM_DELAY_MS).first()
+                    ?: DEFAULT_MAP_ZOOM_DELAY_MS).coerceIn(0, 1000)
+            val loadedModes = runCatching {
+                Json { ignoreUnknownKeys = true }
+                    .decodeFromString<List<PlayMode>>(
+                        dataStoreManager.getString(DataStoreManager.PLAY_MODES).first() ?: ""
+                    )
+            }.getOrElse { DefaultPlayModes }
+            // 旧版本固定三槽（简易 / 高级 A / 高级 B）迁移为「简易 + 方案1」，避免老用户看到旧命名。
+            val migratedModes =
+                if (loadedModes.size == 3 && loadedModes[0].name == "简易" &&
+                    loadedModes[1].name == "高级 A" && loadedModes[2].name == "高级 B"
+                ) {
+                    listOf(SimplePlayMode, loadedModes[1].copy(name = "方案1"))
+                } else {
+                    loadedModes
+                }
+            playModes.value =
+                if (migratedModes.size >= 2) migratedModes else DefaultPlayModes
+            if (playModes.value != loadedModes) {
+                scope.launch {
+                    dataStoreManager.save(
+                        DataStoreManager.PLAY_MODES,
+                        Json { ignoreUnknownKeys = true }.encodeToString(playModes.value)
+                    )
+                }
+            }
+            currentPlayModeIndex.value =
+                (dataStoreManager.getInt(DataStoreManager.CURRENT_PLAY_MODE).first() ?: 1)
+                    .coerceIn(0, playModes.value.lastIndex)
+            enterLayerPreviewEnabled.value =
+                dataStoreManager.getBoolean(DataStoreManager.ENTER_LAYER_PREVIEW_ENABLED).first()
+                    ?: true
+            applyPlayMode()
             // 切回射击模式（ESC/Tab/手动模式键）时立即解除滚轮操控。
             scope.launch {
                 isShootingMode.collect { shooting ->
@@ -582,13 +665,17 @@ class FloatingWindowStateManager @Inject constructor(
         const val legacyLayoutScreenHeight = 1200
         /** 鼠标断点阈值默认值；用户可在设置页的高级项里调整（全局）。 */
         const val DEFAULT_MOUSE_JUMP_THRESHOLD_PX = 240
-        /** F 交互后允许左键唤出光标的窗口（ms）。 */
-        const val F_CURSOR_CLICK_WINDOW_MS = 400L
+        /** F 交互后允许左键唤出光标的窗口（ms）默认值。 */
+        const val DEFAULT_F_CURSOR_CLICK_WINDOW_MS = 1000
+        /** ESC / Tab 关闭界面后的回瞄准延迟（ms）默认值。 */
+        const val DEFAULT_TAB_ESC_AIM_DELAY_MS = 110
+        /** M 开图后等待再执行放大手势的延迟（ms）默认值。 */
+        const val DEFAULT_MAP_ZOOM_DELAY_MS = 100
         /** Alt+D 拖拽：单程分几步、每步间隔（ms）；12 步 × 14ms ≈ 170ms。 */
         const val DRAG_STEPS = 12
         const val DRAG_STEP_MS = 14L
-        /** Alt+D 拖拽速度倍数默认值与范围（设置页滑杆）。 */
-        const val DEFAULT_DISCARD_DRAG_SPEED = 50f
+        /** Alt+D 拖拽速度倍数默认值与范围（设置页滑杆）；默认比旧版慢一倍。 */
+        const val DEFAULT_DISCARD_DRAG_SPEED = 25f
         const val MIN_DISCARD_DRAG_SPEED = 1f
         const val MAX_DISCARD_DRAG_SPEED = 100f
         /** 旧版本滑杆上限；读到 1–10 的旧值按 10 倍换算到新刻度。 */
@@ -597,9 +684,10 @@ class FloatingWindowStateManager @Inject constructor(
         const val DEFAULT_SCROLL_SWIPE_PX = 120f
         const val MIN_SCROLL_SWIPE_PX = 40f
         const val MAX_SCROLL_SWIPE_PX = 400f
-        /** 滚轮短滑分几步、每步间隔（ms）；5 步 × 7ms ≈ 35ms。 */
+        /** 滚轮短滑分几步；每步间隔可在设置里调（默认 7ms，5 步 ≈ 35ms）。 */
         private const val SCROLL_SWIPE_STEPS = 5
-        private const val SCROLL_SWIPE_STEP_MS = 7L
+        /** 玩法槽上限（含简易槽）。 */
+        const val MAX_PLAY_MODES = 8
         /** 快捷换位触发键：1/2（3/4 固定用于近战流程，不参与换位）。 */
         val SWAP_SLOT_KEYS = setOf(
             KeyEvent.KEYCODE_1,
@@ -719,6 +807,8 @@ class FloatingWindowStateManager @Inject constructor(
         val macros = activeProfile()?.macros.orEmpty()
         eventHandler.setMacros(macros,
             overlayViewport ?: currentScreenSize(), overlayOrigin ?: Offset.Zero)
+        eventHandler.shiftCancelWalkEnabled =
+            activePlayMode.assists && (activeProfile()?.shiftCancelWalkEnabled ?: true)
     }
 
     fun updateMacroPoint(macroId: String, stepId: String, x: Float, y: Float) {
@@ -780,55 +870,10 @@ class FloatingWindowStateManager @Inject constructor(
         val updatedProfile = target.withAssist(assist)
         _profiles.value = _profiles.value.map { if (it.id == profileId) updatedProfile else it }
         if (_activeProfileId.value == profileId) {
-            if (!assist.stanceAssistEnabled) stanceKeyCode = null
             syncMacros()
         }
         if (dataStoreManager.canWriteProfiles) {
             scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
-        }
-    }
-
-    /** 最后一次按下的姿态键（C / Z / Ctrl）；null 表示当前没有可取消的姿态。 */
-    private var stanceKeyCode: Int? = null
-    private var stanceTapJob: Job? = null
-
-    private val stanceKeys = setOf(
-        KeyEvent.KEYCODE_C,
-        KeyEvent.KEYCODE_Z,
-        KeyEvent.KEYCODE_CTRL_LEFT,
-        KeyEvent.KEYCODE_CTRL_RIGHT,
-    )
-
-    /**
-     * 蹲/趴与 Shift 的协调（与静步同理，只取消「我们自己点开的」姿态）。
-     *
-     * - 按 C（趴）/ Z / Ctrl（蹲）：记录最后一次姿态键；同一个键再按一次视为关闭
-     * - 按 Shift：若记录了姿态，补点一次同一个姿态键把它取消，然后开始跑
-     * - 姿态键或 Shift 没有绑定按钮时不介入，避免按了没反应
-     */
-    private fun trackStanceAssist(keyCode: Int) {
-        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value }
-        if (profile == null || !profile.stanceAssistEnabled) {
-            stanceKeyCode = null
-            return
-        }
-        val items = _containerItems.value
-        if (keyCode in stanceKeys) {
-            // 姿态键本身没绑按钮就无从点起，不记录。
-            if (items.none { it.boundKeyCode() == keyCode }) return
-            stanceKeyCode = if (stanceKeyCode == keyCode) null else keyCode
-            return
-        }
-        if (keyCode != KeyEvent.KEYCODE_SHIFT_LEFT && keyCode != KeyEvent.KEYCODE_SHIFT_RIGHT) return
-        val stance = stanceKeyCode ?: return
-        stanceKeyCode = null
-        if (stanceTapJob?.isActive == true) return
-        stanceTapJob = scope.launch {
-            val at = SystemClock.uptimeMillis()
-            eventHandler.handleKeyEvent(KeyEvent(at, at, KeyEvent.ACTION_DOWN, stance, 0))
-            // 快速补点，尽量在 Shift 生效前把姿态取消掉。
-            delay(kotlin.random.Random.nextLong(35L, 66L))
-            eventHandler.handleKeyEvent(KeyEvent(at, at, KeyEvent.ACTION_UP, stance, 0))
         }
     }
 
@@ -880,6 +925,7 @@ class FloatingWindowStateManager @Inject constructor(
      * 2/4/3 绑到哪个位置就点哪里。整个过程串行执行，重复按 3 不会叠加。
      */
     private fun runTapSequence234(keyCode: Int): Boolean {
+        if (!activePlayMode.assists) return false
         if (keyCode != KeyEvent.KEYCODE_3) return false
         val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
         if (!profile.tapSequence234Enabled) return false
@@ -928,16 +974,22 @@ class FloatingWindowStateManager @Inject constructor(
      * 按住触发键会一直循环同一套动作，松开立刻停止；键盘长按产生的重复 DOWN 直接被吞掉。
      * 整个循环只有一个协程和两条时间戳/状态，不会注册额外监听，所以不会因为长按或狂按卡顿。
      */
+    /** 立即停止快速近战循环（松开触发键或切换玩法模式时用）。 */
+    private fun stopQuickMelee() {
+        quickMeleeHeld = false
+        quickMeleeJob?.cancel()
+        quickMeleeJob = null
+    }
+
     private fun runQuickMeleeMacro(keyEvent: KeyEvent): Boolean {
+        if (!activePlayMode.quickMelee) return false
         val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
         val macro = profile.quickMeleeMacro
         if (!macro.enabled || keyEvent.keyCode != macro.triggerKeyCode) return false
         // 松开必须能停：Alt 可能比 5 先松开，所以 UP 不校验 Alt 状态。
         if (keyEvent.action == KeyEvent.ACTION_UP) {
             val wasActive = quickMeleeJob?.isActive == true || quickMeleeHeld
-            quickMeleeHeld = false
-            quickMeleeJob?.cancel()
-            quickMeleeJob = null
+            stopQuickMelee()
             return wasActive
         }
         if (keyEvent.action != KeyEvent.ACTION_DOWN) return false
@@ -976,6 +1028,7 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     private fun runKeyMacro(keyEvent: KeyEvent): Boolean {
+        if (!activePlayMode.macros) return false
         val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
         val macros = listOf(
             profile.keyMacro,
@@ -1071,6 +1124,7 @@ class FloatingWindowStateManager @Inject constructor(
      * 重启后位置仍是换位状态，不会被误判成未换位而再跳一次。
      */
     private fun applyQuickSwap(keyCode: Int): Boolean {
+        if (!activePlayMode.assists) return false
         val id = _activeProfileId.value ?: return false
         val profile = _profiles.value.firstOrNull { it.id == id } ?: return false
         if (!profile.quickSwapEnabled) return false
@@ -1317,16 +1371,37 @@ class FloatingWindowStateManager @Inject constructor(
         scope.launch { dataStoreManager.save(DataStoreManager.TAB_ESC_AIM_ENABLED, enabled) }
     }
 
+    /** ESC / Tab 回瞄准延迟（50–1000ms）。 */
+    fun setTabEscAimDelayMs(ms: Int) {
+        val safe = ms.coerceIn(50, 1000)
+        tabEscAimDelayMs.value = safe
+        scope.launch { dataStoreManager.save(DataStoreManager.TAB_ESC_AIM_DELAY_MS, safe) }
+    }
+
+    /** F 交互后左键唤出光标的窗口（100–3000ms）。 */
+    fun setFCursorClickWindowMs(ms: Int) {
+        val safe = ms.coerceIn(100, 3000)
+        fCursorClickWindowMs.value = safe
+        scope.launch { dataStoreManager.save(DataStoreManager.F_CURSOR_CLICK_WINDOW_MS, safe) }
+    }
+
+    /** M 开图后执行放大手势前的延迟（0–1000ms）。 */
+    fun setMapZoomDelayMs(ms: Int) {
+        val safe = ms.coerceIn(0, 1000)
+        mapZoomDelayMs.value = safe
+        scope.launch { dataStoreManager.save(DataStoreManager.MAP_ZOOM_DELAY_MS, safe) }
+    }
+
     /**
      * 延迟回瞄准：游戏关闭背包/地图需要几帧，立即注入会被丢掉。
-     * 110ms 后若仍在射击模式则幂等重建准心触点，否则切入射击模式。
+     * 延迟结束后若仍在射击模式则幂等重建准心触点，否则切入射击模式。
      */
     private fun scheduleAimReturn() {
         aimReturnJob?.cancel()
         // 已经在射击模式时不做任何事，避免按 Tab 看比分、ESC 开菜单时重建触点。
         if (isShootingMode.value) return
         aimReturnJob = scope.launch {
-            delay(110L)
+            delay(tabEscAimDelayMs.value.toLong())
             eventHandler.setShootingModeEnabled(true)
             // 界面还在收尾时注入的 DOWN 可能被游戏丢掉，等它彻底关闭后再补一次。
             delay(150L)
@@ -1335,16 +1410,24 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     /**
-     * M 键：第一次按下开图并把鼠标切出来（退出射击模式），M 键本身继续走正常映射；
-     * 第二次按下点 ESC 映射位置并收回鼠标（进入射击模式），本次 M 被吞掉。
+     * M 键：第一次按下开图，延迟后双指内缩把小地图放大，再切出鼠标；
+     * M 键本身继续走正常映射。第二次按下点 ESC 映射位置并收回鼠标（进入射击模式），本次 M 被吞掉。
      */
     private fun handleMapMouseToggle(): Boolean {
         if (!mapToggleOpen) {
             mapToggleOpen = true
             fInteractArmedAt = 0L
-            eventHandler.setShootingModeEnabled(false)
+            mapZoomJob?.cancel()
+            mapZoomJob = scope.launch {
+                delay(mapZoomDelayMs.value.toLong())
+                pinchMapToBig()
+                if (mapToggleOpen) eventHandler.setShootingModeEnabled(false)
+            }
             return false
         }
+        // 第二次按下：先收尾正在进行的放大手势，避免触点悬空。
+        mapZoomJob?.cancel()
+        mapZoomJob = null
         mapToggleOpen = false
         fInteractArmedAt = 0L
         val esc = _containerItems.value.firstOrNull {
@@ -1353,6 +1436,34 @@ class FloatingWindowStateManager @Inject constructor(
         if (esc != null) eventHandler.tapExtraPoint(esc.position)
         eventHandler.setShootingModeEnabled(true)
         return true
+    }
+
+    /** 双指从屏幕左右两侧随机位置向中间捏合，把小地图撑成大地图。 */
+    private suspend fun pinchMapToBig() {
+        val screen = currentScreenSize()
+        val leftId = 1_310_001
+        val rightId = 1_310_002
+        val leftX = screen.x * kotlin.random.Random.nextFloat().let { 0.10f + it * 0.22f }
+        val rightX = screen.x * kotlin.random.Random.nextFloat().let { 0.68f + it * 0.22f }
+        val leftY = screen.y * (0.35f + kotlin.random.Random.nextFloat() * 0.30f)
+        val rightY = screen.y * (0.35f + kotlin.random.Random.nextFloat() * 0.30f)
+        val move = screen.x * 0.16f
+        val steps = 8
+        val stepMs = 14L
+        eventHandler.pinchDown(leftId, Offset(leftX, leftY))
+        eventHandler.pinchDown(rightId, Offset(rightX, rightY))
+        try {
+            delay(30L)
+            repeat(steps) {
+                eventHandler.pinchMove(leftId, Offset(move / steps, 0f))
+                eventHandler.pinchMove(rightId, Offset(-move / steps, 0f))
+                delay(stepMs)
+            }
+        } finally {
+            eventHandler.pinchUp(leftId)
+            eventHandler.pinchUp(rightId)
+        }
+        delay(40L)
     }
 
     /** 全局设置：Alt+D 拖拽速度倍数（1–10），立即持久化。 */
@@ -1388,7 +1499,7 @@ class FloatingWindowStateManager @Inject constructor(
 
     /* ---------------- F 光标滚轮操控 ---------------- */
 
-    /** 全局开关：F 唤出光标后，滚轮改走左右滚动锚点。 */
+    /** 全局开关：F 唤出光标后，滚轮改在光标位置上下滑动。 */
     fun setFScrollControlEnabled(enabled: Boolean) {
         fScrollControlEnabled.value = enabled
         if (!enabled) fScrollControlActive = false
@@ -1408,66 +1519,99 @@ class FloatingWindowStateManager @Inject constructor(
         scope.launch { dataStoreManager.save(DataStoreManager.F_SCROLL_INVERT, invert) }
     }
 
-    /** 编辑态图层切换；首次进入高级层时自动放好左右锚点。 */
-    fun setEditAdvancedLayer(advanced: Boolean) {
-        editAdvancedLayer.value = advanced
-        if (advanced) ensureScrollAnchors()
+    /** 每小步延迟（2–40ms）。 */
+    fun setFScrollStepDelayMs(ms: Int) {
+        val safe = ms.coerceIn(2, 40)
+        fScrollStepDelayMs.value = safe
+        scope.launch { dataStoreManager.save(DataStoreManager.F_SCROLL_STEP_DELAY_MS, safe) }
     }
 
-    /** 拖动左/右滚动锚点后写回预设。 */
-    fun moveScrollAnchor(left: Boolean, position: Offset) {
-        val id = _activeProfileId.value
-        _profiles.value = _profiles.value.map {
-            if (it.id != id) it
-            else if (left) it.copy(scrollLeftX = position.x, scrollLeftY = position.y)
-            else it.copy(scrollRightX = position.x, scrollRightY = position.y)
+    /* ---------------- 玩法模式 ---------------- */
+
+    /** 切换全局玩法模式；只做运行时门控，不改各功能自己的开关。 */
+    fun setCurrentPlayMode(index: Int) {
+        val safe = index.coerceIn(0, playModes.value.lastIndex)
+        currentPlayModeIndex.value = safe
+        applyPlayMode()
+        scope.launch { dataStoreManager.save(DataStoreManager.CURRENT_PLAY_MODE, safe) }
+    }
+
+    /** 编辑方案的功能组合；简易槽固定不可编辑。 */
+    fun updatePlayMode(index: Int, mode: PlayMode) {
+        if (index !in 1..playModes.value.lastIndex) return
+        val safe = mode.copy(name = mode.name.ifBlank { "方案$index" })
+        playModes.value = playModes.value.toMutableList().also { it[index] = safe }
+        if (index == currentPlayModeIndex.value) applyPlayMode()
+        savePlayModes()
+    }
+
+    /** 新增一个方案槽（自动命名方案 N 并切过去）。 */
+    fun addPlayMode() {
+        if (playModes.value.size >= MAX_PLAY_MODES) return
+        val newMode = PlayMode(name = "方案${playModes.value.size}")
+        playModes.value = playModes.value + newMode
+        currentPlayModeIndex.value = playModes.value.lastIndex
+        applyPlayMode()
+        savePlayModes()
+        scope.launch {
+            dataStoreManager.save(DataStoreManager.CURRENT_PLAY_MODE, currentPlayModeIndex.value)
         }
-        persistActiveProfile()
     }
 
-    /** 没有锚点时默认放左右边缘垂直居中；已有的一侧不覆盖。 */
-    private fun ensureScrollAnchors() {
-        val profile = activeProfile() ?: return
-        if (profile.scrollLeftX != null && profile.scrollLeftY != null &&
-            profile.scrollRightX != null && profile.scrollRightY != null
-        ) return
-        val viewport = overlayViewport ?: currentScreenSize()
-        val left = Offset(viewport.x * 0.08f, viewport.y * 0.5f)
-        val right = Offset(viewport.x * 0.92f, viewport.y * 0.5f)
-        val id = _activeProfileId.value
-        _profiles.value = _profiles.value.map {
-            if (it.id != id) it else it.copy(
-                scrollLeftX = it.scrollLeftX ?: left.x,
-                scrollLeftY = it.scrollLeftY ?: left.y,
-                scrollRightX = it.scrollRightX ?: right.x,
-                scrollRightY = it.scrollRightY ?: right.y,
+    private fun savePlayModes() {
+        scope.launch {
+            dataStoreManager.save(
+                DataStoreManager.PLAY_MODES,
+                Json { ignoreUnknownKeys = true }.encodeToString(playModes.value)
             )
         }
-        persistActiveProfile()
     }
 
-    /** 按光标所在半屏选择左/右锚点；缺锚点返回 null，滚轮回落到原映射。 */
-    private fun scrollAnchorForCursor(): Offset? {
-        val profile = activeProfile() ?: return null
-        val viewport = overlayViewport ?: currentScreenSize()
-        val onLeft = _mousePointerOffset.value.x < viewport.x / 2f
-        val x = if (onLeft) profile.scrollLeftX else profile.scrollRightX
-        val y = if (onLeft) profile.scrollLeftY else profile.scrollRightY
-        if (x == null || y == null) return null
-        return Offset(x, y)
+    /** 小键盘 Enter 层级预览开关。 */
+    fun setEnterLayerPreviewEnabled(enabled: Boolean) {
+        enterLayerPreviewEnabled.value = enabled
+        if (!enabled) _advancedVisible.value = false
+        scope.launch {
+            dataStoreManager.save(DataStoreManager.ENTER_LAYER_PREVIEW_ENABLED, enabled)
+        }
+    }
+
+    /** 把当前模式的开关同步到运行时；关闭的功能立即停掉正在跑的宏。 */
+    private fun applyPlayMode() {
+        val mode = activePlayMode
+        eventHandler.macrosAllowed = mode.macros
+        eventHandler.humanizationAllowed = mode.humanization
+        if (!mode.macros) {
+            eventHandler.cancelClickMacros()
+            keyMacroJob?.cancel()
+            keyMacroJob = null
+        }
+        if (!mode.quickMelee) stopQuickMelee()
+        if (!mode.assists) {
+            tapSequence234Job?.cancel()
+        }
+        eventHandler.shiftCancelWalkEnabled =
+            mode.assists && (activeProfile()?.shiftCancelWalkEnabled ?: true)
+        if (!mode.fCursor) fScrollControlActive = false
+    }
+
+    /** 编辑态图层切换（高级层显示丢弃点）。 */
+    fun setEditAdvancedLayer(advanced: Boolean) {
+        editAdvancedLayer.value = advanced
     }
 
     /**
-     * F 唤出光标后接管滚轮：每格在对应侧锚点注入一次短滑。
+     * F 唤出光标后接管滚轮：在光标当前位置注入一次短滑。
      * 返回 false 时由调用方继续走原有滚轮映射。
      */
     private fun handleScrollControl(codes: List<Int>): Boolean {
+        if (!activePlayMode.scrollControl) return false
         if (!fScrollControlActive || !fScrollControlEnabled.value) return false
         if (isShootingMode.value || _isEditMode.value || !mouseCursorSeen) return false
         val vertical = codes.filter { it == KEYCODE_SCROLL_UP || it == KEYCODE_SCROLL_DOWN }
         if (vertical.isEmpty()) return false
-        val anchor = scrollAnchorForCursor() ?: return false
-        val screenAnchor = anchor + (overlayOrigin ?: Offset.Zero)
+        // 全屏任意位置都能滑：以当前光标为起点，不再分左右半屏，也不需要预放锚点。
+        val screenAnchor = _mousePointerOffset.value + (overlayOrigin ?: Offset.Zero)
         val distance = fScrollSwipePx.value.coerceIn(MIN_SCROLL_SWIPE_PX, MAX_SCROLL_SWIPE_PX)
         val flip = if (fScrollInvert.value) -1f else 1f
         vertical.forEach { code ->
@@ -1489,7 +1633,7 @@ class FloatingWindowStateManager @Inject constructor(
                     repeat(SCROLL_SWIPE_STEPS) { index ->
                         val t = (index + 1f) / SCROLL_SWIPE_STEPS
                         eventHandler.moveCursorDrag(pointer, screenAnchor + Offset(0f, deltaY * t))
-                        delay(SCROLL_SWIPE_STEP_MS)
+                        delay(fScrollStepDelayMs.value.toLong())
                     }
                 } finally {
                     eventHandler.endCursorDrag(pointer)
@@ -1505,6 +1649,7 @@ class FloatingWindowStateManager @Inject constructor(
      * 避免单按 D 或误触时在游戏里拖拽/转视角。
      */
     private fun startDiscardDrag(): Boolean {
+        if (!activePlayMode.discard) return false
         if (!discardDragEnabled.value || isShootingMode.value || !mouseCursorSeen) return false
         if (_isEditMode.value) return false
         if (discardDragJob?.isActive == true) return false
@@ -1656,7 +1801,7 @@ class FloatingWindowStateManager @Inject constructor(
      * other. New items now fan out across a coarse grid instead.
      */
     private fun currentScreenSize(): Offset {
-        if (screenSizeCacheEnabled.value) {
+        if (screenSizeCacheEnabled.value && mouseGuardEnabled.value) {
             cachedScreenSize?.let { return it }
             return computeScreenSize().also { cachedScreenSize = it }
         }
@@ -1832,6 +1977,16 @@ class FloatingWindowStateManager @Inject constructor(
         scope.launch { dataStoreManager.save(DataStoreManager.SCREEN_SIZE_CACHE, enabled) }
     }
 
+    /** 「防止大幅甩动导致视角问题」总开关：关掉后断点过滤、输入锁存、屏幕缓存都停用。 */
+    fun setMouseGuardEnabled(enabled: Boolean) {
+        mouseGuardEnabled.value = enabled
+        if (!enabled) {
+            latchedRelativeAxisMode = null
+            cachedScreenSize = null
+        }
+        scope.launch { dataStoreManager.save(DataStoreManager.MOUSE_GUARD_ENABLED, enabled) }
+    }
+
     /** 屏幕旋转/分辨率变化后由服务调用，丢弃缓存的屏幕尺寸。 */
     fun invalidateScreenSizeCache() {
         cachedScreenSize = null
@@ -1978,6 +2133,28 @@ class FloatingWindowStateManager @Inject constructor(
     /** 一键切换悬浮窗按键的显示/隐藏。 */
     fun toggleKeysVisible() {
         _keysVisible.value = !_keysVisible.value
+        _advancedVisible.value = false
+    }
+
+    /**
+     * 小键盘 Enter 层级预览：按键层 → 高级层 → 全部隐藏 → 按键层。
+     * 只改悬浮窗渲染，不影响注入和编辑态图层。
+     */
+    fun cycleOverlayLayer() {
+        when {
+            _keysVisible.value -> {
+                _keysVisible.value = false
+                _advancedVisible.value = true
+            }
+            _advancedVisible.value -> {
+                _keysVisible.value = false
+                _advancedVisible.value = false
+            }
+            else -> {
+                _keysVisible.value = true
+                _advancedVisible.value = false
+            }
+        }
     }
 
     /**
@@ -2046,6 +2223,14 @@ class FloatingWindowStateManager @Inject constructor(
             }
             return false
         }
+        // 小键盘 Enter：快速预览按键层 / 高级层 / 全部隐藏，默认开启。
+        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
+            keyEvent.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER &&
+            enterLayerPreviewEnabled.value && !_mappingPaused.value
+        ) {
+            cycleOverlayLayer()
+            return true
+        }
         // Alt+D：按住 Alt 才生效，工具开关打开且当前是光标模式时执行拖拽丢弃。
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
             keyEvent.keyCode == KeyEvent.KEYCODE_D &&
@@ -2060,13 +2245,13 @@ class FloatingWindowStateManager @Inject constructor(
         // F 交互后左键唤出光标：只记时间戳，不注册监听；左键命中后立即清空。
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
             keyEvent.keyCode == KeyEvent.KEYCODE_F && fCursorClickEnabled.value &&
-            isShootingMode.value
+            activePlayMode.fCursor && isShootingMode.value
         ) {
             fInteractArmedAt = SystemClock.uptimeMillis()
         }
         // 光标模式（鼠标已唤起）下按 F：在光标位置快速点两下，方便拾取/打开物品。
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
-            keyEvent.keyCode == KeyEvent.KEYCODE_F &&
+            keyEvent.keyCode == KeyEvent.KEYCODE_F && activePlayMode.assists &&
             !isShootingMode.value && mouseCursorSeen
         ) {
             eventHandler.doubleTapExtraPoint(eventHandler.mousePointerPosition)
@@ -2104,10 +2289,6 @@ class FloatingWindowStateManager @Inject constructor(
         }
         // Swap pair: on key press, swap the pair's layout positions; the same
         // key still flows to the game mapping untouched.
-        if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0) {
-            // 蹲/趴与 Shift 的协调：只记录/补点姿态，原按键照常透传。
-            trackStanceAssist(keyEvent.keyCode)
-        }
         // 快速近战宏：默认 Alt+0，按住循环「近战键 → 延迟 → 1 号键」，松开立即停。
         if (runQuickMeleeMacro(keyEvent)) return true
         // 快速切枪宏：默认 Alt+9，命中时吞掉触发键，由宏自己注入原始触点。
@@ -2179,11 +2360,16 @@ class FloatingWindowStateManager @Inject constructor(
                 // 有的设备只在部分事件里填相对轴。逐事件判断会让同一段移动在
                 // 「相对位移」和「绝对坐标差」之间来回切换，表现为速度忽快忽慢。
                 // 锁存后整段手势固定一种解析方式，直到新手势/换设备。
-                val relativeAxes = if (mouseModeLatch.value) {
+                val relativeAxes = if (mouseModeLatch.value && mouseGuardEnabled.value) {
                     latchedRelativeAxisMode
                         ?: rawRelativeAxes.also { latchedRelativeAxisMode = it }
                 } else rawRelativeAxes
-                val maxDelta = mouseJumpThresholdPx.value.toFloat()
+                // 总开关关闭时不限幅，也不丢弃跳变，完全按原始位移处理。
+                val maxDelta = if (mouseGuardEnabled.value) {
+                    mouseJumpThresholdPx.value.toFloat()
+                } else {
+                    Float.MAX_VALUE
+                }
                 val dx: Float
                 val dy: Float
                 if (relativeMouse) {
@@ -2251,17 +2437,18 @@ class FloatingWindowStateManager @Inject constructor(
             _pressedKeys.value = if (pressed) _pressedKeys.value + key else _pressedKeys.value - key
             _lastInputLabel.value = key.keyCodeToString() + if (pressed) " 按下" else " 松开"
         }
-        // F 交互后 400ms 内首次左键：先切出光标，再转发这一下左键，
+        // F 交互后窗口时间内首次左键：先切出光标，再转发这一下左键，
         // 让它按「光标模式」在光标位置点击；触发后立刻清空时间戳，一轮只生效一次。
         if (pressed && button == MotionEvent.BUTTON_PRIMARY && fCursorClickEnabled.value &&
+            activePlayMode.fCursor &&
             isShootingMode.value && fInteractArmedAt > 0L &&
-            SystemClock.uptimeMillis() - fInteractArmedAt <= F_CURSOR_CLICK_WINDOW_MS
+            SystemClock.uptimeMillis() - fInteractArmedAt <= fCursorClickWindowMs.value
         ) {
             fInteractArmedAt = 0L
             mouseCursorSeen = true
             eventHandler.setShootingModeEnabled(false)
             // 进入光标模式的同时打开滚轮操控；左右滚动锚点有缺失时滚轮会自动回落到原映射。
-            fScrollControlActive = fScrollControlEnabled.value
+            fScrollControlActive = fScrollControlEnabled.value && activePlayMode.scrollControl
         }
         eventHandler.handleMouseButton(button, pressed)
     }

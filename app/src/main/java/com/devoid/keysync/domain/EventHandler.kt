@@ -160,10 +160,16 @@ class EventHandler(
         macroOrigin = origin
     }
 
-    fun isMacroTrigger(key: Int): Boolean = macros.any { it.enabled && it.triggerKeyCode == key }
+    /** 模式切换时停掉正在跑的点击宏。 */
+    fun cancelClickMacros() {
+        macroRunner.cancel()
+    }
+
+    fun isMacroTrigger(key: Int): Boolean =
+        macrosAllowed && macros.any { it.enabled && it.triggerKeyCode == key }
 
     private fun macroEdge(key: Int, pressed: Boolean, repeat: Boolean = false): Boolean =
-        macroRunner.handle(key, pressed, repeat, macros, macroViewport, macroOrigin)
+        macrosAllowed && macroRunner.handle(key, pressed, repeat, macros, macroViewport, macroOrigin)
 
     /** A wheel direction is a tap, regardless of a button's hold/toggle mode. */
     fun handleScrollBinding(key: Int): Boolean {
@@ -208,6 +214,23 @@ class EventHandler(
     )
     fun calibrateWalkOff() { walkToggle.calibrateOff(); eventInjector.clear() }
 
+    /** Shift 是否取消我们自己开启的静步；由当前预设的按键辅助开关控制。 */
+    var shiftCancelWalkEnabled: Boolean = true
+
+    /* ---- 地图放大手势（M 开图后双指内缩）用到的底层触点操作 ---- */
+
+    fun pinchDown(pointerId: Int, position: Offset) {
+        eventInjector.injectPointer(pointerId, position)
+    }
+
+    fun pinchMove(pointerId: Int, delta: Offset) {
+        eventInjector.updatePointerPosition(pointerId, delta)
+    }
+
+    fun pinchUp(pointerId: Int) {
+        eventInjector.releasePointer(pointerId)
+    }
+
     private fun triggerWalk(sprint: Boolean = false) {
         val key = walkKeyCode ?: -10_005
         val pointer = pointerIds[key] ?: return
@@ -251,11 +274,19 @@ class EventHandler(
     @Volatile
     var wasdSwayStrength = 50f
 
+    /** 玩法模式门控：简易模式关闭点击宏。 */
+    @Volatile
+    var macrosAllowed = true
+
+    /** 玩法模式门控：简易模式关闭拟人化抖动。 */
+    @Volatile
+    var humanizationAllowed = true
+
     private val strengthFactor: Float
-        get() = (humanizationStrength / 100f).coerceIn(0f, 1f)
+        get() = if (!humanizationAllowed) 0f else (humanizationStrength / 100f).coerceIn(0f, 1f)
 
     private val swayFactor: Float
-        get() = (wasdSwayStrength / 100f).coerceIn(0f, 1f)
+        get() = if (!humanizationAllowed) 0f else (wasdSwayStrength / 100f).coerceIn(0f, 1f)
 
     /**
      * 抖动间隔（ms）。以前固定 100–220ms，几乎每帧都在动，实际用起来会干扰瞄准；
@@ -730,7 +761,8 @@ class EventHandler(
         val pointerId = pointerIds[pointerIdKey]
 
         if (sprintBit != 0 && event.action == KeyEvent.ACTION_DOWN &&
-            event.repeatCount == 0 && !pressedKeyCodes.contains(event.keyCode)) {
+            event.repeatCount == 0 && !pressedKeyCodes.contains(event.keyCode) &&
+            shiftCancelWalkEnabled) {
             triggerWalk(sprint = true)
         }
 

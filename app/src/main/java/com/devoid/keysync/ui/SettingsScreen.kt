@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,6 +25,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ExitToApp
@@ -35,6 +37,7 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -55,11 +58,13 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -87,6 +92,8 @@ import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.ProfileAssist
+import com.devoid.keysync.model.PlayMode
+import com.devoid.keysync.model.DefaultPlayModes
 import com.devoid.keysync.model.QuickMeleeMacro
 import com.devoid.keysync.model.assist
 import com.devoid.keysync.model.defaultQuickSwapSteps
@@ -135,9 +142,11 @@ fun SettingsScreen(
     onSetMouseModeLatch: (Boolean) -> Unit = {},
     screenSizeCacheEnabled: Boolean = true,
     onSetScreenSizeCache: (Boolean) -> Unit = {},
+    mouseGuardEnabled: Boolean = true,
+    onSetMouseGuardEnabled: (Boolean) -> Unit = {},
     discardDragEnabled: Boolean = false,
     onSetDiscardDragEnabled: (Boolean) -> Unit = {},
-    discardDragSpeed: Float = 50f,
+    discardDragSpeed: Float = 25f,
     onSetDiscardDragSpeed: (Float) -> Unit = {},
     fScrollControlEnabled: Boolean = true,
     onSetFScrollControlEnabled: (Boolean) -> Unit = {},
@@ -145,12 +154,27 @@ fun SettingsScreen(
     onSetFScrollSwipePx: (Float) -> Unit = {},
     fScrollInvert: Boolean = false,
     onSetFScrollInvert: (Boolean) -> Unit = {},
+    fScrollStepDelayMs: Int = 7,
+    onSetFScrollStepDelayMs: (Int) -> Unit = {},
+    playModes: List<PlayMode> = DefaultPlayModes,
+    currentPlayModeIndex: Int = 1,
+    onSetCurrentPlayMode: (Int) -> Unit = {},
+    onUpdatePlayMode: (Int, PlayMode) -> Unit = { _, _ -> },
+    onAddPlayMode: () -> Unit = {},
+    enterLayerPreviewEnabled: Boolean = true,
+    onSetEnterLayerPreviewEnabled: (Boolean) -> Unit = {},
     mapMouseToggleEnabled: Boolean = true,
     onSetMapMouseToggleEnabled: (Boolean) -> Unit = {},
+    mapZoomDelayMs: Int = 100,
+    onSetMapZoomDelayMs: (Int) -> Unit = {},
     fCursorClickEnabled: Boolean = true,
     onSetFCursorClickEnabled: (Boolean) -> Unit = {},
+    fCursorClickWindowMs: Int = 1000,
+    onSetFCursorClickWindowMs: (Int) -> Unit = {},
     tabEscAimEnabled: Boolean = true,
     onSetTabEscAimEnabled: (Boolean) -> Unit = {},
+    tabEscAimDelayMs: Int = 110,
+    onSetTabEscAimDelayMs: (Int) -> Unit = {},
     onStopOverlay: () -> Unit = {},
     wasdHumanization: Boolean = false,
     keyHumanization: Boolean = false,
@@ -274,15 +298,37 @@ fun SettingsScreen(
         )
     }
 
+    var detail by remember { mutableStateOf<SettingsDetail?>(null) }
+    val pagerState = rememberPagerState(pageCount = { 4 })
+    val pageScope = rememberCoroutineScope()
+    // 齿轮详情页：系统返回先回到「模式」，不直接退出设置。
+    // 只清空 detail，翻页统一交给下面的 LaunchedEffect，避免两处同时动画互相取消后卡在详情页。
+    BackHandler(enabled = pagerState.currentPage == 3) {
+        detail = null
+    }
+    // 详情页只能由齿轮进入；detail 清空后自动退回「模式」。
+    // 只以 detail 作为 key：若把 currentPage 也放进 key，翻页过程中 key 变化会取消动画，停在空白页。
+    LaunchedEffect(detail) {
+        if (detail == null && pagerState.currentPage == 3) {
+            pagerState.animateScrollToPage(1)
+        }
+    }
+
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
                 title = {
-                    Text(text = stringResource(R.string.settings_title))
+                    Text(text = detail?.title ?: stringResource(R.string.settings_title))
                 },
                 navigationIcon = {
                     IconButton(onClick = {
-                        if (isDirty) showDiscardConfirm = true else onNavigateBack()
+                        if (pagerState.currentPage == 3) {
+                            detail = null
+                        } else if (isDirty) {
+                            showDiscardConfirm = true
+                        } else {
+                            onNavigateBack()
+                        }
                     }) {
                         Icon(
                             Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
@@ -304,16 +350,15 @@ fun SettingsScreen(
         }
     ) { innerPadding ->
         // 设置页按主题分区，顶部标签或左右滑动切换；每页各自滚动。
-        val pageTitles = listOf("预设", "按键辅助", "操作", "鼠标", "高级")
-        val pagerState = rememberPagerState(pageCount = { pageTitles.size })
-        val pageScope = rememberCoroutineScope()
+        val pageTitles = listOf("预设", "模式", "维护")
         Column(
             Modifier
                 .padding(innerPadding)
                 .fillMaxSize()
         ) {
             ScrollableTabRow(
-                selectedTabIndex = pagerState.currentPage,
+                // 详情页（page 3）仍高亮「模式」，让用户感觉只是进了子页面。
+                selectedTabIndex = if (pagerState.currentPage == 3) 1 else pagerState.currentPage,
                 edgePadding = 8.dp,
             ) {
                 pageTitles.forEachIndexed { index, title ->
@@ -329,6 +374,7 @@ fun SettingsScreen(
             HorizontalPager(
                 state = pagerState,
                 modifier = Modifier.fillMaxSize(),
+                userScrollEnabled = pagerState.currentPage < 2,
             ) { page ->
                 Column(
                     modifier = Modifier
@@ -351,7 +397,26 @@ fun SettingsScreen(
                     onImport = onImportProfile,
                         )
                     }
-                    if (page == 2) {
+                    if (page == 1) {
+                        PlayModeCard(
+                            modes = playModes,
+                            currentIndex = currentPlayModeIndex,
+                            onSelect = onSetCurrentPlayMode,
+                            onUpdate = onUpdatePlayMode,
+                            onAdd = onAddPlayMode,
+                            onOpenDetail = { d ->
+                                detail = d
+                                pageScope.launch { pagerState.animateScrollToPage(3) }
+                            },
+                            tabEscAimEnabled = tabEscAimEnabled,
+                            onSetTabEscAimEnabled = onSetTabEscAimEnabled,
+                            mapMouseToggleEnabled = mapMouseToggleEnabled,
+                            onSetMapMouseToggleEnabled = onSetMapMouseToggleEnabled,
+                            mouseGuardEnabled = mouseGuardEnabled,
+                            onSetMouseGuardEnabled = onSetMouseGuardEnabled,
+                        )
+                    }
+                    if (page == 3 && detail == SettingsDetail.DISPLAY) {
                         SettingsSectionCard(
                             title = "显示",
                     scope = SettingsScope.GLOBAL,
@@ -395,6 +460,25 @@ fun SettingsScreen(
                         Switch(
                             checked = statusBarVisible,
                             onCheckedChange = onSetStatusBarVisible
+                        )
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "小键盘 Enter 层级预览",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = "按右侧小键盘 Enter 循环：按键层 → 高级层（丢弃点）→ 全部隐藏 → 按键层，" +
+                                    "方便快速检查映射位置。只改悬浮窗显示，不影响注入；默认开启。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = enterLayerPreviewEnabled,
+                            onCheckedChange = onSetEnterLayerPreviewEnabled
                         )
                     }
                 }
@@ -454,71 +538,38 @@ fun SettingsScreen(
                     )
                 }
                     }
-                    if (page == 1) {
+                    if (page == 3 && detail in setOf(
+                            SettingsDetail.MACROS,
+                            SettingsDetail.ASSIST,
+                        )
+                    ) {
                         ProfileAssistCard(
                             profile = activeProfile,
                             draft = assistDraft,
                             onDraftChange = { assistDraft = it },
+                            title = detail?.title ?: "按键辅助",
+                            sections = when (detail) {
+                                SettingsDetail.MACROS -> setOf(AssistSection.MACROS)
+                                else -> setOf(AssistSection.ASSIST)
+                            },
                         )
                     }
-                    if (page == 2) {
+                    if (page == 3 && detail in setOf(
+                            SettingsDetail.MOUSE_GUARD,
+                            SettingsDetail.ESC_TAB_AIM,
+                            SettingsDetail.MAP_MOUSE,
+                            SettingsDetail.F_CURSOR,
+                            SettingsDetail.DISCARD,
+                            SettingsDetail.SCROLL,
+                        )
+                    ) {
                         SettingsSectionCard(
-                            title = "触控方式",
-                    scope = SettingsScope.PRESET,
-                    hint = "跟随当前预设 · 改动需点右上角保存",
-                    initiallyExpanded = true,
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                stringResource(R.string.settings_cancelable_button),
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                modifier = Modifier.padding(top = 4.dp),
-                                text = stringResource(R.string.settings_touch_cancel),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        TouchModeSelector(
-                            value = newConfig.cancellableTouchMode,
-                            onSelect = { newConfig = newConfig.copy(cancellableTouchMode = it) }
-                        )
-                    }
-                    HorizontalDivider()
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                stringResource(R.string.settings_scope),
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                modifier = Modifier.padding(top = 4.dp),
-                                text = stringResource(R.string.settings_touch_scope),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        TouchModeSelector(
-                            value = newConfig.normalBtnTouchMode,
-                            onSelect = { newConfig = newConfig.copy(normalBtnTouchMode = it) }
-                        )
-                    }
-                    Text(
-                        "颜色区分：点击=绿、按住=蓝、混合=橙（有约 200ms 延迟，不推荐）、轮盘=紫；单个按键可在编辑弹窗里单独覆盖。",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                    }
-                    if (page == 3) {
-                        SettingsSectionCard(
-                            title = "鼠标与兼容",
+                            title = detail?.title ?: "鼠标与兼容",
                     scope = SettingsScope.GLOBAL,
                     hint = "全局 · 立即生效并保存",
                     initiallyExpanded = true,
                 ) {
+                    if (detail == SettingsDetail.MOUSE_GUARD) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "单帧断点阈值",
@@ -577,7 +628,13 @@ fun SettingsScreen(
                             onCheckedChange = onSetScreenSizeCache
                         )
                     }
-                    HorizontalDivider()
+                    Text(
+                        "关闭「防止大幅甩动导致视角问题」总开关后，以上三项都不生效。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    }
+                    if (detail == SettingsDetail.ESC_TAB_AIM) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(
@@ -585,8 +642,8 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "按物理 ESC 或 Tab 关掉背包/地图后，约 110ms 切回射击模式，再等 150ms 幂等重建准心触点，" +
-                                    "避免界面切换瞬间注入的触点被游戏丢掉。已在射击模式时不动作；不吞按键；" +
+                                "按物理 ESC 或 Tab 关掉背包/地图后，等待设定时间切回射击模式，再等 150ms 幂等重建准心触点，" +
+                                    "避免界面切换瞬间注入的触点被游戏丢掉。默认 110ms；已在射击模式时不动作；不吞按键；" +
                                     "光标模式下按 ` 仍可手动切回。",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -597,7 +654,29 @@ fun SettingsScreen(
                             onCheckedChange = onSetTabEscAimEnabled
                         )
                     }
-                    HorizontalDivider()
+                    if (tabEscAimEnabled) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "回瞄准延迟",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text("${tabEscAimDelayMs} ms", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Slider(
+                            value = tabEscAimDelayMs.toFloat().coerceIn(50f, 1000f),
+                            valueRange = 50f..1000f,
+                            steps = 94,
+                            onValueChange = { onSetTabEscAimDelayMs(it.roundToInt()) }
+                        )
+                        Text(
+                            "界面关闭动画较长或回瞄准总被吞时可调高；默认 110ms。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    }
+                    if (detail == SettingsDetail.MAP_MOUSE) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(
@@ -605,9 +684,9 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "第一下按 M 正常触发 M 映射（开图）并立即切出鼠标；第二下不再按 M，改为点击 ESC 按钮的" +
-                                    "映射位置（按下约 50–125ms 后抬起）再收回鼠标。适合开图后用鼠标点标记/道具；" +
-                                    "预设里没有 ESC 按钮时只切鼠标模式。",
+                                "第一下按 M 正常触发 M 映射（开图），等待设定时间后双指从左右随机位置向中间捏合，" +
+                                    "把小地图撑成大地图，然后切出鼠标；第二下不再按 M，改为点击 ESC 按钮的" +
+                                    "映射位置（按下约 50–125ms 后抬起）再收回鼠标。预设里没有 ESC 按钮时只切鼠标模式。",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -617,7 +696,29 @@ fun SettingsScreen(
                             onCheckedChange = onSetMapMouseToggleEnabled
                         )
                     }
-                    HorizontalDivider()
+                    if (mapMouseToggleEnabled) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "放大前等待",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text("${mapZoomDelayMs} ms", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Slider(
+                            value = mapZoomDelayMs.toFloat().coerceIn(0f, 1000f),
+                            valueRange = 0f..1000f,
+                            steps = 99,
+                            onValueChange = { onSetMapZoomDelayMs(it.roundToInt()) }
+                        )
+                        Text(
+                            "开图后地图完全出现再捏合才有效；默认 100ms，地图打开慢可调高。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    }
+                    if (detail == SettingsDetail.F_CURSOR) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(
@@ -625,9 +726,9 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "射击模式下按 F 后的 400ms 内，第一次点鼠标左键会直接切出光标，并把这一下变成" +
-                                    "光标位置点击（适合开箱子/拾取）；每轮只触发一次，狂按 F 不会叠加。按 Tab/ESC " +
-                                    "回射击模式后立即失效。",
+                                "射击模式下按 F 后的设定时间内，第一次点鼠标左键会直接切出光标，并把这一下变成" +
+                                    "光标位置点击（适合开箱子/拾取）；默认 1000ms；每轮只触发一次，狂按 F 不会叠加。" +
+                                    "按 Tab/ESC 回射击模式后立即失效。",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -637,7 +738,29 @@ fun SettingsScreen(
                             onCheckedChange = onSetFCursorClickEnabled
                         )
                     }
-                    HorizontalDivider()
+                    if (fCursorClickEnabled) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "左键触发间隔",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text("${fCursorClickWindowMs} ms", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Slider(
+                            value = fCursorClickWindowMs.toFloat().coerceIn(100f, 3000f),
+                            valueRange = 100f..3000f,
+                            steps = 28,
+                            onValueChange = { onSetFCursorClickWindowMs((it / 100f).roundToInt() * 100) }
+                        )
+                        Text(
+                            "按 F 后多久内点左键仍算唤出光标；默认 1000ms，可调 100–3000ms（100ms 步进）。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    }
+                    if (detail == SettingsDetail.DISCARD) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(
@@ -646,7 +769,7 @@ fun SettingsScreen(
                             )
                             Text(
                                 "光标模式下按住 Alt 再按 D：在光标处按住物品，分 12 步拖到编辑态放置的「丢弃点」" +
-                                    "（默认 ×5 速，每步约 3ms），停顿 70ms 后松开，再按同样速度把光标送回原位。" +
+                                    "（默认 ×25 速，约为旧默认的一半），停顿 70ms 后松开，再按同样速度把光标送回原位。" +
                                     "射击模式、还没出现过鼠标、或没按住 Alt 时不生效。",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -678,13 +801,14 @@ fun SettingsScreen(
                             }
                         )
                         Text(
-                            "1 = 原始速度（每步 14ms），50 = 50 倍速（默认），100 = 100 倍速（约 2ms 走完）。" +
+                            "1 = 原始速度（每步 14ms），25 = 25 倍速（默认），100 = 100 倍速（约 2ms 走完）。" +
                                 "只影响移动过程；按下前 40ms、松开前 70ms 的停顿保持不变。",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    HorizontalDivider()
+                    }
+                    if (detail == SettingsDetail.SCROLL) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(
@@ -692,9 +816,8 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "F 后左键唤出光标时接管滚轮：光标在左半屏用左侧锚点、右半屏用右侧锚点，" +
-                                    "每格在锚点短滑一段后复位。按 ESC / Tab 或切回射击模式立即恢复原来的滚轮映射。" +
-                                    "左右锚点在编辑态切到「高级层」后拖动放置。",
+                                "F 后左键唤出光标时接管滚轮：直接在光标当前位置向上/下滑一小段，每格结束复位，" +
+                                    "不再区分左右半屏，也不需要放置锚点。按 ESC / Tab 或切回射击模式后立即恢复原来的滚轮映射。",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -723,6 +846,25 @@ fun SettingsScreen(
                             onValueChange = { onSetFScrollSwipePx(it.roundToInt().toFloat()) }
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "每格延迟",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text("${fScrollStepDelayMs} ms", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Slider(
+                            value = fScrollStepDelayMs.toFloat().coerceIn(2f, 40f),
+                            valueRange = 2f..40f,
+                            steps = 37,
+                            onValueChange = { onSetFScrollStepDelayMs(it.roundToInt()) }
+                        )
+                        Text(
+                            "每格滑动分 5 小步，这是每小步的间隔；默认 7ms。慢一点更容易被游戏识别，快一点更跟手。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("方向反转", style = MaterialTheme.typography.bodyMedium)
                                 Text(
@@ -734,9 +876,10 @@ fun SettingsScreen(
                             Switch(checked = fScrollInvert, onCheckedChange = onSetFScrollInvert)
                         }
                     }
+                    }
                 }
                     }
-                    if (page == 4) {
+                    if (page == 3 && detail == SettingsDetail.HUMANIZATION) {
                         SettingsSectionCard(
                             title = "按键拟人化",
                     scope = SettingsScope.GLOBAL,
@@ -857,6 +1000,8 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                 }
+                    }
+                    if (page == 2) {
                 SettingsSectionCard(
                     title = "维护",
                     scope = SettingsScope.NONE,
@@ -941,11 +1086,241 @@ fun SettingsScreen(
     }
 }
 
+/** 设置页的齿轮详情页：从「模式」里的功能行进入，复用原来的分区内容。 */
+private enum class SettingsDetail(val title: String) {
+    MACROS("宏"),
+    ASSIST("按键辅助"),
+    F_CURSOR("F 交互唤出光标"),
+    SCROLL("F 光标滚轮操控"),
+    DISCARD("Alt+D 拖拽丢弃"),
+    HUMANIZATION("拟人化"),
+    DISPLAY("显示与操作"),
+    MOUSE_GUARD("防止大幅甩动视角问题"),
+    ESC_TAB_AIM("ESC / Tab 回瞄准"),
+    MAP_MOUSE("M 键地图光标"),
+}
+
+/** 按键辅助卡按齿轮拆成两组：辅助 / 宏（快速近战也收在宏里）。 */
+private enum class AssistSection { ASSIST, MACROS }
+
 /** 设置分区的作用域标签：预设级跟随当前预设，全局级对所有预设统一生效。 */
 private enum class SettingsScope(val label: String) {
     PRESET("预设级"),
     GLOBAL("全局"),
     NONE(""),
+}
+
+/**
+ * 玩法模式：简易 + 两个可编辑高级槽。模式只做运行时门控，
+ * 不覆盖各功能自己的开关，所以来回切换不会丢单项配置。
+ */
+@Composable
+private fun PlayModeCard(
+    modes: List<PlayMode>,
+    currentIndex: Int,
+    onSelect: (Int) -> Unit,
+    onUpdate: (Int, PlayMode) -> Unit,
+    onAdd: () -> Unit,
+    onOpenDetail: (SettingsDetail) -> Unit,
+    tabEscAimEnabled: Boolean,
+    onSetTabEscAimEnabled: (Boolean) -> Unit,
+    mapMouseToggleEnabled: Boolean,
+    onSetMapMouseToggleEnabled: (Boolean) -> Unit,
+    mouseGuardEnabled: Boolean,
+    onSetMouseGuardEnabled: (Boolean) -> Unit,
+) {
+    SettingsSectionCard(
+        title = "玩法模式",
+        scope = SettingsScope.GLOBAL,
+        hint = "全局 · 立即生效并保存",
+        initiallyExpanded = true,
+    ) {
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            modes.forEachIndexed { index, mode ->
+                ModeChip(
+                    text = mode.name,
+                    selected = currentIndex == index,
+                    onClick = { onSelect(index) },
+                )
+            }
+            ModeAddChip(onClick = onAdd)
+        }
+        Text(
+            "简易模式只保留基础映射和鼠标；方案里的勾选决定运行时启用哪些功能。" +
+                "模式不会覆盖各功能原本的开关，切回来不会丢设置。",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        val mode = modes.getOrNull(currentIndex) ?: modes[1]
+        val editable = currentIndex != 0
+        if (editable) {
+            OutlinedTextField(
+                value = mode.name,
+                onValueChange = { onUpdate(currentIndex, mode.copy(name = it.take(8))) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("方案名称") },
+                singleLine = true,
+            )
+        } else {
+            Text(
+                "当前：简易模式，下面只保留基础设置；切到方案后可查看并配置高级功能。",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+        if (editable) {
+        ModeFeatureRow(
+            label = "宏（切枪 / 合盾 / 扇贝 / 冲刺）",
+            checked = mode.macros,
+            enabled = editable,
+            onCheckedChange = { onUpdate(currentIndex, mode.copy(macros = it)) },
+            onGear = { onOpenDetail(SettingsDetail.MACROS) },
+        )
+        ModeFeatureRow(
+            label = "按键辅助（换位 / 2-3-4 / 静步）",
+            checked = mode.assists,
+            enabled = editable,
+            onCheckedChange = { onUpdate(currentIndex, mode.copy(assists = it)) },
+            onGear = { onOpenDetail(SettingsDetail.ASSIST) },
+        )
+        ModeFeatureRow(
+            label = "F 交互后左键唤出光标",
+            checked = mode.fCursor,
+            enabled = editable,
+            onCheckedChange = { onUpdate(currentIndex, mode.copy(fCursor = it)) },
+            onGear = { onOpenDetail(SettingsDetail.F_CURSOR) },
+        )
+        ModeFeatureRow(
+            label = "F 光标滚轮操控",
+            checked = mode.scrollControl,
+            enabled = editable,
+            onCheckedChange = { onUpdate(currentIndex, mode.copy(scrollControl = it)) },
+            onGear = { onOpenDetail(SettingsDetail.SCROLL) },
+        )
+        ModeFeatureRow(
+            label = "Alt+D 拖拽丢弃",
+            checked = mode.discard,
+            enabled = editable,
+            onCheckedChange = { onUpdate(currentIndex, mode.copy(discard = it)) },
+            onGear = { onOpenDetail(SettingsDetail.DISCARD) },
+        )
+        ModeFeatureRow(
+            label = "拟人化抖动",
+            checked = mode.humanization,
+            enabled = editable,
+            onCheckedChange = { onUpdate(currentIndex, mode.copy(humanization = it)) },
+            onGear = { onOpenDetail(SettingsDetail.HUMANIZATION) },
+        )
+        }
+        if (editable) {
+        ModeFeatureRow(
+            label = "ESC / Tab 关闭背包回瞄准",
+            checked = tabEscAimEnabled,
+            enabled = true,
+            onCheckedChange = onSetTabEscAimEnabled,
+            onGear = { onOpenDetail(SettingsDetail.ESC_TAB_AIM) },
+        )
+        ModeFeatureRow(
+            label = "M 键开关地图并切光标",
+            checked = mapMouseToggleEnabled,
+            enabled = true,
+            onCheckedChange = onSetMapMouseToggleEnabled,
+            onGear = { onOpenDetail(SettingsDetail.MAP_MOUSE) },
+        )
+        ModeFeatureRow(
+            label = "防止大幅甩动导致视角问题",
+            checked = mouseGuardEnabled,
+            enabled = true,
+            onCheckedChange = onSetMouseGuardEnabled,
+            onGear = { onOpenDetail(SettingsDetail.MOUSE_GUARD) },
+        )
+        }
+        BasicSettingRow(
+            title = "显示与操作",
+            desc = "透明度、顶部状态条、小键盘 Enter 预览、按钮大小、指针灵敏度",
+            onGear = { onOpenDetail(SettingsDetail.DISPLAY) },
+        )
+    }
+}
+
+@Composable
+private fun ModeChip(text: String, selected: Boolean, onClick: () -> Unit) {
+    // 选中才有主色边框；未选中只留浅色底，避免「没用到的方案反而更显眼」。
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        border = if (selected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+    ) {
+        Text(
+            text,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.labelLarge,
+            color = if (selected) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun ModeAddChip(onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+    ) {
+        Icon(
+            Icons.Rounded.Add,
+            contentDescription = "添加方案",
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp).size(18.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun ModeFeatureRow(
+    label: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    onGear: () -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium
+        )
+        IconButton(onClick = onGear) {
+            Icon(Icons.Rounded.Settings, contentDescription = "配置")
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+        )
+    }
+}
+
+@Composable
+private fun BasicSettingRow(title: String, desc: String, onGear: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                desc,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        IconButton(onClick = onGear) {
+            Icon(Icons.Rounded.Settings, contentDescription = "配置")
+        }
+    }
 }
 
 /**
@@ -1062,11 +1437,16 @@ private fun ProfileAssistCard(
     profile: Profile?,
     draft: ProfileAssist,
     onDraftChange: (ProfileAssist) -> Unit,
+    title: String = "按键辅助",
+    sections: Set<AssistSection> = setOf(
+        AssistSection.ASSIST,
+        AssistSection.MACROS,
+    ),
 ) {
     var showMacros by remember { mutableStateOf(false) }
 
     SettingsSectionCard(
-        title = "按键辅助",
+        title = title,
         scope = SettingsScope.PRESET,
         hint = if (profile == null) "先在「预设」里选择一个预设"
         else "当前预设：${profile.name} · 改动需点右上角保存",
@@ -1080,6 +1460,7 @@ private fun ProfileAssistCard(
                 )
                 return@SettingsSectionCard
             }
+            if (AssistSection.ASSIST in sections) {
             AssistSwitchRow(
                 title = "R ↔ 右键（1/2 换位 / X 还原）",
                 desc = "按 1、2 任意一个让 R 与鼠标右键按钮交换位置，按 X 各自归位。交换立即生效、不重建触点，" +
@@ -1120,6 +1501,8 @@ private fun ProfileAssistCard(
                     }
                 )
             }
+            }
+            if (AssistSection.MACROS in sections) {
             AssistSwitchRow(
                 title = "快速切枪宏（默认 Alt+9）",
                 desc = "按触发键执行自定义按键序列（默认内置 G502 快速切枪序列）。中间每一步直接注入触点，" +
@@ -1286,38 +1669,43 @@ private fun ProfileAssistCard(
             }
             KeyMacroSection(
                 title = "快速合盾（默认 Alt+8）",
-                desc = "按住 V 点一下 X 再松开 V，然后按住 G 点一下 X 再松开 G；事件间隔默认 10ms，可编辑。",
+                desc = "按住 V 点一下 X 再松开 V，然后按住 G 点一下 X 再松开 G；每步按住默认 10ms，可单独调整。",
                 macro = draft.shieldMacro,
                 defaultSteps = { defaultShieldSteps() },
                 onChange = { onDraftChange(draft.copy(shieldMacro = it)) }
             )
             KeyMacroSection(
                 title = "扇贝盾（默认 Alt+7）",
-                desc = "按 1 → G → V → X，间隔默认 5ms。",
+                desc = "按 1 → G → V → X；每步按住默认 10ms，步骤间隔默认 5ms，都可单独调整。",
                 macro = draft.scallopMacro,
                 defaultSteps = { defaultScallopSteps() },
                 onChange = { onDraftChange(draft.copy(scallopMacro = it)) }
             )
             KeyMacroSection(
                 title = "扇贝盾冲刺（默认 Alt+6）",
-                desc = "按 1 → G → V → X → 鼠标右键，间隔默认 5ms。",
+                desc = "按 1 → G → V → X → 鼠标右键；每步按住默认 10ms，步骤间隔默认 5ms。",
                 macro = draft.scallopDashMacro,
                 defaultSteps = { defaultScallopDashSteps() },
                 onChange = { onDraftChange(draft.copy(scallopDashMacro = it)) }
             )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             QuickMeleeSection(
                 macro = draft.quickMeleeMacro,
                 onChange = { onDraftChange(draft.copy(quickMeleeMacro = it)) }
             )
+            }
+            if (AssistSection.ASSIST in sections) {
             AssistSwitchRow(
-                title = "Shift 取消蹲/趴（C/Z/Ctrl）",
-                desc = "按 Shift 时，如果最近一次蹲/趴是我们帮你点开的，会补点一次同一个键取消姿态再起跑，" +
-                    "每段点击仍按正常点击时长（50–125ms）。你自己手动切换的姿态不介入；未绑定 C/Z/Ctrl 时不生效。",
-                checked = draft.stanceAssistEnabled,
+                title = "Shift 取消静步",
+                desc = "按 Shift 起跑时，如果静步是我们帮你点开的，会自动补点一次静步键取消掉，避免一跑就变成慢走。" +
+                    "你自己手动开的静步不介入；预设里没有静步按钮时不生效。",
+                checked = draft.shiftCancelWalkEnabled,
                 onToggle = {
-                    onDraftChange(draft.copy(stanceAssistEnabled = !draft.stanceAssistEnabled))
+                    onDraftChange(draft.copy(shiftCancelWalkEnabled = !draft.shiftCancelWalkEnabled))
                 }
             )
+            }
+            if (AssistSection.MACROS in sections) {
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -1332,6 +1720,7 @@ private fun ProfileAssistCard(
                 TextButton(onClick = { showMacros = true }) {
                     Text(if (draft.macros.isEmpty()) "添加" else "编辑（${draft.macros.size}）")
                 }
+            }
             }
     }
 
@@ -1369,46 +1758,6 @@ private fun AssistSwitchRow(
             )
         }
         Switch(checked = checked, onCheckedChange = { onToggle() })
-    }
-}
-
-/** 触控方式下拉选择器（滚轮不在此处出现）。 */
-@Composable
-private fun TouchModeSelector(
-    value: TouchMode,
-    onSelect: (TouchMode) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    OutlinedCard(onClick = { expanded = true }) {
-        Row(
-            modifier = Modifier
-                .padding(8.dp)
-                .widthIn(min = 60.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                text = touchModeShortName(value),
-                style = MaterialTheme.typography.titleMedium,
-                color = touchModeColor(value)
-            )
-            Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null)
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            TouchMode.entries.filter { it != TouchMode.WHEEL }.forEach {
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            text = touchModeShortName(it) +
-                                if (it == TouchMode.MIXED) " · 有延迟，不推荐" else "",
-                            color = touchModeColor(it)
-                        )
-                    },
-                    onClick = {
-                        onSelect(it)
-                        expanded = false
-                    })
-            }
-        }
     }
 }
 

@@ -12,7 +12,7 @@ class ProfileAssistTest {
         layoutScreenWidth = 2400,
         layoutScreenHeight = 1080,
         quickSwapEnabled = true,
-        stanceAssistEnabled = true,
+        shiftCancelWalkEnabled = true,
         tapSequence234Enabled = true,
         tapSequence234GapMs = 60,
     )
@@ -22,7 +22,7 @@ class ProfileAssistTest {
         val draft = profile.assist().copy(
             quickSwapEnabled = false,
             tapSequence234GapMs = 120,
-            stanceAssistEnabled = false,
+            shiftCancelWalkEnabled = false,
         )
 
         val saved = profile.withAssist(draft)
@@ -33,7 +33,7 @@ class ProfileAssistTest {
         assertEquals(profile.layoutScreenHeight, saved.layoutScreenHeight)
         assertTrue(!saved.quickSwapEnabled)
         assertEquals(120, saved.tapSequence234GapMs)
-        assertTrue(!saved.stanceAssistEnabled)
+        assertTrue(!saved.shiftCancelWalkEnabled)
         // 再取一次草稿必须和刚写回的一致，isDirty 才能归零。
         assertEquals(draft, saved.assist())
     }
