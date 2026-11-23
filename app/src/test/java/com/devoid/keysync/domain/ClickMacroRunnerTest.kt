@@ -30,7 +30,7 @@ class ClickMacroRunnerTest {
         }
         val macro = ClickMacro("macro", "Sequence", KEYCODE_MOUSE_BACK, listOf(
             MacroStep("one", 0.25f, 0.5f, 100),
-            MacroStep("two", 0.75f, 0.5f, 5000)), enabled = true)
+            MacroStep("two", 0.75f, 0.5f, 5000)), enabled = true, jitterEnabled = false)
         fun press(m: ClickMacro = macro, repeat: Boolean = false) = runner.handle(m.triggerKeyCode, true, repeat,
             listOf(m), Offset(1000f, 500f), Offset(10f, 20f))
         fun release(m: ClickMacro = macro) = runner.handle(m.triggerKeyCode, false, false,

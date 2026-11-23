@@ -98,6 +98,10 @@ class MainActivityViewModel @Inject constructor(
     val keyHumanization: StateFlow<Boolean> = stateManager.keyHumanization
     val humanizationStrength: StateFlow<Float> = stateManager.humanizationStrength
     val humanizationInterval: StateFlow<Long> = stateManager.humanizationInterval
+    /** WASD 专用随机偏移间隔（全局）。 */
+    val wasdJitterRandomEnabled: StateFlow<Boolean> = stateManager.wasdJitterRandomEnabled
+    val wasdJitterMinMs: StateFlow<Int> = stateManager.wasdJitterMinMs
+    val wasdJitterMaxMs: StateFlow<Int> = stateManager.wasdJitterMaxMs
     val wasdSway: StateFlow<Float> = stateManager.wasdSway
     /** WASD 换向弧线过渡（全局）。 */
     val wasdTransition: StateFlow<Boolean> = stateManager.wasdTransition
@@ -118,8 +122,6 @@ class MainActivityViewModel @Inject constructor(
     val discardDragSpeed: StateFlow<Float> = stateManager.discardDragSpeed
     /** M 键开关地图并切换鼠标（全局，默认开启）。 */
     val mapMouseToggleEnabled: StateFlow<Boolean> = stateManager.mapMouseToggleEnabled
-    /** M 开图后执行放大手势前的延迟（ms）。 */
-    val mapZoomDelayMs: StateFlow<Int> = stateManager.mapZoomDelayMs
     val fCursorClickEnabled: StateFlow<Boolean> = stateManager.fCursorClickEnabled
     /** F 交互后左键唤出光标的窗口（ms）。 */
     val fCursorClickWindowMs: StateFlow<Int> = stateManager.fCursorClickWindowMs
@@ -135,11 +137,12 @@ class MainActivityViewModel @Inject constructor(
     val fScrollInvert: StateFlow<Boolean> = stateManager.fScrollInvert
     /** F 滚轮每小步延迟（ms）。 */
     val fScrollStepDelayMs: StateFlow<Int> = stateManager.fScrollStepDelayMs
+    /** F 滚轮操控上/下滑触发键（默认鼠标滚轮上/下）。 */
+    val fScrollUpKeyCode: StateFlow<Int> = stateManager.fScrollUpKeyCode
+    val fScrollDownKeyCode: StateFlow<Int> = stateManager.fScrollDownKeyCode
     /** 玩法模式：简易 + 高级 A/B。 */
     val playModes: StateFlow<List<com.devoid.keysync.model.PlayMode>> = stateManager.playModes
     val currentPlayModeIndex: StateFlow<Int> = stateManager.currentPlayModeIndex
-    /** 小键盘 Enter 层级预览。 */
-    val enterLayerPreviewEnabled: StateFlow<Boolean> = stateManager.enterLayerPreviewEnabled
 
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     /** 「检查更新 / 下载并安装」的状态。 */
@@ -252,6 +255,10 @@ class MainActivityViewModel @Inject constructor(
     fun setKeyHumanization(enabled: Boolean) = stateManager.setKeyHumanization(enabled)
     fun setHumanizationStrength(value: Float) = stateManager.setHumanizationStrength(value)
     fun setHumanizationInterval(intervalMs: Long) = stateManager.setHumanizationInterval(intervalMs)
+    fun setWasdJitterRandomEnabled(enabled: Boolean) =
+        stateManager.setWasdJitterRandomEnabled(enabled)
+    fun setWasdJitterRange(minMs: Int, maxMs: Int) =
+        stateManager.setWasdJitterRange(minMs, maxMs)
     fun setWasdSway(value: Float) = stateManager.setWasdSway(value)
     fun setWasdTransition(enabled: Boolean) = stateManager.setWasdTransition(enabled)
     fun setWasdTransitionMs(ms: Int) = stateManager.setWasdTransitionMs(ms)
@@ -265,7 +272,8 @@ class MainActivityViewModel @Inject constructor(
     fun setDiscardDragEnabled(enabled: Boolean) = stateManager.setDiscardDragEnabled(enabled)
     fun setDiscardDragSpeed(speed: Float) = stateManager.setDiscardDragSpeed(speed)
     fun setMapMouseToggleEnabled(enabled: Boolean) = stateManager.setMapMouseToggleEnabled(enabled)
-    fun setMapZoomDelayMs(ms: Int) = stateManager.setMapZoomDelayMs(ms)
+    fun setFScrollTriggerKeys(upKeyCode: Int, downKeyCode: Int) =
+        stateManager.setFScrollTriggerKeys(upKeyCode, downKeyCode)
     fun setFCursorClickEnabled(enabled: Boolean) = stateManager.setFCursorClickEnabled(enabled)
     fun setFCursorClickWindowMs(ms: Int) = stateManager.setFCursorClickWindowMs(ms)
     fun setTabEscAimEnabled(enabled: Boolean) = stateManager.setTabEscAimEnabled(enabled)
@@ -278,8 +286,6 @@ class MainActivityViewModel @Inject constructor(
     fun updatePlayMode(index: Int, mode: com.devoid.keysync.model.PlayMode) =
         stateManager.updatePlayMode(index, mode)
     fun addPlayMode() = stateManager.addPlayMode()
-    fun setEnterLayerPreviewEnabled(enabled: Boolean) =
-        stateManager.setEnterLayerPreviewEnabled(enabled)
 
     /**
      * Removes games by package name.

@@ -10,13 +10,13 @@ package com.devoid.keysync.model
 data class ProfileAssist(
     val quickSwapEnabled: Boolean = true,
     val tapSequence234Enabled: Boolean = true,
-    val tapSequence234GapMs: Int = 5,
+    val tapSequence234GapMinMs: Int = 20,
+    val tapSequence234GapMaxMs: Int = 30,
     val keyMacro: KeySeqMacro = KeySeqMacro(),
     val shieldMacro: KeySeqMacro = defaultShieldMacro(),
     val scallopMacro: KeySeqMacro = defaultScallopMacro(),
     val scallopDashMacro: KeySeqMacro = defaultScallopDashMacro(),
     val quickMeleeMacro: QuickMeleeMacro = QuickMeleeMacro(),
-    val shiftCancelWalkEnabled: Boolean = true,
     val macros: List<ClickMacro> = emptyList(),
 )
 
@@ -24,13 +24,13 @@ data class ProfileAssist(
 fun Profile.assist(): ProfileAssist = ProfileAssist(
     quickSwapEnabled = quickSwapEnabled,
     tapSequence234Enabled = tapSequence234Enabled,
-    tapSequence234GapMs = tapSequence234GapMs,
+    tapSequence234GapMinMs = tapSequence234GapMinMs,
+    tapSequence234GapMaxMs = tapSequence234GapMaxMs,
     keyMacro = keyMacro,
     shieldMacro = shieldMacro,
     scallopMacro = scallopMacro,
     scallopDashMacro = scallopDashMacro,
     quickMeleeMacro = quickMeleeMacro,
-    shiftCancelWalkEnabled = shiftCancelWalkEnabled,
     macros = macros,
 )
 
@@ -38,7 +38,9 @@ fun Profile.assist(): ProfileAssist = ProfileAssist(
 fun Profile.withAssist(assist: ProfileAssist): Profile = copy(
     quickSwapEnabled = assist.quickSwapEnabled,
     tapSequence234Enabled = assist.tapSequence234Enabled,
-    tapSequence234GapMs = assist.tapSequence234GapMs.coerceIn(5, 1000),
+    tapSequence234GapMinMs = assist.tapSequence234GapMinMs.coerceIn(5, 500),
+    tapSequence234GapMaxMs = assist.tapSequence234GapMaxMs
+        .coerceIn(assist.tapSequence234GapMinMs.coerceIn(5, 500), 500),
     keyMacro = assist.keyMacro.sanitized(),
     shieldMacro = assist.shieldMacro.sanitized(),
     scallopMacro = assist.scallopMacro.sanitized(),
@@ -46,7 +48,6 @@ fun Profile.withAssist(assist: ProfileAssist): Profile = copy(
     quickMeleeMacro = assist.quickMeleeMacro.copy(
         delayMs = assist.quickMeleeMacro.delayMs.coerceIn(20, 1000),
     ),
-    shiftCancelWalkEnabled = assist.shiftCancelWalkEnabled,
     macros = assist.macros,
 )
 

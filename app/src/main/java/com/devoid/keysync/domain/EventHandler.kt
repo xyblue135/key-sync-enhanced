@@ -123,8 +123,12 @@ class EventHandler(
 
     fun allocateDragPointer(): Int = dragPointerBase + (dragPointerCursor++ % 4)
 
+    /** 已按下、尚未松开的触点，保证重复调用释放是幂等的。 */
+    private val activeDragPointers = HashSet<Int>(8)
+
     /** 拖拽起点：按住左键（在游戏里表现为按下不放）。 */
     fun beginCursorDrag(pointerId: Int, position: Offset) {
+        activeDragPointers.add(pointerId)
         eventInjector.injectPointer(pointerId, position)
     }
 
@@ -133,9 +137,9 @@ class EventHandler(
         eventInjector.transFormGesture(pointerId, position)
     }
 
-    /** 松开左键；取消/异常路径也必须调用。 */
+    /** 松开左键；取消/异常路径也必须调用，重复调用不会再次释放。 */
     fun endCursorDrag(pointerId: Int) {
-        eventInjector.releasePointer(pointerId)
+        if (activeDragPointers.remove(pointerId)) eventInjector.releasePointer(pointerId)
     }
 
     // 快速切枪宏使用独立触点号段，和拖拽/按键触点错开。
@@ -144,13 +148,17 @@ class EventHandler(
 
     fun allocateSeqPointer(): Int = seqPointerBase + (seqPointerCursor++ % 8)
 
+    /** 宏触点是否仍在按下；防止 UP 步骤与 finally 重复释放同一个触点。 */
+    private val activeSeqPointers = HashSet<Int>(16)
+
     /** 宏的一步：在指定位置按下，不经过任何按键模式/换位逻辑。 */
     fun pressSeqPointer(pointerId: Int, position: Offset) {
+        activeSeqPointers.add(pointerId)
         eventInjector.injectPointer(pointerId, position)
     }
 
     fun releaseSeqPointer(pointerId: Int) {
-        eventInjector.releasePointer(pointerId)
+        if (activeSeqPointers.remove(pointerId)) eventInjector.releasePointer(pointerId)
     }
 
     fun setMacros(value: List<ClickMacro>, viewport: Offset, origin: Offset) {
@@ -214,25 +222,9 @@ class EventHandler(
     )
     fun calibrateWalkOff() { walkToggle.calibrateOff(); eventInjector.clear() }
 
-    /** Shift 是否取消我们自己开启的静步；由当前预设的按键辅助开关控制。 */
-    var shiftCancelWalkEnabled: Boolean = true
-
     /** 进入光标模式时光标的落点（悬浮层坐标）；null = 回退到准心按钮位置。 */
     var cursorSpawnPosition: Offset? = null
 
-    /* ---- 地图放大手势（M 开图后双指内缩）用到的底层触点操作 ---- */
-
-    fun pinchDown(pointerId: Int, position: Offset) {
-        eventInjector.injectPointer(pointerId, position)
-    }
-
-    fun pinchMove(pointerId: Int, delta: Offset) {
-        eventInjector.updatePointerPosition(pointerId, delta)
-    }
-
-    fun pinchUp(pointerId: Int) {
-        eventInjector.releasePointer(pointerId)
-    }
 
     private fun triggerWalk(sprint: Boolean = false) {
         val key = walkKeyCode ?: -10_005
@@ -326,6 +318,22 @@ class EventHandler(
         humanizationIntervalMs = intervalMs.coerceIn(MIN_HUMANIZATION_INTERVAL_MS, MAX_HUMANIZATION_INTERVAL_MS)
     }
 
+    /** WASD 抖动间隔随机波动（默认开启，200–300ms）；关闭时回落到 [humanizationIntervalMs] ±20%。 */
+    @Volatile
+    var wasdJitterRandomEnabled = true
+
+    @Volatile
+    var wasdJitterMinMs = 200
+
+    @Volatile
+    var wasdJitterMaxMs = 300
+
+    fun setWasdJitterInterval(enabled: Boolean, minMs: Int, maxMs: Int) {
+        wasdJitterRandomEnabled = enabled
+        wasdJitterMinMs = minMs.coerceIn(50, 5000)
+        wasdJitterMaxMs = maxMs.coerceIn(wasdJitterMinMs, 5000)
+    }
+
     // 持键期间低频率重掷抖动。间隔可配置（默认 1s），并带 ±20% 随机，
     // 避免固定周期本身成为可提取的规律。
     private val humanizeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -353,6 +361,15 @@ class EventHandler(
         val base = humanizationIntervalMs
             .coerceIn(MIN_HUMANIZATION_INTERVAL_MS, MAX_HUMANIZATION_INTERVAL_MS)
         return (base * (0.8f + Random.nextFloat() * 0.4f)).toLong().coerceAtLeast(50L)
+    }
+
+    /** WASD 专用间隔：开关打开时在自定义区间内均匀采样，否则沿用通用间隔。 */
+    private fun nextWasdJitterDelay(): Long {
+        if (!wasdJitterRandomEnabled) return nextJitterDelay()
+        val lo = wasdJitterMinMs.coerceIn(50, 5000)
+        val hi = wasdJitterMaxMs.coerceIn(lo, 5000)
+        return if (hi == lo) lo.toLong()
+        else Random.nextLong(lo.toLong(), hi.toLong() + 1)
     }
 
     /**
@@ -481,7 +498,7 @@ class EventHandler(
         wasdJitterJob?.cancel()
         wasdJitterJob = humanizeScope.launch {
             while (isActive && wasdHumanization) {
-                delay(nextJitterDelay())
+                delay(nextWasdJitterDelay())
                 if (!wasdHumanization) break
                 // 只拖 current 触点，绝不 reanchor（见 JoystickMotion.jitter）。
                 val center = map.center ?: return@launch
@@ -762,12 +779,6 @@ class EventHandler(
         val handlesAsWasd = wasdBit != 0 && hasWasd
         val pointerIdKey = if (handlesAsWasd) KEYCODE_WASD else event.keyCode
         val pointerId = pointerIds[pointerIdKey]
-
-        if (sprintBit != 0 && event.action == KeyEvent.ACTION_DOWN &&
-            event.repeatCount == 0 && !pressedKeyCodes.contains(event.keyCode) &&
-            shiftCancelWalkEnabled) {
-            triggerWalk(sprint = true)
-        }
 
         // Shift 作为 WASD 疾跑修饰键（当存在 WASD 摇杆时）。按下时把疾跑位并入
         // wasdMask，让摇杆沿中心方向延长到疾跑档，而不是触发独立的 SPRINT 按钮。

@@ -121,7 +121,8 @@ fun defaultScallopDashMacro(): KeySeqMacro = KeySeqMacro(
  */
 @Serializable
 data class QuickMeleeMacro(
-    val enabled: Boolean = true,
+    /** 默认关闭；需要时在「按键辅助 → 宏」里单独打开。 */
+    val enabled: Boolean = false,
     val triggerKeyCode: Int = KeyEvent.KEYCODE_0,
     val requireAlt: Boolean = true,
     /** 游戏里「快速近战」绑定的物理键，宏会点它对应的映射位置；默认右侧小键盘 num0。 */

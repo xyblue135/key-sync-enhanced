@@ -27,6 +27,10 @@ data class ClickMacro(
     val customIntervals: Boolean = true,
     /** 标准间隔：关闭自定义间隔后，每两个位置之间统一等待的毫秒数。 */
     val standardIntervalMs: Long = 100,
+    /** 间隔随机波动：开启后在每段间隔上再叠加 [jitterMinMs]–[jitterMaxMs]，默认 5–10ms。 */
+    val jitterEnabled: Boolean = true,
+    val jitterMinMs: Int = 5,
+    val jitterMaxMs: Int = 10,
 )
 
 const val MAX_MACROS = 16
@@ -52,8 +56,22 @@ fun validateClickMacros(macros: List<ClickMacro>): String? {
             return "${macro.name}：步骤间隔需为 0–$MAX_MACRO_DELAY_MS 毫秒"
         if (macro.standardIntervalMs !in 0..MAX_MACRO_DELAY_MS)
             return "${macro.name}：标准间隔需为 0–$MAX_MACRO_DELAY_MS 毫秒"
+        if (macro.jitterMinMs !in 0..MAX_MACRO_DELAY_MS || macro.jitterMaxMs !in 0..MAX_MACRO_DELAY_MS)
+            return "${macro.name}：随机波动需为 0–$MAX_MACRO_DELAY_MS 毫秒"
+        if (macro.jitterMinMs > macro.jitterMaxMs)
+            return "${macro.name}：随机波动下限不能大于上限"
     }
     return null
+}
+
+/** 第 [index] 步之后的实际等待：基础间隔 + 可选的随机波动（最后一步不会调用）。 */
+fun ClickMacro.jitteredIntervalAfter(index: Int): Long {
+    val base = intervalAfter(index)
+    if (!jitterEnabled) return base
+    val lo = jitterMinMs.coerceAtLeast(0)
+    val hi = jitterMaxMs.coerceAtLeast(lo)
+    val jitter = if (hi == lo) lo.toLong() else kotlin.random.Random.nextLong(lo.toLong(), hi.toLong() + 1)
+    return base + jitter
 }
 
 /** 第 [index] 步点击完成后、进入下一步前应等待的毫秒数。 */

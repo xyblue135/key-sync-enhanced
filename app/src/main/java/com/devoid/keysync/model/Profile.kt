@@ -20,8 +20,10 @@ data class Profile(
     val quickSwapLatched: Boolean = false,
     /** 按 3 时依次点击 2 → 4 → 3：三种武器布局的近战位在这轮里都只出现一次，最终必落在近战。默认开启。 */
     val tapSequence234Enabled: Boolean = true,
-    /** 切近战序列每个触点之间的间隔（ms），越小越快。默认 5。 */
-    val tapSequence234GapMs: Int = 5,
+    /** 切近战序列相邻触点之间的随机延迟下限（ms），默认 20。 */
+    val tapSequence234GapMinMs: Int = 20,
+    /** 切近战序列相邻触点之间的随机延迟上限（ms），默认 30。 */
+    val tapSequence234GapMaxMs: Int = 30,
     /** 快速切枪宏：按 Alt+9 执行自定义按键序列，预设级。 */
     val keyMacro: KeySeqMacro = KeySeqMacro(),
     /** 快速合盾宏：默认 Alt+8。 */
@@ -32,8 +34,6 @@ data class Profile(
     val scallopDashMacro: KeySeqMacro = defaultScallopDashMacro(),
     /** 快速近战宏：默认 Alt+0，点一次近战键 → 延迟 → 点一次 1；按住触发键循环。 */
     val quickMeleeMacro: QuickMeleeMacro = QuickMeleeMacro(),
-    /** Shift 按下时取消我们自己开启的静步（WALK_TOGGLE）。默认开启。 */
-    val shiftCancelWalkEnabled: Boolean = true,
     /** Ordered independent click points, separate from ordinary key bindings. */
     val macros: List<ClickMacro> = emptyList(),
     /** Layout 保存时的屏幕分辨率（px）。加载时若与当前屏幕不同则把坐标/尺寸等比还原；0 = 未记录。 */

@@ -211,6 +211,9 @@ class MainActivity : ComponentActivity() {
                         val keyHumanization by viewModel.keyHumanization.collectAsStateWithLifecycle()
                         val humanizationStrength by viewModel.humanizationStrength.collectAsStateWithLifecycle()
                         val humanizationInterval by viewModel.humanizationInterval.collectAsStateWithLifecycle()
+                        val wasdJitterRandomEnabled by viewModel.wasdJitterRandomEnabled.collectAsStateWithLifecycle()
+                        val wasdJitterMinMs by viewModel.wasdJitterMinMs.collectAsStateWithLifecycle()
+                        val wasdJitterMaxMs by viewModel.wasdJitterMaxMs.collectAsStateWithLifecycle()
                         val wasdSway by viewModel.wasdSway.collectAsStateWithLifecycle()
                         val wasdTransition by viewModel.wasdTransition.collectAsStateWithLifecycle()
                         val wasdTransitionMs by viewModel.wasdTransitionMs.collectAsStateWithLifecycle()
@@ -223,7 +226,6 @@ class MainActivity : ComponentActivity() {
                         val discardDragEnabled by viewModel.discardDragEnabled.collectAsStateWithLifecycle()
                         val discardDragSpeed by viewModel.discardDragSpeed.collectAsStateWithLifecycle()
                         val mapMouseToggleEnabled by viewModel.mapMouseToggleEnabled.collectAsStateWithLifecycle()
-                        val mapZoomDelayMs by viewModel.mapZoomDelayMs.collectAsStateWithLifecycle()
                         val fCursorClickEnabled by viewModel.fCursorClickEnabled.collectAsStateWithLifecycle()
                         val fCursorClickWindowMs by viewModel.fCursorClickWindowMs.collectAsStateWithLifecycle()
                         val tabEscAimEnabled by viewModel.tabEscAimEnabled.collectAsStateWithLifecycle()
@@ -232,9 +234,10 @@ class MainActivity : ComponentActivity() {
                         val fScrollSwipePx by viewModel.fScrollSwipePx.collectAsStateWithLifecycle()
                         val fScrollInvert by viewModel.fScrollInvert.collectAsStateWithLifecycle()
                         val fScrollStepDelayMs by viewModel.fScrollStepDelayMs.collectAsStateWithLifecycle()
+                        val fScrollUpKeyCode by viewModel.fScrollUpKeyCode.collectAsStateWithLifecycle()
+                        val fScrollDownKeyCode by viewModel.fScrollDownKeyCode.collectAsStateWithLifecycle()
                         val playModes by viewModel.playModes.collectAsStateWithLifecycle()
                         val currentPlayModeIndex by viewModel.currentPlayModeIndex.collectAsStateWithLifecycle()
-                        val enterLayerPreviewEnabled by viewModel.enterLayerPreviewEnabled.collectAsStateWithLifecycle()
                         // Collected so a change applied outside the save button
                         // (the profile-switch master switch) is reflected
                         // instead of being overwritten by a stale newConfig.
@@ -258,11 +261,16 @@ class MainActivity : ComponentActivity() {
                             keyHumanization = keyHumanization,
                             humanizationStrength = humanizationStrength,
                             humanizationInterval = humanizationInterval,
+                            wasdJitterRandomEnabled = wasdJitterRandomEnabled,
+                            wasdJitterMinMs = wasdJitterMinMs,
+                            wasdJitterMaxMs = wasdJitterMaxMs,
                             wasdSway = wasdSway,
                             onSetWasdHumanization = viewModel::setWasdHumanization,
                             onSetKeyHumanization = viewModel::setKeyHumanization,
                             onSetHumanizationStrength = viewModel::setHumanizationStrength,
                             onSetHumanizationInterval = viewModel::setHumanizationInterval,
+                            onSetWasdJitterRandomEnabled = viewModel::setWasdJitterRandomEnabled,
+                            onSetWasdJitterRange = viewModel::setWasdJitterRange,
                             onSetWasdSway = viewModel::setWasdSway,
                             wasdTransition = wasdTransition,
                             wasdTransitionMs = wasdTransitionMs,
@@ -286,8 +294,6 @@ class MainActivity : ComponentActivity() {
                             onSetDiscardDragSpeed = viewModel::setDiscardDragSpeed,
                             mapMouseToggleEnabled = mapMouseToggleEnabled,
                             onSetMapMouseToggleEnabled = viewModel::setMapMouseToggleEnabled,
-                            mapZoomDelayMs = mapZoomDelayMs,
-                            onSetMapZoomDelayMs = viewModel::setMapZoomDelayMs,
                             fCursorClickEnabled = fCursorClickEnabled,
                             onSetFCursorClickEnabled = viewModel::setFCursorClickEnabled,
                             fCursorClickWindowMs = fCursorClickWindowMs,
@@ -304,13 +310,14 @@ class MainActivity : ComponentActivity() {
                             onSetFScrollInvert = viewModel::setFScrollInvert,
                             fScrollStepDelayMs = fScrollStepDelayMs,
                             onSetFScrollStepDelayMs = viewModel::setFScrollStepDelayMs,
+                            fScrollUpKeyCode = fScrollUpKeyCode,
+                            fScrollDownKeyCode = fScrollDownKeyCode,
+                            onSetFScrollTriggerKeys = viewModel::setFScrollTriggerKeys,
                             playModes = playModes,
                             currentPlayModeIndex = currentPlayModeIndex,
                             onSetCurrentPlayMode = viewModel::setCurrentPlayMode,
                             onUpdatePlayMode = viewModel::updatePlayMode,
                             onAddPlayMode = viewModel::addPlayMode,
-                            enterLayerPreviewEnabled = enterLayerPreviewEnabled,
-                            onSetEnterLayerPreviewEnabled = viewModel::setEnterLayerPreviewEnabled,
                             onStopOverlay = {
                                 stopService(
                                     Intent(

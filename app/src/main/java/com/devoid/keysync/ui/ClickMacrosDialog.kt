@@ -106,6 +106,45 @@ fun ClickMacrosDialog(profile: Profile, onDismiss: () -> Unit, onSave: (List<Cli
                         Text("每个位置下方可单独设置到下一步的间隔。",
                             style = MaterialTheme.typography.bodySmall)
                     }
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("间隔随机波动", style = MaterialTheme.typography.titleSmall)
+                            Text("在每段间隔上再叠加随机时长，默认 5–10ms，避免固定节拍。",
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                        Switch(current.jitterEnabled, onCheckedChange = {
+                            change(current.copy(jitterEnabled = it))
+                        })
+                    }
+                    if (current.jitterEnabled) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("波动下限", Modifier.weight(1f))
+                            Text("${current.jitterMinMs} 毫秒")
+                        }
+                        Slider(
+                            value = current.jitterMinMs.toFloat().coerceIn(0f, 500f),
+                            valueRange = 0f..500f,
+                            onValueChange = {
+                                val min = it.roundToInt()
+                                change(current.copy(
+                                    jitterMinMs = min,
+                                    jitterMaxMs = maxOf(min, current.jitterMaxMs),
+                                ))
+                            })
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("波动上限", Modifier.weight(1f))
+                            Text("${current.jitterMaxMs} 毫秒")
+                        }
+                        Slider(
+                            value = current.jitterMaxMs.toFloat().coerceIn(0f, 500f),
+                            valueRange = 0f..500f,
+                            onValueChange = {
+                                change(current.copy(
+                                    jitterMaxMs = it.roundToInt().coerceAtLeast(current.jitterMinMs),
+                                ))
+                            })
+                    }
                     current.steps.forEachIndexed { index, step ->
                         key(step.id) {
                             OutlinedCard(Modifier.fillMaxWidth()) {

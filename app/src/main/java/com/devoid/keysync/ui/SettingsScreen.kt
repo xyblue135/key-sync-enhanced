@@ -156,17 +156,16 @@ fun SettingsScreen(
     onSetFScrollInvert: (Boolean) -> Unit = {},
     fScrollStepDelayMs: Int = 7,
     onSetFScrollStepDelayMs: (Int) -> Unit = {},
+    fScrollUpKeyCode: Int = 0,
+    fScrollDownKeyCode: Int = 0,
+    onSetFScrollTriggerKeys: (Int, Int) -> Unit = { _, _ -> },
     playModes: List<PlayMode> = DefaultPlayModes,
     currentPlayModeIndex: Int = 1,
     onSetCurrentPlayMode: (Int) -> Unit = {},
     onUpdatePlayMode: (Int, PlayMode) -> Unit = { _, _ -> },
     onAddPlayMode: () -> Unit = {},
-    enterLayerPreviewEnabled: Boolean = true,
-    onSetEnterLayerPreviewEnabled: (Boolean) -> Unit = {},
     mapMouseToggleEnabled: Boolean = true,
     onSetMapMouseToggleEnabled: (Boolean) -> Unit = {},
-    mapZoomDelayMs: Int = 100,
-    onSetMapZoomDelayMs: (Int) -> Unit = {},
     fCursorClickEnabled: Boolean = true,
     onSetFCursorClickEnabled: (Boolean) -> Unit = {},
     fCursorClickWindowMs: Int = 1000,
@@ -180,6 +179,9 @@ fun SettingsScreen(
     keyHumanization: Boolean = false,
     humanizationStrength: Float = 0f,
     humanizationInterval: Long = 1000L,
+    wasdJitterRandomEnabled: Boolean = true,
+    wasdJitterMinMs: Int = 200,
+    wasdJitterMaxMs: Int = 300,
     wasdSway: Float = 50f,
     wasdTransition: Boolean = true,
     wasdTransitionMs: Int = 80,
@@ -187,6 +189,8 @@ fun SettingsScreen(
     onSetKeyHumanization: (Boolean) -> Unit = {},
     onSetHumanizationStrength: (Float) -> Unit = {},
     onSetHumanizationInterval: (Long) -> Unit = {},
+    onSetWasdJitterRandomEnabled: (Boolean) -> Unit = {},
+    onSetWasdJitterRange: (Int, Int) -> Unit = { _, _ -> },
     onSetWasdSway: (Float) -> Unit = {},
     onSetWasdTransition: (Boolean) -> Unit = {},
     onSetWasdTransitionMs: (Int) -> Unit = {},
@@ -463,24 +467,6 @@ fun SettingsScreen(
                         )
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "小键盘 Enter 层级预览",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                text = "按右侧小键盘 Enter 循环：按键层 → 高级层（光标落点 / 丢弃点）→ 全部隐藏 → 按键层，" +
-                                    "方便快速检查映射位置。只改悬浮窗显示，不影响注入；默认开启。",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = enterLayerPreviewEnabled,
-                            onCheckedChange = onSetEnterLayerPreviewEnabled
-                        )
-                    }
                 }
                 SettingsSectionCard(
                     title = "按钮与操作",
@@ -684,9 +670,9 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "第一下按 M 正常触发 M 映射（开图），等待设定时间后双指从左右随机位置向中间捏合，" +
-                                    "把小地图撑成大地图，然后切出鼠标；第二下不再按 M，改为点击 ESC 按钮的" +
-                                    "映射位置（按下约 50–125ms 后抬起）再收回鼠标。预设里没有 ESC 按钮时只切鼠标模式。",
+                                "第一下按 M 正常触发 M 映射（开图）并立即切出鼠标；第二下不再按 M，" +
+                                    "改为点击 ESC 按钮的映射位置（按下约 50–125ms 后抬起）再收回鼠标。" +
+                                    "预设里没有 ESC 按钮时只切鼠标模式。",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -694,27 +680,6 @@ fun SettingsScreen(
                         Switch(
                             checked = mapMouseToggleEnabled,
                             onCheckedChange = onSetMapMouseToggleEnabled
-                        )
-                    }
-                    if (mapMouseToggleEnabled) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "放大前等待",
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text("${mapZoomDelayMs} ms", style = MaterialTheme.typography.bodyMedium)
-                        }
-                        Slider(
-                            value = mapZoomDelayMs.toFloat().coerceIn(0f, 1000f),
-                            valueRange = 0f..1000f,
-                            steps = 99,
-                            onValueChange = { onSetMapZoomDelayMs(it.roundToInt()) }
-                        )
-                        Text(
-                            "开图后地图完全出现再捏合才有效；默认 100ms，地图打开慢可调高。",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     }
@@ -875,6 +840,25 @@ fun SettingsScreen(
                             }
                             Switch(checked = fScrollInvert, onCheckedChange = onSetFScrollInvert)
                         }
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        Text("上 / 下滑触发键", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "默认就是鼠标滚轮向上 / 向下；也可以改成其他鼠标键。只在光标模式接管滚轮期间生效。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("向上滑", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                            MouseInputPicker(fScrollUpKeyCode) {
+                                onSetFScrollTriggerKeys(it, fScrollDownKeyCode)
+                            }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("向下滑", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                            MouseInputPicker(fScrollDownKeyCode) {
+                                onSetFScrollTriggerKeys(fScrollUpKeyCode, it)
+                            }
+                        }
                     }
                     }
                 }
@@ -976,8 +960,55 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("WASD 随机偏移间隔", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    "打开后，WASD 抖动间隔在下面的区间内随机，默认 200–300ms；" +
+                                        "关闭时回落到下面的通用间隔。",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = wasdJitterRandomEnabled,
+                                onCheckedChange = onSetWasdJitterRandomEnabled
+                            )
+                        }
+                        if (wasdJitterRandomEnabled) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "间隔下限",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text("${wasdJitterMinMs} ms")
+                            }
+                            Slider(
+                                value = wasdJitterMinMs.toFloat().coerceIn(50f, 1000f),
+                                valueRange = 50f..1000f,
+                                onValueChange = {
+                                    onSetWasdJitterRange(it.roundToInt(), wasdJitterMaxMs)
+                                }
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "间隔上限",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text("${wasdJitterMaxMs} ms")
+                            }
+                            Slider(
+                                value = wasdJitterMaxMs.toFloat().coerceIn(50f, 1000f),
+                                valueRange = 50f..1000f,
+                                onValueChange = {
+                                    onSetWasdJitterRange(wasdJitterMinMs, it.roundToInt())
+                                }
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                "随机偏移间隔",
+                                "通用随机偏移间隔（其他按键）",
                                 modifier = Modifier.weight(1f),
                                 style = MaterialTheme.typography.titleMedium
                             )
@@ -988,14 +1019,15 @@ fun SettingsScreen(
                             )
                         }
                         Slider(
-                            enabled = wasdHumanization || keyHumanization,
+                            enabled = keyHumanization,
                             value = humanizationInterval.toFloat().coerceIn(200f, 3000f),
                             valueRange = 200f..3000f,
                             steps = 27,
                             onValueChange = { onSetHumanizationInterval(it.roundToInt().toLong()) }
                         )
                         Text(
-                            "间隔越大偏移越少。默认 1000ms（约每秒一次），按下与按住期间都会按这个间隔轻微扰动。",
+                            "用于「其他按键拟人化」：按住普通按键期间按这个间隔轻微抖动；" +
+                                "关闭 WASD 随机间隔时，WASD 也使用它。默认 1000ms（约每秒一次）。",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1239,7 +1271,7 @@ private fun PlayModeCard(
         }
         BasicSettingRow(
             title = "显示与操作",
-            desc = "透明度、顶部状态条、小键盘 Enter 预览、按钮大小、指针灵敏度",
+            desc = "透明度、顶部状态条、按钮大小、指针灵敏度",
             onGear = { onOpenDetail(SettingsDetail.DISPLAY) },
         )
     }
@@ -1477,7 +1509,7 @@ private fun ProfileAssistCard(
                     "双枪+手枪时在 3，三种布局的近战位在这个固定顺序里都只出现一次，所以最终一定停在近战；" +
                     "点空位不会切走，没有副作用。真正的问题是近战位被点第二次——刀已经在手上时再点同一格，" +
                     "会收回刀、切回主武器 1，所以每轮只点一次。另外请关闭游戏内的「快速切枪」，否则会自动切回主武器。" +
-                    "间隔默认 5ms，越小越跟手；被游戏合并或吞掉时可调到 10–60ms。2/3/4 缺任意一个按钮时不接管。",
+                    "连点延迟在下方区间内随机（默认 20–30ms）；2/3/4 缺任意一个按钮时不接管。",
                 checked = draft.tapSequence234Enabled,
                 onToggle = {
                     onDraftChange(draft.copy(tapSequence234Enabled = !draft.tapSequence234Enabled))
@@ -1486,18 +1518,43 @@ private fun ProfileAssistCard(
             if (draft.tapSequence234Enabled) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "连点间隔",
+                        "连点延迟下限",
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodyMedium
                     )
-                    Text("${draft.tapSequence234GapMs} ms", style = MaterialTheme.typography.bodyMedium)
+                    Text("${draft.tapSequence234GapMinMs} ms", style = MaterialTheme.typography.bodyMedium)
                 }
                 Slider(
-                    value = draft.tapSequence234GapMs.toFloat().coerceIn(5f, 1000f),
-                    valueRange = 5f..1000f,
-                    steps = 198,
+                    value = draft.tapSequence234GapMinMs.toFloat().coerceIn(5f, 500f),
+                    valueRange = 5f..500f,
                     onValueChange = {
-                        onDraftChange(draft.copy(tapSequence234GapMs = it.roundToInt()))
+                        val min = it.roundToInt()
+                        onDraftChange(
+                            draft.copy(
+                                tapSequence234GapMinMs = min,
+                                tapSequence234GapMaxMs = maxOf(min, draft.tapSequence234GapMaxMs),
+                            )
+                        )
+                    }
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "连点延迟上限",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text("${draft.tapSequence234GapMaxMs} ms", style = MaterialTheme.typography.bodyMedium)
+                }
+                Slider(
+                    value = draft.tapSequence234GapMaxMs.toFloat().coerceIn(5f, 500f),
+                    valueRange = 5f..500f,
+                    onValueChange = {
+                        val max = it.roundToInt()
+                        onDraftChange(
+                            draft.copy(
+                                tapSequence234GapMaxMs = max.coerceAtLeast(draft.tapSequence234GapMinMs),
+                            )
+                        )
                     }
                 )
             }
@@ -1692,17 +1749,6 @@ private fun ProfileAssistCard(
             QuickMeleeSection(
                 macro = draft.quickMeleeMacro,
                 onChange = { onDraftChange(draft.copy(quickMeleeMacro = it)) }
-            )
-            }
-            if (AssistSection.ASSIST in sections) {
-            AssistSwitchRow(
-                title = "Shift 取消静步",
-                desc = "按 Shift 起跑时，如果静步是我们帮你点开的，会自动补点一次静步键取消掉，避免一跑就变成慢走。" +
-                    "你自己手动开的静步不介入；预设里没有静步按钮时不生效。",
-                checked = draft.shiftCancelWalkEnabled,
-                onToggle = {
-                    onDraftChange(draft.copy(shiftCancelWalkEnabled = !draft.shiftCancelWalkEnabled))
-                }
             )
             }
             if (AssistSection.MACROS in sections) {
@@ -2504,8 +2550,8 @@ private fun QuickMeleeSection(
     onChange: (QuickMeleeMacro) -> Unit,
 ) {
     AssistSwitchRow(
-        title = "快速近战（默认按住 Alt+0）",
-        desc = "按住触发键时循环执行：点一次「快速近战」映射位置 → 等设定延迟 → 点一次 1 号键；" +
+        title = "快速近战（默认关闭，按住 Alt+0）",
+        desc = "默认关闭，需要时在这里打开。按住触发键时循环执行：点一次「快速近战」映射位置 → 等设定延迟 → 点一次 1 号键；" +
             "松开立即停止。键盘长按的重复事件会被吞掉，不会重复启动，也不会额外注册监听。" +
             "需要先在布局里放好快速近战键和 1 号键的映射。",
         checked = macro.enabled,

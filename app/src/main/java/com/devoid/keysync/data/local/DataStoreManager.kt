@@ -99,6 +99,12 @@ class DataStoreManager internal constructor(
         val WASD_TRANSITION = booleanPreferencesKey("wasd_transition")
         /** WASD 换向过渡时长（ms），默认 80。 */
         val WASD_TRANSITION_MS = intPreferencesKey("wasd_transition_ms")
+        /** WASD 抖动间隔是否使用自定义随机区间，默认开启。 */
+        val WASD_JITTER_RANDOM_ENABLED = booleanPreferencesKey("wasd_jitter_random_enabled")
+        /** WASD 随机抖动间隔下限（ms），默认 200。 */
+        val WASD_JITTER_MIN_MS = intPreferencesKey("wasd_jitter_min_ms")
+        /** WASD 随机抖动间隔上限（ms），默认 300。 */
+        val WASD_JITTER_MAX_MS = intPreferencesKey("wasd_jitter_max_ms")
         /** Alt+D 拖拽丢弃开关（全局），默认关闭，避免误触。 */
         val DISCARD_DRAG_ENABLED = booleanPreferencesKey("discard_drag_enabled")
         /** Alt+D 拖拽速度倍数（1–10，默认 5 = 原速的 5 倍）。 */
@@ -113,12 +119,14 @@ class DataStoreManager internal constructor(
         val F_SCROLL_INVERT = booleanPreferencesKey("f_scroll_invert")
         /** F 光标滚轮操控：每小步延迟（ms），默认 7。 */
         val F_SCROLL_STEP_DELAY_MS = intPreferencesKey("f_scroll_step_delay_ms")
+        /** F 滚轮操控：触发「向上滑」的物理键，默认鼠标滚轮向上。 */
+        val F_SCROLL_UP_KEY_CODE = intPreferencesKey("f_scroll_up_key_code")
+        /** F 滚轮操控：触发「向下滑」的物理键，默认鼠标滚轮向下。 */
+        val F_SCROLL_DOWN_KEY_CODE = intPreferencesKey("f_scroll_down_key_code")
         /** 玩法模式定义（简易 + 高级 A/B）的 JSON。 */
         val PLAY_MODES = stringPreferencesKey("play_modes")
         /** 当前玩法模式下标：0 = 简易，1 = 高级 A，2 = 高级 B。 */
         val CURRENT_PLAY_MODE = intPreferencesKey("current_play_mode")
-        /** 小键盘 Enter 层级预览开关，默认开启。 */
-        val ENTER_LAYER_PREVIEW_ENABLED = booleanPreferencesKey("enter_layer_preview_enabled")
         /** M 键开关地图并切换鼠标（全局），默认开启。 */
         val MAP_MOUSE_TOGGLE_ENABLED = booleanPreferencesKey("map_mouse_toggle_enabled")
         /** F 交互后左键唤出光标（全局），默认开启。 */
@@ -129,12 +137,12 @@ class DataStoreManager internal constructor(
         val TAB_ESC_AIM_DELAY_MS = intPreferencesKey("tab_esc_aim_delay_ms")
         /** F 交互后允许左键唤出光标的窗口（ms），默认 1000。 */
         val F_CURSOR_CLICK_WINDOW_MS = intPreferencesKey("f_cursor_click_window_ms")
-        /** M 键开图后等待多久再执行地图放大手势（ms），默认 100。 */
-        val MAP_ZOOM_DELAY_MS = intPreferencesKey("map_zoom_delay_ms")
         /** 快速近战默认键已从 V 迁移到右侧小键盘 num0 的一次性标记。 */
         val QUICK_MELEE_NUMPAD_MIGRATED = booleanPreferencesKey("quick_melee_numpad_migrated")
         /** 快速近战触发键已从 Alt+5 迁移到 Alt+0 的一次性标记。 */
         val QUICK_MELEE_TRIGGER_ZERO_MIGRATED = booleanPreferencesKey("quick_melee_trigger_zero_migrated")
+        /** 快速近战宏默认改为关闭的一次性迁移标记。 */
+        val QUICK_MELEE_DEFAULT_OFF = booleanPreferencesKey("quick_melee_default_off")
 
         /* -------- 鼠标高级参数（全局，与预设无关） -------- */
         /** 单帧位移断点阈值（px），默认 240。 */
