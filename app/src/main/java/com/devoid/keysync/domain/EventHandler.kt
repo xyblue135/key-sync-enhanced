@@ -716,6 +716,16 @@ class EventHandler(
     private val recenterMinIntervalMs = 50L
     private var lastRecenterTime = 0L
 
+    /**
+     * 越界后没发出去的位移。
+     *
+     * 快速甩动时一次位移可能远超活动范围；直接丢弃会让视角「少转一截」。这里把溢出量
+     * 缓存起来，回中后从新落点继续补发，等价于手游玩家「滑一下→抬手→再滑一下」的
+     * 分片滑动。为避免无限追帧，单次最多缓存 [MAX_AIM_OVERFLOW_FACTOR] 个半宽。
+     */
+    private var pendingAimOverflow = Offset.Zero
+    private var overflowDrainJob: Job? = null
+
     var onCursorRecenter: ((Offset) -> Unit)? = null
     var mousePointerPosition = Offset.Zero
     var appConfig = AppConfig.Default
@@ -1251,26 +1261,21 @@ class EventHandler(
             if (!position.x.isFinite() || !position.y.isFinite()) return true
             val previous = aimPosition
             val requested = previous + position
-            aimPosition = clampAimToBounds(requested)
-            val applied = aimPosition - previous
+            val clamped = clampAimToBounds(requested)
+            aimPosition = clamped
+            val applied = clamped - previous
             if (applied != Offset.Zero) {
                 eventInjector.updatePointerPosition(pointerId, applied)
             }
-            if (aimPosition != requested) {
-                val now = SystemClock.uptimeMillis()
-                if (now - lastRecenterTime >= recenterMinIntervalMs) {
-                    // Finish this segment before UP; a fresh batch starts after DOWN.
-                    // 每次回中落在小方形内随机一点，避免一抬一按都在同一个像素上。
-                    val landing = randomLandingPoint()
-                    eventInjector.releasePointer(pointerId)
-                    eventInjector.injectPointer(pointerId, landing)
-                    aimCenter = landing
-                    aimPosition = landing
-                    lastRecenterTime = now
-                }
+            val overflow = requested - clamped
+            if (overflow != Offset.Zero) {
+                // 超出边界的部分不丢：缓存下来，等回中后从新落点继续补发。
+                pendingAimOverflow = capAimOverflow(pendingAimOverflow + overflow)
+                scheduleAimOverflowDrain()
             }
             return true
         }
+        pendingAimOverflow = Offset.Zero
 
         // 非射击模式：鼠标移动只是移动光标。若左/右键正按住不放，
         // 就把按住的触点跟着光标一起拖动——按住上下滑动、拖拽列表都依赖这个。
@@ -1280,6 +1285,74 @@ class EventHandler(
             }
         }
         return true
+    }
+
+    /**
+     * 限制缓存溢出的总量，避免一次极端甩动让视角在鼠标停下后还转很久。
+     * 上限是 4 个活动范围半宽（约两倍直径）。
+     */
+    private fun capAimOverflow(overflow: Offset): Offset {
+        val length = overflow.getDistance()
+        if (length <= 0.5f) return Offset.Zero
+        val half = mouseAreaHalfSize
+        val max = if (half > 0f) half * MAX_AIM_OVERFLOW_FACTOR else maxOf(screenSize.x, screenSize.y)
+        if (max <= 1f) return Offset.Zero
+        return if (length > max) overflow * (max / length) else overflow
+    }
+
+    /** 溢出量补发协程：每次回中最多补一段，用节流间隔把「分片滑动」摊到几帧里。 */
+    private fun scheduleAimOverflowDrain() {
+        if (overflowDrainJob?.isActive == true) return
+        overflowDrainJob = humanizeScope.launch {
+            var segments = 0
+            while (isActive && pendingAimOverflow != Offset.Zero && segments < MAX_OVERFLOW_SEGMENTS) {
+                val wait = (recenterMinIntervalMs -
+                    (SystemClock.uptimeMillis() - lastRecenterTime)).coerceAtLeast(0L)
+                if (wait > 0L) delay(wait)
+                if (!shootingMode) {
+                    pendingAimOverflow = Offset.Zero
+                    break
+                }
+                // 射击键可能被重新映射，取当前触点 id。
+                val id = pointerIds[shootingModeKeyCode] ?: -1
+                if (id < 0) {
+                    pendingAimOverflow = Offset.Zero
+                    break
+                }
+                drainAimOverflowOnce(id)
+                segments++
+            }
+            // 防御：极端形状下投影可能产生永远排不干净的残差，达到上限直接丢弃。
+            if (segments >= MAX_OVERFLOW_SEGMENTS) pendingAimOverflow = Offset.Zero
+        }
+    }
+
+    /**
+     * 补发一段溢出：抬指 → 在小方框内随机重按 → 从新落点继续把能走的位移发出去。
+     * 视角不会因为「瞬移回中」而反甩，因为回中本身只发 DOWN，不发 MOVE。
+     */
+    private fun drainAimOverflowOnce(pointerId: Int) {
+        val overflow = pendingAimOverflow
+        if (overflow == Offset.Zero) return
+        val landing = randomLandingPoint()
+        val target = clampAimToBounds(landing + overflow)
+        val applied = target - landing
+        eventInjector.releasePointer(pointerId)
+        eventInjector.injectPointer(pointerId, landing)
+        aimCenter = landing
+        aimPosition = target
+        if (applied.getDistance() > 0.5f) {
+            // 一段可能跨越大半个活动范围，拆成几次 MOVE，游戏看到的是一段快速拖动，
+            // 而不是一次瞬移。
+            val steps = kotlin.math.ceil(applied.getDistance() / 60f).toInt().coerceIn(1, 6)
+            val step = applied * (1f / steps)
+            repeat(steps) { eventInjector.updatePointerPosition(pointerId, step) }
+            pendingAimOverflow -= applied
+        } else {
+            // 落点已贴着该方向的边界，无法再走；清掉避免死循环。
+            pendingAimOverflow = Offset.Zero
+        }
+        lastRecenterTime = SystemClock.uptimeMillis()
     }
 
     /**
@@ -1439,6 +1512,7 @@ class EventHandler(
     private fun toggleShootingMode() {
         stopWheel()
         val newState = !shootingMode
+        pendingAimOverflow = Offset.Zero
         if (!newState) {
             // 退出射击模式时释放所有鼠标键对应的触点。否则「按住左键时切出鼠标」
             // 会让开火触点一直保持按下，表现为切出后仍在持续开火。
@@ -1748,6 +1822,7 @@ class EventHandler(
         _shootingModeFlow.value = false
         aimPosition = Offset.Zero
         aimCenter = Offset.Zero
+        pendingAimOverflow = Offset.Zero
     }
 
     companion object {
@@ -1765,6 +1840,10 @@ class EventHandler(
         const val SMALL_TURN_RAD = 0.6f
         /** 过渡采样目标：每段弧长不超过约 34px，避免回放被拉成折线。 */
         const val TRANSITION_SEGMENT_PX = 34f
+        /** 越界溢出的最大缓存倍数（相对活动范围半宽）。 */
+        const val MAX_AIM_OVERFLOW_FACTOR = 4f
+        /** 一次甩动最多补发多少段，防止异常残差导致无限抬按。 */
+        const val MAX_OVERFLOW_SEGMENTS = 12
 
         /**
          * 鼠标活动范围的形状：按用户手绘的不规则闭合轮廓采样（归一化到 [-1, 1]），
