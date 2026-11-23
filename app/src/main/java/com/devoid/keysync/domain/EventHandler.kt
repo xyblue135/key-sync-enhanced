@@ -1250,7 +1250,9 @@ class EventHandler(
         if (wheelActive) {
             val previous = _wheelCursor.value ?: wheelCenter
             wheelOffset = withinWheel(wheelOffset + position, wheelRadius)
-            val target = clampAimToBounds(wheelCenter + wheelOffset)
+            // 轮盘是独立按钮的 360° 交互，只受自己的半径和屏幕边缘约束，
+            // 不能套用射击模式的鼠标活动范围（否则左侧轮盘会被拉到右侧准心附近）。
+            val target = clampToScreen(wheelCenter + wheelOffset)
             // Use coalesced deltas, as aiming does, to avoid a high-polling mouse backlog.
             if (target != previous) eventInjector.updatePointerPosition(wheelControlPointerId, target - previous)
             _wheelCursor.value = target
@@ -1367,6 +1369,11 @@ class EventHandler(
         if (areaHalf > 0f) {
             return clampToMouseShape(p, mouseAreaCenter, areaHalf)
         }
+        return clampToScreen(p)
+    }
+
+    /** 只按屏幕边缘（含留白）兜底，用于轮盘、光标等与射击活动范围无关的触点。 */
+    private fun clampToScreen(p: Offset): Offset {
         val w = screenSize.x
         val h = screenSize.y
         if (w <= 0f || h <= 0f) return p
@@ -1469,7 +1476,8 @@ class EventHandler(
         // updatePointer 绝对定位）。不能用 updatePointerPosition——那是 offsetPointer
         // 累加偏移，会把绝对坐标当成增量无限漂移，转几下触点就飞出屏幕。
         wheelOffset = Offset(x, y) - wheelCenter
-        val target = clampAimToBounds(Offset(x, y))
+        // 同上：轮盘只按屏幕边缘兜底，不进入射击模式的鼠标活动范围。
+        val target = clampToScreen(Offset(x, y))
         eventInjector.transFormGesture(wheelControlPointerId, target)
         _wheelCursor.value = target
         return true
@@ -1519,7 +1527,8 @@ class EventHandler(
             releaseHeldMouseMappings()
             // 光标落点由状态管理器同步（缺省为屏幕中心）；这里保留准心兜底以防未初始化。
             val spawn = cursorSpawnPosition ?: keyMap[shootingModeKeyCode]?.position ?: aimCenter
-            val center = clampAimToBounds(spawn)
+            // 光标是独立功能，只做屏幕兜底，不能被鼠标活动范围拉走。
+            val center = clampToScreen(spawn)
             mousePointerPosition = center
             onCursorRecenter?.invoke(center)
         }
