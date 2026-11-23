@@ -1581,6 +1581,16 @@ private fun ProfileAssistCard(
                     }
                 )
             }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            AssistSwitchRow(
+                title = "Shift 取消静步",
+                desc = "按 Shift 起跑时，如果静步是我们帮你点开的，会自动补点一次静步键取消掉，避免一跑就变成慢走。" +
+                    "你自己手动开的静步不介入；预设里没有静步按钮或当前模式关闭按键辅助时不生效。",
+                checked = draft.shiftCancelWalkEnabled,
+                onToggle = {
+                    onDraftChange(draft.copy(shiftCancelWalkEnabled = !draft.shiftCancelWalkEnabled))
+                }
+            )
             }
             if (AssistSection.MACROS in sections) {
             AssistSwitchRow(

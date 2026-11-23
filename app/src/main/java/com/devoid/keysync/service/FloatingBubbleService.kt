@@ -780,6 +780,11 @@ class FloatingBubbleService : Service() {
                 val profiles by stateManager.get().profiles.collectAsState()
                 val activeId by stateManager.get().activeProfileId.collectAsState()
                 val advancedLayerActive by stateManager.get().editAdvancedLayer.collectAsState()
+                val mouseAreaCenter by stateManager.get().mouseAreaCenter.collectAsState()
+                val mouseAreaHalf by stateManager.get().mouseAreaHalf.collectAsState()
+                val landingAreaCenter by stateManager.get().landingAreaCenter.collectAsState()
+                val landingAreaHalf by stateManager.get().landingAreaHalf.collectAsState()
+                val overlayOrigin by stateManager.get().overlayOriginFlow.collectAsState()
                 Box {
                     // 光标：用半透明触摸指示圈代替箭头，视觉上更接近"手指触点"。
                     if (!isEditMode && !mappingPaused && !isShootingMode && wheelCursor == null) {
@@ -844,6 +849,18 @@ class FloatingBubbleService : Service() {
                             cursorSpawn = stateManager.get().cursorSpawnPoint(),
                             onMoveCursorSpawn = { stateManager.get().moveCursorSpawn(it) },
                             onResetCursorSpawn = { stateManager.get().resetCursorSpawn() },
+                            mouseMoveAreaCenter = if (mouseAreaHalf > 0f)
+                                mouseAreaCenter - overlayOrigin else null,
+                            mouseMoveAreaHalf = mouseAreaHalf,
+                            landingAreaCenter = if (landingAreaHalf > 0f)
+                                landingAreaCenter - overlayOrigin else null,
+                            landingAreaHalf = landingAreaHalf,
+                            onMouseAreaChange = { center, half ->
+                                stateManager.get().setMouseArea(center + overlayOrigin, half)
+                            },
+                            onLandingAreaChange = { center, half ->
+                                stateManager.get().setLandingArea(center + overlayOrigin, half)
+                            },
                             advancedLayerActive = advancedLayerActive,
                             // 滚轮操控已改为「光标位置全屏生效」，不再使用左右锚点。
                             showKeys = keysLayerVisible,

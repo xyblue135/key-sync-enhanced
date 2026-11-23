@@ -156,6 +156,14 @@ class DataStoreManager internal constructor(
         /** 「防止大幅甩动导致视角问题」总开关，关闭后断点过滤 / 输入锁存 / 屏幕尺寸缓存都不生效。 */
         val MOUSE_GUARD_ENABLED = booleanPreferencesKey("mouse_guard_enabled")
 
+        /* -------- 鼠标双范围（全局）：大方形限制位移范围，小方形随机回中落点 -------- */
+        val MOUSE_AREA_CENTER_X = floatPreferencesKey("mouse_area_center_x")
+        val MOUSE_AREA_CENTER_Y = floatPreferencesKey("mouse_area_center_y")
+        val MOUSE_AREA_HALF = floatPreferencesKey("mouse_area_half")
+        val LANDING_AREA_CENTER_X = floatPreferencesKey("landing_area_center_x")
+        val LANDING_AREA_CENTER_Y = floatPreferencesKey("landing_area_center_y")
+        val LANDING_AREA_HALF = floatPreferencesKey("landing_area_half")
+
         val KEYS_CONFIG = stringPreferencesKey("keys_config")
 
         /** All user-defined keymap presets. */

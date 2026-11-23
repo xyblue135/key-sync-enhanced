@@ -31,6 +31,8 @@ internal class JoystickMotion(
         target: Offset,
         sendTarget: Boolean = true,
         reanchorOnSprint: Boolean = true,
+        /** 新按下时首个落点；[sendTarget] = false 时用它代替 [target]，由调用方补曲线。 */
+        startOffset: Offset = target,
     ): Boolean {
         if (mask == 0) {
             if (lastMask != 0) release(lastPointer)
@@ -49,7 +51,7 @@ internal class JoystickMotion(
         if (reanchor) release(lastPointer)
         val started = lastMask == 0 || reanchor
         if (started) {
-            start(pointer, center, target)
+            start(pointer, center, if (sendTarget) target else startOffset)
         } else {
             // 方向切换时先补一帧中点：真人的拇指是划过旧方向到新方向，不会瞬移。
             // 只多发一条 MOVE，不引入等待，也不触发 reanchor。
@@ -63,7 +65,7 @@ internal class JoystickMotion(
         lastPointer = pointer
         lastCenter = center
         lastTarget = target
-        return sendTarget || started
+        return sendTarget
     }
 
     /**
@@ -78,6 +80,18 @@ internal class JoystickMotion(
     fun jitter(pointer: Int, mask: Int, target: Offset) {
         if (lastMask == 0 || lastMask != mask || lastPointer != pointer) return
         if (lastTarget == target) return
+        move(pointer, target)
+        lastTarget = target
+    }
+
+    /**
+     * 过渡的最后一帧：无条件移动到落点。
+     *
+     * [update] 在 `sendTarget = false` 时已经把 lastTarget 记成终点，
+     * 所以 [jitter] 会跳过终点；但曲线必须精确收尾在落点上。
+     */
+    fun finishMove(pointer: Int, mask: Int, target: Offset) {
+        if (lastMask == 0 || lastMask != mask || lastPointer != pointer) return
         move(pointer, target)
         lastTarget = target
     }

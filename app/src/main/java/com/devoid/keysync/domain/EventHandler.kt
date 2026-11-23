@@ -29,8 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.PI
-import kotlin.math.abs
-import kotlin.math.atan2
+import kotlin.math.acos
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -227,6 +226,22 @@ class EventHandler(
     )
     fun calibrateWalkOff() { walkToggle.calibrateOff(); eventInjector.clear() }
 
+    /** Shift 是否取消我们自己开启的静步；由当前预设的按键辅助开关控制。 */
+    @Volatile
+    var shiftCancelWalkEnabled: Boolean = true
+
+    /** 鼠标活动范围（大方形，屏幕坐标）：中心 + 半边长；half <= 0 表示沿用整屏。 */
+    @Volatile
+    var mouseAreaCenter: Offset = Offset.Zero
+    @Volatile
+    var mouseAreaHalfSize: Float = 0f
+
+    /** 射击模式每次回中/重新按下时的随机落点范围（小方形，屏幕坐标）。 */
+    @Volatile
+    var landingAreaCenter: Offset = Offset.Zero
+    @Volatile
+    var landingAreaHalfSize: Float = 0f
+
     /** 进入光标模式时光标的落点（悬浮层坐标）；null = 回退到准心按钮位置。 */
     var cursorSpawnPosition: Offset? = null
 
@@ -349,6 +364,9 @@ class EventHandler(
     /** 本次按压段使用的推力倍率；换向或重新按下时重采样。 */
     private var pressVariationMask = 0
     private var pressVariation = 1f
+    /** 本次落点的额外随机：向外延伸的半径比例与方向偏移（弧度）。 */
+    private var pressLandingScale = 1f
+    private var pressLandingAngle = 0f
     private val keyJitterJobs = HashMap<Int, Job>(16)
 
     /** 拟人化抖动偏移（px）。强度 0 时返回零偏移。 */
@@ -419,9 +437,9 @@ class EventHandler(
     /**
      * 把触点从 [start] 平滑移到 [end]。
      *
-     * 小角度换向沿等半径弧线走；接近 180° 的大换向（A↔D、W↔S）也保持弧线，
-     * 只在中间把半径收窄到 [TRANSITION_MIN_RADIUS_FACTOR]，形成明显的弯道，
-     * 不会从原点直线穿过去。
+     * 真人推摇杆不会走直线：换向时拇指是划一道弧过去，Shift 疾跑则是沿原方向
+     * 稍微斜着推出去。这里统一用二次贝塞尔曲线，弯的方向与幅度每次随机，
+     * 但首尾点严格落在 [start] / [end]，不影响最终落点。
      */
     private fun startWasdTransition(
         pointerId: Int,
@@ -433,40 +451,53 @@ class EventHandler(
         stopWasdTransition()
         val duration = wasdTransitionMs.coerceIn(MIN_WASD_TRANSITION_MS, MAX_WASD_TRANSITION_MS)
         // 再密的中间点也受录制采样下限约束；这里按 10ms 一步，保证短视频里能看出轨迹。
-        val steps = (duration / 10).coerceIn(3, 8)
+        val steps = (duration / 10).coerceIn(4, 10)
+        val chord = end - start
+        val chordLength = chord.getDistance()
+        if (chordLength < 1f) {
+            joystickMotion.finishMove(pointerId, mask, end)
+            return
+        }
+        // 弯道参数在整段过渡里固定，否则每个中间点重新随机会抖成折线。
+        val turn = directionTurn(center, start, end)
+        val bowRatio = when {
+            turn > 2.2f -> 0.55f + Random.nextFloat() * 0.15f   // 接近 180°：明显的半圆弧
+            turn > 1.2f -> 0.34f + Random.nextFloat() * 0.14f   // 大角度换向
+            else -> 0.20f + Random.nextFloat() * 0.14f          // Shift 推杆 / 正向起按
+        }
+        val bowSign = if (Random.nextBoolean()) 1f else -1f
+        val normal = Offset(-chord.y / chordLength, chord.x / chordLength) *
+            (chordLength * bowRatio * bowSign)
+        val control = (start + end) / 2f + normal
         wasdTransitionJob = humanizeScope.launch {
             val stepDelay = (duration / steps).coerceAtLeast(8).toLong()
             for (i in 1..steps) {
                 delay(stepDelay)
                 if (!isActive) return@launch
-                val point = if (i == steps) end else arcPoint(center, start, end, i.toFloat() / steps)
-                joystickMotion.jitter(pointerId, mask, point)
+                if (i == steps) {
+                    // 最后一帧必须精确落到目标点；jitter 会因为目标相同而跳过。
+                    joystickMotion.finishMove(pointerId, mask, end)
+                } else {
+                    joystickMotion.jitter(pointerId, mask, bezierPoint(start, control, end, i.toFloat() / steps))
+                }
             }
         }
     }
 
-    private fun arcPoint(center: Offset, start: Offset, end: Offset, t: Float): Offset {
-        val startDelta = start - center
-        val endDelta = end - center
-        val startRadius = startDelta.getDistance()
-        val endRadius = endDelta.getDistance()
-        if (startRadius < 1f || endRadius < 1f) return start + (end - start) * t
-        val startAngle = atan2(startDelta.y, startDelta.x)
-        val endAngle = atan2(endDelta.y, endDelta.x)
-        var delta = endAngle - startAngle
-        while (delta > PI) delta -= (2 * PI).toFloat()
-        while (delta < -PI) delta += (2 * PI).toFloat()
-        val angle = startAngle + delta * t
-        val baseRadius = startRadius + (endRadius - startRadius) * t
-        val radius = if (abs(delta) > (PI / 2).toFloat()) {
-            // 大换向：中段把半径压到下限，形成近直线的横穿；两端仍精确落回原位。
-            val floor = maxOf(startRadius, endRadius) * TRANSITION_MIN_RADIUS_FACTOR
-            val dip = (baseRadius - floor).coerceAtLeast(0f) * sin((PI * t).toFloat())
-            (baseRadius - dip).coerceAtLeast(floor)
-        } else {
-            baseRadius
-        }
-        return center + Offset(cos(angle) * radius, sin(angle) * radius)
+    private fun bezierPoint(start: Offset, control: Offset, end: Offset, t: Float): Offset {
+        val u = 1f - t
+        return start * (u * u) + control * (2f * u * t) + end * (t * t)
+    }
+
+    /** 起点/终点方向之间的夹角；从摇杆中心起按时按大角度处理（弯得更明显）。 */
+    private fun directionTurn(center: Offset, start: Offset, end: Offset): Float {
+        val a = start - center
+        val b = end - center
+        val ra = a.getDistance()
+        val rb = b.getDistance()
+        if (ra < 1f || rb < 1f) return PI.toFloat()
+        val cosValue = ((a.x * b.x + a.y * b.y) / (ra * rb)).coerceIn(-1f, 1f)
+        return acos(cosValue)
     }
 
     // 方向落点偏置由 biasedDirection() 在换向时采样，这里只保留记录以便调试。
@@ -763,7 +794,8 @@ class EventHandler(
         }
 
         // 切换预设会重建映射，重新锚定回中基准到 SHOOTING_MODE 按钮位置（可拖动准心）。
-        val center = mapping.position
+        // 若设置了回中范围，则在范围内随机取点。
+        val center = randomLandingPoint(mapping.position)
         aimCenter = center
         aimPosition = center
         eventInjector.injectPointer(pointerId, center)
@@ -782,6 +814,14 @@ class EventHandler(
         val handlesAsWasd = wasdBit != 0 && hasWasd
         val pointerIdKey = if (handlesAsWasd) KEYCODE_WASD else event.keyCode
         val pointerId = pointerIds[pointerIdKey]
+
+        // Shift 起跑时，如果静步是我们自己点开的，补点一次静步键取消掉，
+        // 避免「一按 Shift 就变成慢走」。用户手动开的静步不介入。
+        if (sprintBit != 0 && event.action == KeyEvent.ACTION_DOWN &&
+            event.repeatCount == 0 && !pressedKeyCodes.contains(event.keyCode) &&
+            shiftCancelWalkEnabled) {
+            triggerWalk(sprint = true)
+        }
 
         // Shift 作为 WASD 疾跑修饰键（当存在 WASD 摇杆时）。按下时把疾跑位并入
         // wasdMask，让摇杆沿中心方向延长到疾跑档，而不是触发独立的 SPRINT 按钮。
@@ -907,10 +947,23 @@ class EventHandler(
             } else {
                 1f + Random.nextFloat() * WALK_VARIATION_RANGE * swayFactor
             }
+            // 落点也带一次随机：半径只向外延伸（避免推进死区），角度只偏 2° 上下，
+            // 让每次按下的落点都略有差异，而不是永远精确落在同一个像素上。
+            val sprinting = effectiveMask and MASK_SPRINT != 0
+            pressLandingScale = if (sprinting) {
+                1f + Random.nextFloat() * SPRINT_LANDING_RADIUS_RANGE
+            } else {
+                1f + Random.nextFloat() * WALK_LANDING_RADIUS_RANGE
+            }
+            val maxAngleDeg = if (sprinting) SPRINT_LANDING_ANGLE_DEG else WALK_LANDING_ANGLE_DEG
+            pressLandingAngle = (Random.nextFloat() * 2f - 1f) * maxAngleDeg * (Math.PI.toFloat() / 180f)
         }
-        val nominal = if (pressVariation != 1f) {
-            entry.center!! + (entry.position - entry.center!!) * pressVariation
-        } else entry.position
+        val nominal = entry.center!!.let { center ->
+            val delta = (entry.position - center) * (pressVariation * pressLandingScale)
+            val cosA = cos(pressLandingAngle)
+            val sinA = sin(pressLandingAngle)
+            center + Offset(delta.x * cosA - delta.y * sinA, delta.x * sinA + delta.y * cosA)
+        }
         val target = if (wasdHumanization) {
             // 每次换向时由 biasedDirection 重新采样偏置；再叠加低频微抖。
             jitterTarget(entry.center!!, biasedDirection(entry.center!!, nominal))
@@ -919,10 +972,10 @@ class EventHandler(
         // 过渡期间同一方向的按键重复（长按 W/D 的系统 repeat）不能把触点提前拉到终点，
         // 否则 80ms 的弧线只走了第一帧就被截断。
         if (!directionChanged && wasdTransitionJob?.isActive == true) return
+        val starting = joystickMotion.activeMask == 0
         val actualStart = joystickMotion.target
         val wantsTransition = wasdTransitionEnabled &&
-            directionChanged &&
-            joystickMotion.activeMask != 0 &&
+            (directionChanged || starting) &&
             actualStart != target
         // 返回 false 表示 update 把落点交给过渡协程；触点轨迹由注入层统一录制，
         // 过渡的每个中间点都会按真实注入坐标落到轨迹里。
@@ -934,11 +987,20 @@ class EventHandler(
             target,
             sendTarget = !wantsTransition,
             reanchorOnSprint = !wantsTransition,
+            // 从中心起按时先 down 在中心，再由过渡曲线拉到落点；否则
+            // injectGesture 会直接「中心 → 落点」瞬移出一条直线。
+            startOffset = center,
         )
         if (moved) {
             stopWasdTransition()
         } else {
-            startWasdTransition(pointerId, effectiveMask, center, actualStart, target)
+            startWasdTransition(
+                pointerId,
+                effectiveMask,
+                center,
+                if (starting) center else actualStart,
+                target,
+            )
         }
         if (wasdHumanization) {
             restartWasdJitter(pointerId, effectiveMask, entry, nominal)
@@ -1114,9 +1176,12 @@ class EventHandler(
                 val now = SystemClock.uptimeMillis()
                 if (now - lastRecenterTime >= recenterMinIntervalMs) {
                     // Finish this segment before UP; a fresh batch starts after DOWN.
+                    // 每次回中落在小方形内随机一点，避免一抬一按都在同一个像素上。
+                    val landing = randomLandingPoint()
                     eventInjector.releasePointer(pointerId)
-                    eventInjector.injectPointer(pointerId, aimCenter)
-                    aimPosition = aimCenter
+                    eventInjector.injectPointer(pointerId, landing)
+                    aimCenter = landing
+                    aimPosition = landing
                     lastRecenterTime = now
                 }
             }
@@ -1133,8 +1198,21 @@ class EventHandler(
         return true
     }
 
-    /** 把瞄准逻辑坐标钳制在屏幕边缘内（含回中留白），节流期内防止触点继续越界。 */
+    /**
+     * 把瞄准逻辑坐标钳制在鼠标活动范围内。
+     *
+     * 优先使用用户拖出来的「大方形」活动范围；没有设置时才退回整屏（含边缘留白）。
+     * 这样视角触点永远不会被鼠标位移带到屏幕另一侧。
+     */
     private fun clampAimToBounds(p: Offset): Offset {
+        val areaHalf = mouseAreaHalfSize
+        if (areaHalf > 0f) {
+            val c = mouseAreaCenter
+            return Offset(
+                p.x.coerceIn(c.x - areaHalf, c.x + areaHalf),
+                p.y.coerceIn(c.y - areaHalf, c.y + areaHalf)
+            )
+        }
         val w = screenSize.x
         val h = screenSize.y
         if (w <= 0f || h <= 0f) return p
@@ -1143,6 +1221,24 @@ class EventHandler(
             p.x.coerceIn(margin, w - margin),
             p.y.coerceIn(margin, h - margin)
         )
+    }
+
+    /**
+     * 本次按下/回中使用的落点。
+     *
+     * 设置了「小方形」时在范围内均匀随机取点（更接近真人每次落指的位置差异），
+     * 否则用 [fallback]；结果仍受大方形活动范围约束。
+     */
+    private fun randomLandingPoint(fallback: Offset = aimCenter): Offset {
+        val half = landingAreaHalfSize
+        val point = if (half > 0.5f) {
+            val c = landingAreaCenter
+            Offset(
+                c.x + (Random.nextFloat() * 2f - 1f) * half,
+                c.y + (Random.nextFloat() * 2f - 1f) * half
+            )
+        } else fallback
+        return clampAimToBounds(point)
     }
 
     /**
@@ -1194,7 +1290,7 @@ class EventHandler(
         if (!shootingMode) return
         val key = shootingModeKeyCode
         val pointerId = pointerIds[key] ?: return
-        val center = clampAimToBounds(keyMap[key]?.position ?: aimCenter)
+        val center = randomLandingPoint(keyMap[key]?.position ?: aimCenter)
         aimCenter = center
         aimPosition = center
         eventInjector.releasePointer(pointerId)
@@ -1222,10 +1318,9 @@ class EventHandler(
         if (pointerId != null) {
             if (newState) {
                 keyMap[key]?.let {
-                    // 进入射击模式：瞄准触点从 SHOOTING_MODE 按钮位置（可拖动准心）出发。
-                    // 用户把准心拖到游戏视野区（通常是屏幕右侧）再切射击模式，滑动鼠标即可
-                    // 转视角；之前强制屏幕中央会落到视野区之外，导致「转不了视角」。
-                    val center = clampAimToBounds(it.position)
+                    // 进入射击模式：默认从 SHOOTING_MODE 按钮位置（可拖动准心）出发；
+                    // 配置了回中范围时在小方形内随机落点，更接近真人按下的位置差异。
+                    val center = randomLandingPoint(it.position)
                     lastRecenterTime = 0L
                     aimCenter = center
                     aimPosition = center
@@ -1528,13 +1623,13 @@ class EventHandler(
         const val MAX_WASD_TRANSITION_MS = 200
 
         /**
-         * 大角度换向时摇杆推动量的最低比例。
-         *
-         * A↔D / W↔S 这类接近 180° 的换向，半径在中间压到这个比例（约 18%），
-         * 触点几乎横穿摇杆中心，轨迹呈现为一条从左到右（或上到下）的线；
-         * 保留一点推动量，避免游戏里出现完全归零的“停顿帧”。
+         * 落点随机：半径只向外延伸，避免把推力压进游戏的慢走/死区。
+         * 普通移动最多 +5%，疾跑最多 +8%；方向偏移不超过 2.5°。
          */
-        const val TRANSITION_MIN_RADIUS_FACTOR = 0.62f
+        const val WALK_LANDING_RADIUS_RANGE = 0.05f
+        const val SPRINT_LANDING_RADIUS_RANGE = 0.08f
+        const val WALK_LANDING_ANGLE_DEG = 1.8f
+        const val SPRINT_LANDING_ANGLE_DEG = 2.5f
 
         /** 疾跑半径在 sprintScale 之上再随机上浮 0–12%，避免每次都是同一圈。 */
         const val SPRINT_VARIATION_RANGE = 0.12f

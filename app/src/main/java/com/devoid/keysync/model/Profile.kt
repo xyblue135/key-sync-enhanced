@@ -34,6 +34,8 @@ data class Profile(
     val scallopDashMacro: KeySeqMacro = defaultScallopDashMacro(),
     /** 快速近战宏：默认 Alt+0，点一次近战键 → 延迟 → 点一次 1；按住触发键循环。 */
     val quickMeleeMacro: QuickMeleeMacro = QuickMeleeMacro(),
+    /** Shift 按下时取消我们自己开启的静步（WALK_TOGGLE）。默认开启。 */
+    val shiftCancelWalkEnabled: Boolean = true,
     /** Ordered independent click points, separate from ordinary key bindings. */
     val macros: List<ClickMacro> = emptyList(),
     /** Layout 保存时的屏幕分辨率（px）。加载时若与当前屏幕不同则把坐标/尺寸等比还原；0 = 未记录。 */

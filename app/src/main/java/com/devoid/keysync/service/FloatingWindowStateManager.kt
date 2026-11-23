@@ -205,7 +205,9 @@ class FloatingWindowStateManager @Inject constructor(
         // 预设坐标只在用户实际操作（拖拽、改键、缩放等）时写回。
         overlayViewport = viewport
         overlayOrigin = origin
+        _overlayOriginFlow.value = origin
         _reportedViewport.value = viewport
+        clampMouseAreasToScreen()
         val held = eventHandler.heldKeyCodes()
         val mouseHeld = eventHandler.heldMouseButtons()
         applyActiveProfile()
@@ -230,6 +232,16 @@ class FloatingWindowStateManager @Inject constructor(
     val discardDragEnabled = MutableStateFlow(false)
     /** Alt+D 拖拽速度倍数（1–100）：值越大移动越快，默认 25。 */
     val discardDragSpeed = MutableStateFlow(DEFAULT_DISCARD_DRAG_SPEED)
+
+    /* -------- 鼠标双范围（全局）：大方形限制位移，小方形随机回中落点（屏幕坐标） -------- */
+    val mouseAreaCenter = MutableStateFlow(Offset.Zero)
+    val mouseAreaHalf = MutableStateFlow(0f)
+    val landingAreaCenter = MutableStateFlow(Offset.Zero)
+    val landingAreaHalf = MutableStateFlow(0f)
+    private var mouseAreaCustomized = false
+    /** 悬浮窗原点（屏幕坐标），供高级层把双范围从屏幕坐标换算到本地坐标。 */
+    private val _overlayOriginFlow = MutableStateFlow(Offset.Zero)
+    val overlayOriginFlow = _overlayOriginFlow.asStateFlow()
     private var discardDragJob: Job? = null
     /** M 键开关地图并切换鼠标（全局），默认开启。 */
     val mapMouseToggleEnabled = MutableStateFlow(true)
@@ -460,6 +472,24 @@ class FloatingWindowStateManager @Inject constructor(
             fScrollDownKeyCode.value =
                 dataStoreManager.getInt(DataStoreManager.F_SCROLL_DOWN_KEY_CODE).first()
                     ?: KEYCODE_SCROLL_DOWN
+            // 鼠标双范围：已自定义过就恢复；没有记录时等预设布局就绪后按准心位置生成默认值。
+            val areaCx = dataStoreManager.getFloat(DataStoreManager.MOUSE_AREA_CENTER_X).first()
+            val areaCy = dataStoreManager.getFloat(DataStoreManager.MOUSE_AREA_CENTER_Y).first()
+            val areaHalf = dataStoreManager.getFloat(DataStoreManager.MOUSE_AREA_HALF).first()
+            if (areaCx != null && areaCy != null && areaHalf != null && areaHalf > 0f) {
+                mouseAreaCenter.value = Offset(areaCx, areaCy)
+                mouseAreaHalf.value = areaHalf
+                mouseAreaCustomized = true
+            }
+            val landCx = dataStoreManager.getFloat(DataStoreManager.LANDING_AREA_CENTER_X).first()
+            val landCy = dataStoreManager.getFloat(DataStoreManager.LANDING_AREA_CENTER_Y).first()
+            val landHalf = dataStoreManager.getFloat(DataStoreManager.LANDING_AREA_HALF).first()
+            if (landCx != null && landCy != null && landHalf != null && landHalf > 0f) {
+                landingAreaCenter.value = Offset(landCx, landCy)
+                landingAreaHalf.value = landHalf
+            }
+            clampMouseAreasToScreen()
+            syncMouseAreas()
             val loadedModes = runCatching {
                 Json { ignoreUnknownKeys = true }
                     .decodeFromString<List<PlayMode>>(
@@ -723,6 +753,9 @@ class FloatingWindowStateManager @Inject constructor(
         const val MAX_DISCARD_DRAG_SPEED = 100f
         /** 旧版本滑杆上限；读到 1–10 的旧值按 10 倍换算到新刻度。 */
         private const val LEGACY_MAX_DISCARD_DRAG_SPEED = 10f
+        /** 鼠标活动范围（大方形）与回中落点范围（小方形）的最小半边长（px）。 */
+        private const val MIN_MOUSE_AREA_HALF = 40f
+        private const val MIN_LANDING_AREA_HALF = 8f
         /** F 光标滚轮操控：每格短滑的像素距离默认值与范围。 */
         const val DEFAULT_SCROLL_SWIPE_PX = 120f
         const val MIN_SCROLL_SWIPE_PX = 40f
@@ -842,6 +875,9 @@ class FloatingWindowStateManager @Inject constructor(
             }
         }
         eventHandler.updateKeyMapping(items)
+        eventHandler.shiftCancelWalkEnabled =
+            activePlayMode.assists && active.shiftCancelWalkEnabled
+        ensureDefaultMouseAreas()
         syncMacros()
         scrollTracker.reset()
     }
@@ -1514,6 +1550,115 @@ class FloatingWindowStateManager @Inject constructor(
         persistActiveProfile()
     }
 
+    /* ---------------- 鼠标双范围 ---------------- */
+
+    /** 把双范围同步给事件处理器（鼠标活动范围 + 回中随机落点范围）。 */
+    private fun syncMouseAreas() {
+        eventHandler.mouseAreaCenter = mouseAreaCenter.value
+        eventHandler.mouseAreaHalfSize = mouseAreaHalf.value
+        eventHandler.landingAreaCenter = landingAreaCenter.value
+        eventHandler.landingAreaHalfSize = landingAreaHalf.value
+    }
+
+    /** 旋转 / 分辨率变化后把已保存的双范围裁回屏幕内，避免视角触点被夹到屏幕外。 */
+    private fun clampMouseAreasToScreen() {
+        val half = mouseAreaHalf.value
+        if (half <= 0f) return
+        val screen = currentScreenSize()
+        if (screen.x <= 0f || screen.y <= 0f) return
+        val safeHalf = half.coerceAtMost(minOf(screen.x, screen.y) * 0.48f)
+        val center = mouseAreaCenter.value
+        val safeCenter = Offset(
+            center.x.coerceIn(safeHalf, (screen.x - safeHalf).coerceAtLeast(safeHalf)),
+            center.y.coerceIn(safeHalf, (screen.y - safeHalf).coerceAtLeast(safeHalf)),
+        )
+        mouseAreaHalf.value = safeHalf
+        mouseAreaCenter.value = safeCenter
+        val landHalf = landingAreaHalf.value.coerceAtMost(safeHalf)
+        landingAreaHalf.value = landHalf
+        landingAreaCenter.value = Offset(
+            landingAreaCenter.value.x.coerceIn(safeCenter.x - safeHalf, safeCenter.x + safeHalf),
+            landingAreaCenter.value.y.coerceIn(safeCenter.y - safeHalf, safeCenter.y + safeHalf),
+        )
+        syncMouseAreas()
+    }
+
+    /**
+     * 首次使用时，以准心（` 按钮）为中心生成默认双范围：
+     * 大方形限制视角触点只在右半屏附近移动，小方形用于每次回中的随机落点。
+     */
+    private fun ensureDefaultMouseAreas() {
+        if (mouseAreaCustomized) return
+        val viewport = overlayViewport ?: currentScreenSize()
+        if (viewport.x <= 0f || viewport.y <= 0f) return
+        val origin = overlayOrigin ?: Offset.Zero
+        val minSide = minOf(viewport.x, viewport.y)
+        val toggle = _containerItems.value.filterIsInstance<DraggableItem.FixedKey>()
+            .firstOrNull { it.type == DraggableItemType.SHOOTING_MODE }
+        val center = toggle?.touchCenter
+            ?: (origin + Offset(viewport.x * 0.68f, viewport.y * 0.5f))
+        val half = (minSide * 0.30f).coerceIn(60f, minSide * 0.45f)
+        val screen = currentScreenSize()
+        mouseAreaCenter.value = Offset(
+            center.x.coerceIn(half, (screen.x - half).coerceAtLeast(half)),
+            center.y.coerceIn(half, (screen.y - half).coerceAtLeast(half)),
+        )
+        mouseAreaHalf.value = half
+        landingAreaCenter.value = mouseAreaCenter.value
+        landingAreaHalf.value = (minSide * 0.05f).coerceIn(10f, half)
+        syncMouseAreas()
+    }
+
+    /** 高级层拖动/缩放「鼠标活动范围」（大方形）。 */
+    fun setMouseArea(center: Offset, half: Float) {
+        mouseAreaCustomized = true
+        val screen = currentScreenSize()
+        val safeHalf = half.coerceIn(MIN_MOUSE_AREA_HALF, maxOf(MIN_MOUSE_AREA_HALF, minOf(screen.x, screen.y) * 0.48f))
+        val safeCenter = Offset(
+            center.x.coerceIn(safeHalf, (screen.x - safeHalf).coerceAtLeast(safeHalf)),
+            center.y.coerceIn(safeHalf, (screen.y - safeHalf).coerceAtLeast(safeHalf)),
+        )
+        mouseAreaCenter.value = safeCenter
+        mouseAreaHalf.value = safeHalf
+        // 小方形必须落在大方形内，否则回中落点会被大方形裁掉。
+        landingAreaCenter.value = Offset(
+            landingAreaCenter.value.x.coerceIn(safeCenter.x - safeHalf, safeCenter.x + safeHalf),
+            landingAreaCenter.value.y.coerceIn(safeCenter.y - safeHalf, safeCenter.y + safeHalf),
+        )
+        landingAreaHalf.value = landingAreaHalf.value.coerceAtMost(safeHalf)
+        syncMouseAreas()
+        scope.launch {
+            dataStoreManager.save(DataStoreManager.MOUSE_AREA_CENTER_X, safeCenter.x)
+            dataStoreManager.save(DataStoreManager.MOUSE_AREA_CENTER_Y, safeCenter.y)
+            dataStoreManager.save(DataStoreManager.MOUSE_AREA_HALF, safeHalf)
+            dataStoreManager.save(DataStoreManager.LANDING_AREA_CENTER_X, landingAreaCenter.value.x)
+            dataStoreManager.save(DataStoreManager.LANDING_AREA_CENTER_Y, landingAreaCenter.value.y)
+            dataStoreManager.save(DataStoreManager.LANDING_AREA_HALF, landingAreaHalf.value)
+        }
+    }
+
+    /** 高级层拖动/缩放「回中落点范围」（小方形）。 */
+    fun setLandingArea(center: Offset, half: Float) {
+        mouseAreaCustomized = true
+        val bigHalf = mouseAreaHalf.value
+        val bigCenter = mouseAreaCenter.value
+        val safeHalf = half.coerceIn(MIN_LANDING_AREA_HALF, maxOf(MIN_LANDING_AREA_HALF, bigHalf))
+        val clampedCenter = if (bigHalf > 0f) {
+            Offset(
+                center.x.coerceIn(bigCenter.x - bigHalf, bigCenter.x + bigHalf),
+                center.y.coerceIn(bigCenter.y - bigHalf, bigCenter.y + bigHalf),
+            )
+        } else center
+        landingAreaCenter.value = clampedCenter
+        landingAreaHalf.value = safeHalf
+        syncMouseAreas()
+        scope.launch {
+            dataStoreManager.save(DataStoreManager.LANDING_AREA_CENTER_X, clampedCenter.x)
+            dataStoreManager.save(DataStoreManager.LANDING_AREA_CENTER_Y, clampedCenter.y)
+            dataStoreManager.save(DataStoreManager.LANDING_AREA_HALF, safeHalf)
+        }
+    }
+
     /** 进入光标模式时光标出现的位置；未自定义时回到屏幕中心。 */
     fun cursorSpawnPoint(): Offset {
         val profile = activeProfile()
@@ -1632,6 +1777,8 @@ class FloatingWindowStateManager @Inject constructor(
         if (!mode.assists) {
             tapSequence234Job?.cancel()
         }
+        eventHandler.shiftCancelWalkEnabled =
+            mode.assists && (activeProfile()?.shiftCancelWalkEnabled ?: true)
         if (!mode.fCursor) fScrollControlActive = false
     }
 

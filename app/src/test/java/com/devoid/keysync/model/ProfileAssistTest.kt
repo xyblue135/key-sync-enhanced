@@ -23,6 +23,7 @@ class ProfileAssistTest {
             quickSwapEnabled = false,
             tapSequence234GapMinMs = 40,
             tapSequence234GapMaxMs = 60,
+            shiftCancelWalkEnabled = false,
         )
 
         val saved = profile.withAssist(draft)
@@ -34,6 +35,7 @@ class ProfileAssistTest {
         assertTrue(!saved.quickSwapEnabled)
         assertEquals(40, saved.tapSequence234GapMinMs)
         assertEquals(60, saved.tapSequence234GapMaxMs)
+        assertTrue(!saved.shiftCancelWalkEnabled)
         // 再取一次草稿必须和刚写回的一致，isDirty 才能归零。
         assertEquals(draft, saved.assist())
     }

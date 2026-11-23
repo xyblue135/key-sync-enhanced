@@ -146,6 +146,13 @@ fun ItemsContainer(
     cursorSpawn: Offset? = null,
     onMoveCursorSpawn: (Offset) -> Unit = {},
     onResetCursorSpawn: () -> Unit = {},
+    /** 鼠标活动范围（大方形）与回中随机落点范围（小方形），均为悬浮层本地坐标。 */
+    mouseMoveAreaCenter: Offset? = null,
+    mouseMoveAreaHalf: Float = 0f,
+    landingAreaCenter: Offset? = null,
+    landingAreaHalf: Float = 0f,
+    onMouseAreaChange: (Offset, Float) -> Unit = { _, _ -> },
+    onLandingAreaChange: (Offset, Float) -> Unit = { _, _ -> },
     /** 编辑态图层：true = 高级层（丢弃点可拖动，按键层半透明预览）。 */
     advancedLayerActive: Boolean = false,
     /** 运行时是否显示普通按键层（Enter 层级预览用）。 */
@@ -197,6 +204,33 @@ fun ItemsContainer(
         if (editing) {
             containerItems.filterIsInstance<DraggableItem.WASDGroup>().firstOrNull()?.let {
                 WasdRadiusRings(it, wasdSprintPreview)
+            }
+        }
+        // 鼠标双范围：大方形限制视角触点的活动范围，小方形决定每次回中的随机落点。
+        // 放在最底层绘制，避免挡住按键、丢弃点、光标落点等其他可拖动元素。
+        if (editing || showAdvancedMarkers) {
+            val areaAlpha = if (!editing) 0.6f else if (advancedLayerActive) 1f else 0.22f
+            mouseMoveAreaCenter?.let { c ->
+                MouseAreaBox(
+                    center = c,
+                    half = mouseMoveAreaHalf,
+                    label = "鼠标范围",
+                    color = MaterialTheme.colorScheme.tertiary,
+                    alpha = areaAlpha,
+                    enabled = editing && advancedLayerActive,
+                    onCommit = onMouseAreaChange,
+                )
+            }
+            landingAreaCenter?.let { c ->
+                MouseAreaBox(
+                    center = c,
+                    half = landingAreaHalf,
+                    label = "回中范围",
+                    color = MaterialTheme.colorScheme.secondary,
+                    alpha = areaAlpha,
+                    enabled = editing && advancedLayerActive,
+                    onCommit = onLandingAreaChange,
+                )
             }
         }
         if (showKeys) {
@@ -1290,6 +1324,68 @@ private const val DISCARD_BAR_HEIGHT_DP = 180
 /** 光标落点标记尺寸；拖到屏幕中心这么近就视为恢复默认。 */
 private const val CURSOR_SPAWN_MARKER_DP = 56
 private const val CURSOR_SPAWN_SNAP_BACK_DP = 40
+
+/**
+ * 高级层的鼠标范围方形：拖框体移动中心，拖右下角改变半边长。
+ * 只在 [enabled] 时接收拖动，避免在按键层挡住普通按钮。
+ */
+@Composable
+private fun MouseAreaBox(
+    center: Offset,
+    half: Float,
+    label: String,
+    color: Color,
+    alpha: Float,
+    enabled: Boolean,
+    onCommit: (Offset, Float) -> Unit,
+) {
+    if (half <= 0f) return
+    val density = LocalDensity.current
+    var pos by remember(center) { mutableStateOf(center) }
+    var size by remember(half) { mutableFloatStateOf(half) }
+    Box(
+        modifier = Modifier
+            .offset { IntOffset((pos.x - size).roundToInt(), (pos.y - size).roundToInt()) }
+            .size(with(density) { (size * 2f).toDp() })
+            .alpha(alpha)
+            .background(color.copy(alpha = 0.06f), RoundedCornerShape(4.dp))
+            .border(1.5.dp, color, RoundedCornerShape(4.dp))
+            .pointerInput(pos, size, enabled) {
+                if (!enabled) return@pointerInput
+                detectDragGestures(
+                    onDrag = { change, drag ->
+                        change.consume()
+                        pos += drag
+                    },
+                    onDragEnd = { onCommit(pos, size) },
+                )
+            }
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            fontSize = 9.sp,
+            color = color,
+            modifier = Modifier.padding(2.dp),
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .size(18.dp)
+                .background(color.copy(alpha = 0.35f), RoundedCornerShape(3.dp))
+                .pointerInput(enabled) {
+                    if (!enabled) return@pointerInput
+                    detectDragGestures(
+                        onDrag = { change, drag ->
+                            change.consume()
+                            size = (size + max(drag.x, drag.y)).coerceIn(8f, 4000f)
+                        },
+                        onDragEnd = { onCommit(pos, size) },
+                    )
+                }
+        )
+    }
+}
 
 @Composable
 private fun SectionHeader(text: String) {
