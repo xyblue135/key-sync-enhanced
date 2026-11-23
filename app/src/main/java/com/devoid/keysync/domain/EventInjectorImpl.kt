@@ -79,6 +79,8 @@ abstract class EventInjectorImpl(private val eventManager: EventManager = EventM
         // 之前的实现用 ValueAnimator 在注入线程里 withContext(Main) 切主线程起 80ms 动画，
         // 高频变换时和鼠标 MOVE 争抢主线程，导致转视角卡顿。这里改成在注入线程内一步完成
         // 「down(中心) + move(方向点)」，既保住位移语义，又完全不切主线程、不起动画。
+        TrajectoryRecorder.recordDown(pointerID, o1.x, o1.y)
+        TrajectoryRecorder.recordMoveTo(pointerID, o2.x, o2.y)
         enqueue {
             when (eventManager.addPointer(pointerID, o1.x, o1.y)) {
                 -2 -> {
@@ -107,6 +109,7 @@ abstract class EventInjectorImpl(private val eventManager: EventManager = EventM
 
     override fun transFormGesture(pointerID: Int, position: Offset) {
         // 摇杆已在 down 状态，直接重定位到新方向点（W→W+Shift 疾跑档、方向切换等）。
+        TrajectoryRecorder.recordMoveTo(pointerID, position.x, position.y)
         enqueue {
             if (eventManager.updatePointer(pointerID, position.x, position.y)) {
                 dispatch(MotionEvent.ACTION_MOVE)
@@ -121,14 +124,17 @@ abstract class EventInjectorImpl(private val eventManager: EventManager = EventM
     override fun injectPointer(pointerID: Int, o1: Offset, o2: Offset) {
         val x = (o1.x.toInt()..o2.x.toInt()).random().toFloat()
         val y = (o1.y.toInt()..o2.y.toInt()).random().toFloat()
+        TrajectoryRecorder.recordDown(pointerID, x, y)
         addEventDown(pointerID, x, y)
     }
 
     override fun injectPointer(pointerID: Int, position: Offset) {
+        TrajectoryRecorder.recordDown(pointerID, position.x, position.y)
         addEventDown(pointerID, position.x, position.y)
     }
 
     override fun updatePointerPosition(pointerID: Int, position: Offset) {
+        TrajectoryRecorder.recordMoveBy(pointerID, position.x, position.y)
         val batch = pendingMoves.add(pointerID, position) ?: return
         enqueue(coalesce = true) {
             val delta = pendingMoves.take(batch) ?: return@enqueue
@@ -173,6 +179,7 @@ abstract class EventInjectorImpl(private val eventManager: EventManager = EventM
     }
 
     override fun releasePointer(pointerID: Int) {
+        TrajectoryRecorder.recordUp(pointerID)
         enqueue {
             val action = eventManager.getPointerAction(pointerID, true)
             if (action == -1)
@@ -197,6 +204,8 @@ abstract class EventInjectorImpl(private val eventManager: EventManager = EventM
         // Drop coalesced MOVE data immediately. Otherwise an already queued
         // flush may run after CANCEL and resurrect movement from the old state.
         pendingMoves.clear()
+        // 录制里也要把仍在按住的触点收尾，否则重建布局后轨迹会一直挂着。
+        TrajectoryRecorder.recordAllUp()
         enqueue {
             val event = eventManager.createMotionEvent(MotionEvent.ACTION_CANCEL)
             event?.let {

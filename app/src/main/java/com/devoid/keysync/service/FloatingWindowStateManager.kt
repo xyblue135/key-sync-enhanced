@@ -35,6 +35,7 @@ import com.devoid.keysync.model.withAssist
 import com.devoid.keysync.model.SeqAction
 import com.devoid.keysync.util.keyCodeToString
 import com.devoid.keysync.domain.EventHandler
+import com.devoid.keysync.domain.TrajectoryRecorder
 import com.devoid.keysync.domain.KEYCODE_LMC
 import com.devoid.keysync.domain.KEYCODE_MMC
 import com.devoid.keysync.domain.KEYCODE_RMC
@@ -2251,6 +2252,14 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     fun onKeyEvent(keyEvent: KeyEvent): Boolean {
+        // 轨迹录制：记录所有物理按键的按下/抬起（自动重复只记第一次），
+        // 供回放里的按键条显示，不参与映射逻辑。
+        if (!_isEditMode.value &&
+            (keyEvent.action == KeyEvent.ACTION_DOWN || keyEvent.action == KeyEvent.ACTION_UP) &&
+            !(keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount > 0)
+        ) {
+            TrajectoryRecorder.recordKey(keyEvent.keyCode, keyEvent.action == KeyEvent.ACTION_DOWN)
+        }
         mouseKeyAlias(keyEvent.keyCode, keyEvent.source)?.let { button ->
             if (keyEvent.action != KeyEvent.ACTION_DOWN && keyEvent.action != KeyEvent.ACTION_UP) return true
             val pressed = keyEvent.action == KeyEvent.ACTION_DOWN
@@ -2485,6 +2494,7 @@ class FloatingWindowStateManager @Inject constructor(
 
     private fun handleMouseEdge(button: Int, pressed: Boolean) {
         mouseButtonKeyCode(button)?.let { key ->
+            TrajectoryRecorder.recordKey(key, pressed)
             _pressedKeys.value = if (pressed) _pressedKeys.value + key else _pressedKeys.value - key
             _lastInputLabel.value = key.keyCodeToString() + if (pressed) " 按下" else " 松开"
         }

@@ -1,62 +1,103 @@
 package com.devoid.keysync.domain
 
-/** WASD 摇杆向量样本：x 为右正、y 为下正，长度约 0–1.3（疾跑会超过 1）。 */
-data class WasdTrajectorySample(val timeMs: Long, val x: Float, val y: Float)
+import kotlin.math.hypot
 
-/** 射击模式下的鼠标增量样本，单位是注入给游戏的屏幕像素。 */
-data class MouseTrajectorySample(val timeMs: Long, val dx: Float, val dy: Float)
+/** 触点的一个采样点：屏幕坐标（px），时间相对录制开始。 */
+data class TrajectoryPointSample(val timeMs: Long, val x: Float, val y: Float)
 
-/** 鼠标位移积分后的点，用于绘制视角移动轨迹。 */
-data class TrajectoryPoint(val timeMs: Long, val x: Float, val y: Float)
-
-data class TrajectoryRecording(
-    val durationMs: Long,
-    val wasd: List<WasdTrajectorySample>,
-    val mouse: List<MouseTrajectorySample>,
+/**
+ * 一个触点的完整轨迹：按下 → 移动 → 抬起。
+ *
+ * [upTimeMs] 为 null 表示录制结束时触点仍然按住。
+ * 触点来源包括：普通按键、WASD 摇杆、准心、轮盘、点击宏、连按落点、F 滑动、光标拖拽。
+ */
+data class TrajectoryPointerTrack(
+    val pointerId: Int,
+    val downTimeMs: Long,
+    val upTimeMs: Long?,
+    val samples: List<TrajectoryPointSample>,
 ) {
-    val isEmpty: Boolean get() = wasd.isEmpty() && mouse.isEmpty()
+    fun isActiveAt(timeMs: Long): Boolean =
+        timeMs >= downTimeMs && (upTimeMs == null || timeMs < upTimeMs)
 
-    /** 把鼠标增量累加成一条从 (0,0) 开始的路径。 */
-    fun mousePath(): List<TrajectoryPoint> {
-        if (mouse.isEmpty()) return emptyList()
-        val points = ArrayList<TrajectoryPoint>(mouse.size + 1)
-        var x = 0f
-        var y = 0f
-        points += TrajectoryPoint(mouse.first().timeMs, 0f, 0f)
-        mouse.forEach {
-            x += it.dx
-            y += it.dy
-            points += TrajectoryPoint(it.timeMs, x, y)
+    /** 该时刻触点的位置：取时间戳不超过 [timeMs] 的最后一个采样点。 */
+    fun positionAt(timeMs: Long): TrajectoryPointSample? {
+        var low = 0
+        var high = samples.lastIndex
+        var result: TrajectoryPointSample? = null
+        while (low <= high) {
+            val mid = (low + high) ushr 1
+            if (samples[mid].timeMs <= timeMs) {
+                result = samples[mid]
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
         }
-        return points
+        return result
     }
 }
 
+/** 物理按键 / 鼠标按键的按下与抬起，用于回放里的按键条。 */
+data class TrajectoryKeyEvent(val timeMs: Long, val keyCode: Int, val pressed: Boolean)
+
+/** 回放用的按钮类型：WASD 摇杆按椭圆绘制，其余按键按方形/圆形绘制。 */
+enum class TrajectoryItemKind { WASD, BUTTON }
+
 /**
- * 轨迹录制器：只记录 WASD 摇杆向量与射击模式的鼠标增量，不记录其他按键。
+ * 停止录制时的布局快照（屏幕像素坐标）。
  *
+ * 只保留回放需要的几何与文案，不持有可变的 [com.devoid.keysync.model.DraggableItem]。
+ */
+data class TrajectoryItemSnapshot(
+    val kind: TrajectoryItemKind,
+    val label: String,
+    val centerX: Float,
+    val centerY: Float,
+    val radiusX: Float,
+    val radiusY: Float,
+)
+
+data class TrajectoryRecording(
+    val durationMs: Long,
+    val viewportWidth: Float,
+    val viewportHeight: Float,
+    val tracks: List<TrajectoryPointerTrack>,
+    val keys: List<TrajectoryKeyEvent>,
+) {
+    val isEmpty: Boolean get() = tracks.isEmpty() && keys.isEmpty()
+}
+
+/**
+ * 轨迹录制器：记录所有实际注入的触点与所有按下的物理键。
+ *
+ * - 只记录「注入给游戏的触点坐标」，因此宏、连点、F 滑动、滚轮、准心回中都能覆盖到。
  * - 全部数据只存在内存里，停止后交给渲染器，不落盘。
- * - 单次最长 [MAX_DURATION_MS]，超时后忽略后续样本，由服务负责自动停止。
- * - 鼠标按至少 [MOUSE_MIN_INTERVAL_MS] 采样，避免 1000Hz 鼠标把内存打满。
+ * - 单次最长 [MAX_DURATION_MS]，超时后不再接受新样本，由服务负责自动停止。
+ * - 移动按时间 + 距离双阈值抽稀，避免 1000Hz 鼠标把内存打满。
  */
 object TrajectoryRecorder {
     const val MAX_DURATION_MS = 60_000L
 
-    private const val MAX_WASD_SAMPLES = 30_000
-    private const val MAX_MOUSE_SAMPLES = 15_000
-    private const val MOUSE_MIN_INTERVAL_MS = 8L
-    private const val WASD_MIN_INTERVAL_MS = 16L
-    private const val WASD_EPSILON = 0.004f
+    private const val MAX_SAMPLES = 90_000
+    private const val MAX_TRACK_SAMPLES = 15_000
+    private const val MAX_KEY_EVENTS = 4_000
+    private const val MIN_MOVE_INTERVAL_MS = 6L
+    private const val MIN_MOVE_DISTANCE_PX = 1.2f
+
+    private class OpenTrack(
+        val id: Int,
+        val downMs: Long,
+        val points: ArrayList<TrajectoryPointSample> = ArrayList(16),
+    )
 
     private val lock = Any()
-    private val wasdSamples = ArrayList<WasdTrajectorySample>(2048)
-    private val mouseSamples = ArrayList<MouseTrajectorySample>(1024)
+    private val finished = ArrayList<TrajectoryPointerTrack>()
+    private val open = LinkedHashMap<Int, OpenTrack>()
+    private val keys = ArrayList<TrajectoryKeyEvent>()
 
+    private var sampleCount = 0
     private var startedAtNs = 0L
-    private var lastMouseAtMs = -1L
-    private var lastWasdAtMs = -1L
-    private var lastWasdX = 0f
-    private var lastWasdY = 0f
 
     @Volatile
     private var recording = false
@@ -71,69 +112,146 @@ object TrajectoryRecorder {
     /** 开始新录制；已经在录制时返回 false。 */
     fun start(): Boolean = synchronized(lock) {
         if (recording) return false
-        wasdSamples.clear()
-        mouseSamples.clear()
+        finished.clear()
+        open.clear()
+        keys.clear()
+        sampleCount = 0
         startedAtNs = System.nanoTime()
-        lastMouseAtMs = -1L
-        lastWasdAtMs = -1L
-        lastWasdX = 0f
-        lastWasdY = 0f
         recording = true
         true
     }
 
-    /** 停止并返回快照；没有有效样本时返回 null。 */
-    fun stop(): TrajectoryRecording? = synchronized(lock) {
-        if (!recording) return null
-        val duration = elapsedLocked()
-        recording = false
-        if (wasdSamples.isEmpty() && mouseSamples.isEmpty()) return null
-        TrajectoryRecording(
-            durationMs = duration,
-            wasd = wasdSamples.toList(),
-            mouse = mouseSamples.toList(),
-        )
-    }
-
-    /** 记录一帧 WASD 向量（已归一化）。 */
-    fun recordWasd(x: Float, y: Float) {
-        if (!recording) return
+    /**
+     * 停止并返回快照；没有有效轨迹或按键时返回 null。
+     *
+     * [viewportWidth] / [viewportHeight] 是录制时悬浮层覆盖的屏幕尺寸（px），
+     * 回放按它把触点坐标缩放成视频坐标。
+     */
+    fun stop(viewportWidth: Float, viewportHeight: Float): TrajectoryRecording? =
         synchronized(lock) {
-            if (!recording) return
-            val now = elapsedLocked()
-            if (now > MAX_DURATION_MS || wasdSamples.size >= MAX_WASD_SAMPLES) return
-            val samePoint = kotlin.math.abs(x - lastWasdX) < WASD_EPSILON &&
-                kotlin.math.abs(y - lastWasdY) < WASD_EPSILON
-            val tooSoon = lastWasdAtMs >= 0 && now - lastWasdAtMs < WASD_MIN_INTERVAL_MS
-            if (samePoint && tooSoon) return
-            wasdSamples += WasdTrajectorySample(now, x, y)
-            lastWasdAtMs = now
-            lastWasdX = x
-            lastWasdY = y
+            if (!recording) return null
+            val duration = elapsedLocked().coerceAtMost(MAX_DURATION_MS)
+            recording = false
+            open.values.toList().forEach { finished += it.toTrack(null) }
+            open.clear()
+            val tracks = finished.sortedBy { it.downTimeMs }
+            finished.clear()
+            if (tracks.isEmpty() && keys.isEmpty()) return null
+            val snapshot = TrajectoryRecording(
+                durationMs = duration,
+                viewportWidth = viewportWidth,
+                viewportHeight = viewportHeight,
+                tracks = tracks,
+                keys = keys.toList(),
+            )
+            keys.clear()
+            snapshot
         }
-    }
 
-    /** 记录射击模式实际注入的鼠标增量。 */
-    fun recordMouse(dx: Float, dy: Float) {
+    /** 触点按下（同一 id 未抬起就再次按下时按移动处理，避免伪造一个抬起）。 */
+    fun recordDown(pointerId: Int, x: Float, y: Float) {
         if (!recording) return
-        if (dx == 0f && dy == 0f) return
+        if (!x.isFinite() || !y.isFinite()) return
         synchronized(lock) {
             if (!recording) return
             val now = elapsedLocked()
-            if (now > MAX_DURATION_MS || mouseSamples.size >= MAX_MOUSE_SAMPLES) return
-            if (lastMouseAtMs >= 0 && now - lastMouseAtMs < MOUSE_MIN_INTERVAL_MS) {
-                // 合并到上一个采样点，保留总位移，避免高频鼠标丢位移。
-                val last = mouseSamples.lastOrNull() ?: return
-                mouseSamples[mouseSamples.lastIndex] = last.copy(
-                    dx = last.dx + dx,
-                    dy = last.dy + dy,
-                )
+            if (now > MAX_DURATION_MS) return
+            val existing = open[pointerId]
+            if (existing != null) {
+                appendLocked(existing, now, x, y, force = true)
                 return
             }
-            mouseSamples += MouseTrajectorySample(now, dx, dy)
-            lastMouseAtMs = now
+            if (!reserveSampleLocked()) return
+            val track = OpenTrack(pointerId, now)
+            track.points += TrajectoryPointSample(now, x, y)
+            open[pointerId] = track
         }
     }
+
+    /** 触点移动到绝对屏幕坐标。 */
+    fun recordMoveTo(pointerId: Int, x: Float, y: Float) {
+        if (!recording) return
+        if (!x.isFinite() || !y.isFinite()) return
+        synchronized(lock) {
+            if (!recording) return
+            val track = open[pointerId] ?: return
+            val now = elapsedLocked()
+            if (now > MAX_DURATION_MS) return
+            appendLocked(track, now, x, y, force = false)
+        }
+    }
+
+    /** 触点按增量移动（鼠标/准心/轮盘用的是偏移量）。 */
+    fun recordMoveBy(pointerId: Int, dx: Float, dy: Float) {
+        if (!recording) return
+        if (!dx.isFinite() || !dy.isFinite()) return
+        synchronized(lock) {
+            if (!recording) return
+            val track = open[pointerId] ?: return
+            val last = track.points.lastOrNull() ?: return
+            val now = elapsedLocked()
+            if (now > MAX_DURATION_MS) return
+            appendLocked(track, now, last.x + dx, last.y + dy, force = false)
+        }
+    }
+
+    /** 触点抬起。对未记录的 id 幂等。 */
+    fun recordUp(pointerId: Int) {
+        if (!recording) return
+        synchronized(lock) {
+            val track = open.remove(pointerId) ?: return
+            finished += track.toTrack(elapsedLocked())
+        }
+    }
+
+    /** 抬起所有仍在按住的触点（布局重建 / 服务销毁时调用）。 */
+    fun recordAllUp() {
+        if (!recording) return
+        synchronized(lock) {
+            if (open.isEmpty()) return
+            val now = elapsedLocked()
+            open.values.forEach { finished += it.toTrack(now) }
+            open.clear()
+        }
+    }
+
+    /** 记录一次物理按键 / 鼠标按键。自动重复的按下只记第一次。 */
+    fun recordKey(keyCode: Int, pressed: Boolean) {
+        if (!recording) return
+        synchronized(lock) {
+            if (!recording) return
+            if (keys.size >= MAX_KEY_EVENTS) return
+            val now = elapsedLocked()
+            if (now > MAX_DURATION_MS) return
+            keys += TrajectoryKeyEvent(now, keyCode, pressed)
+        }
+    }
+
+    private fun reserveSampleLocked(): Boolean {
+        if (sampleCount >= MAX_SAMPLES) return false
+        sampleCount++
+        return true
+    }
+
+    private fun appendLocked(track: OpenTrack, now: Long, x: Float, y: Float, force: Boolean) {
+        if (track.points.size >= MAX_TRACK_SAMPLES) return
+        val last = track.points.last()
+        if (!force) {
+            val dt = now - last.timeMs
+            val distance = hypot(x - last.x, y - last.y)
+            if (dt < MIN_MOVE_INTERVAL_MS && distance < MIN_MOVE_DISTANCE_PX) return
+        }
+        if (!reserveSampleLocked()) return
+        track.points += TrajectoryPointSample(now, x, y)
+    }
+
+    private fun OpenTrack.toTrack(upTimeMs: Long?): TrajectoryPointerTrack =
+        TrajectoryPointerTrack(
+            pointerId = id,
+            downTimeMs = downMs,
+            upTimeMs = upTimeMs?.coerceAtLeast(downMs),
+            samples = points.toList(),
+        )
 
     private fun elapsedLocked(): Long =
         ((System.nanoTime() - startedAtNs) / 1_000_000L).coerceAtLeast(0L)

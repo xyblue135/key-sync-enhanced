@@ -54,6 +54,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -76,6 +77,8 @@ import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.devoid.keysync.MainActivity
 import com.devoid.keysync.R
+import com.devoid.keysync.domain.TrajectoryItemKind
+import com.devoid.keysync.domain.TrajectoryItemSnapshot
 import com.devoid.keysync.domain.TrajectoryRecorder
 import com.devoid.keysync.domain.TrajectoryRecording
 import com.devoid.keysync.model.DraggableItem
@@ -251,8 +254,8 @@ class FloatingBubbleService : Service() {
     /**
      * 通知栏「录制轨迹 / 停止并生成」。
      *
-     * 录制只记 WASD 摇杆向量与射击模式鼠标增量；停止后在后台渲染 720p 视频，
-     * 完成时用单独的通知提示，点击可直接打开。
+     * 录制会收下所有实际注入的触点（普通按键、WASD、准心、宏、连点、F 滑动等）
+     * 以及所有按下的物理键；停止后在后台渲染全屏映射回放视频。
      */
     private fun toggleTrajectoryRecording() {
         if (TrajectoryRecorder.isRecording) {
@@ -272,18 +275,87 @@ class FloatingBubbleService : Service() {
     private fun finishTrajectoryRecording() {
         trajectoryAutoStopJob?.cancel()
         trajectoryAutoStopJob = null
-        val recording = TrajectoryRecorder.stop()
+        val sm = stateManager.get()
+        val viewport = sm.viewportForLayout
+        val recording = TrajectoryRecorder.stop(viewport.x, viewport.y)
         refreshOverlayNotification()
         if (recording == null || recording.isEmpty) {
             Toast.makeText(this, R.string.trajectory_empty, Toast.LENGTH_SHORT).show()
             return
         }
-        val sm = stateManager.get()
         val presetName = sm.profiles.value
             .firstOrNull { it.id == sm.activeProfileId.value }
             ?.name
             .orEmpty()
-        renderTrajectory(recording, presetName)
+        renderTrajectory(recording, snapshotTrajectoryLayout(), presetName)
+    }
+
+    /**
+     * 把当前悬浮层布局压成回放用的几何快照。
+     *
+     * 只读一次 [FloatingWindowStateManager.containerItems]，之后即使退出编辑态或换预设，
+     * 后台渲染拿到的仍是录制结束那一刻的按钮位置与大小。
+     */
+    private fun snapshotTrajectoryLayout(): List<TrajectoryItemSnapshot> {
+        val sm = stateManager.get()
+        val density = resources.displayMetrics.density
+        return sm.containerItems.value.mapNotNull { item ->
+            when (item) {
+                is DraggableItem.WASDGroup -> TrajectoryItemSnapshot(
+                    kind = TrajectoryItemKind.WASD,
+                    label = "WASD",
+                    centerX = item.center.x,
+                    centerY = item.center.y,
+                    radiusX = ((item.d.x - item.a.x) / 2f).coerceAtLeast(20f),
+                    radiusY = ((item.s.y - item.w.y) / 2f).coerceAtLeast(20f),
+                )
+
+                is DraggableItem.VariableKey -> {
+                    val size = item.size.takeIf { it > 0 }?.toFloat()
+                        ?: (item.customSizeDp * density)
+                    val center = item.touchCenter
+                        ?: (item.position + Offset(size / 2f, size / 2f))
+                    TrajectoryItemSnapshot(
+                        kind = TrajectoryItemKind.BUTTON,
+                        label = item.keyCode?.keyCodeToString()?.removePrefix("KEYCODE_") ?: "+",
+                        centerX = center.x,
+                        centerY = center.y,
+                        radiusX = size / 2f,
+                        radiusY = size / 2f,
+                    )
+                }
+
+                is DraggableItem.FixedKey -> {
+                    val size = item.size.takeIf { it > 0 }?.toFloat()
+                        ?: (item.customSizeDp * density)
+                    val center = item.touchCenter
+                        ?: (item.position + Offset(size / 2f, size / 2f))
+                    TrajectoryItemSnapshot(
+                        kind = TrajectoryItemKind.BUTTON,
+                        label = item.keyCode.keyCodeToString().removePrefix("KEYCODE_"),
+                        centerX = center.x,
+                        centerY = center.y,
+                        radiusX = size / 2f,
+                        radiusY = size / 2f,
+                    )
+                }
+
+                is DraggableItem.CancelableKey -> {
+                    val size = item.size.takeIf { it > 0 }?.toFloat()
+                        ?: (item.customSizeDp * density)
+                    val center = item.cancelTouchCenter
+                        ?: (item.position + Offset(size / 2f, size / 2f))
+                    TrajectoryItemSnapshot(
+                        kind = TrajectoryItemKind.BUTTON,
+                        label = item.keyCode?.keyCodeToString()?.removePrefix("KEYCODE_") ?: "?",
+                        centerX = center.x,
+                        centerY = center.y,
+                        radiusX = size / 2f,
+                        radiusY = size / 2f,
+                    )
+                }
+            }
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -295,7 +367,11 @@ class FloatingBubbleService : Service() {
         }
     }
 
-    private fun renderTrajectory(recording: TrajectoryRecording, presetName: String) {
+    private fun renderTrajectory(
+        recording: TrajectoryRecording,
+        layout: List<TrajectoryItemSnapshot>,
+        presetName: String,
+    ) {
         if (trajectoryRenderJob?.isActive == true) return
         createTrajectoryChannel()
         showTrajectoryProgress(0)
@@ -308,7 +384,7 @@ class FloatingBubbleService : Service() {
             val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
             val displayName = "trajectory-$stamp.mp4"
             val temp = File(tempDir, displayName)
-            val ok = TrajectoryVideoRenderer.render(recording, presetName, temp) { progress ->
+            val ok = TrajectoryVideoRenderer.render(recording, layout, presetName, temp) { progress ->
                 showTrajectoryProgress(progress)
             }
             if (!ok) {
@@ -904,7 +980,7 @@ class FloatingBubbleService : Service() {
         overlayInitialized = false
         trajectoryAutoStopJob?.cancel()
         trajectoryRenderJob?.cancel()
-        if (TrajectoryRecorder.isRecording) TrajectoryRecorder.stop()
+        if (TrajectoryRecorder.isRecording) TrajectoryRecorder.stop(0f, 0f)
         removeAllViews()
         stateManager.get().onDestroy()
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)

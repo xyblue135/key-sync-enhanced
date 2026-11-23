@@ -65,11 +65,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
@@ -105,6 +108,7 @@ import com.devoid.keysync.model.TouchMode
 import com.devoid.keysync.model.clampToViewport
 import com.devoid.keysync.model.layoutSizeForClamp
 import com.devoid.keysync.util.keyCodeToString
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -152,6 +156,8 @@ fun ItemsContainer(
     // When the user taps the gear icon on a key, this is set so we can
     // pop up a key-capture dialog bound to that specific item.
     var configuringWasd by remember { mutableStateOf<DraggableItem.WASDGroup?>(null) }
+    /** 疾跑距离滑杆的实时预览（前向, 横向），让半径圈跟着滑杆变化。 */
+    var wasdSprintPreview by remember { mutableStateOf<Pair<Float, Float>?>(null) }
     var configuringFixedKey by remember { mutableStateOf<DraggableItem.FixedKey?>(null) }
     var configuringVariableKey by remember { mutableStateOf<DraggableItem.VariableKey?>(null) }
     var configuringCancelableKey by remember { mutableStateOf<DraggableItem.CancelableKey?>(null) }
@@ -187,6 +193,12 @@ fun ItemsContainer(
             .fillMaxSize()
             .onSizeChanged { viewport = Size(it.width.toFloat(), it.height.toFloat()) }
     ) {
+        // 编辑态显示 WASD 的普通 / 疾跑半径圈，方便对照 Shift 位移设置是否合理。
+        if (editing) {
+            containerItems.filterIsInstance<DraggableItem.WASDGroup>().firstOrNull()?.let {
+                WasdRadiusRings(it, wasdSprintPreview)
+            }
+        }
         if (showKeys) {
         containerItems.forEach { item ->
             key(item.id) {
@@ -470,13 +482,23 @@ fun ItemsContainer(
         configuringWasd?.let { target ->
             var forward by remember(target.id) { mutableFloatStateOf(target.sprintForwardDistance ?: ((target.w - target.center).getDistance() * target.sprintScale).coerceIn(10f, 1000f)) }
             var side by remember(target.id) { mutableFloatStateOf(target.sprintSideDistance ?: ((target.d - target.center).getDistance() * target.sprintScale).coerceIn(10f, 1000f)) }
-            InlineDialog(onDismiss = { configuringWasd = null }) {
+            LaunchedEffect(target.id) { wasdSprintPreview = forward to side }
+            InlineDialog(onDismiss = {
+                configuringWasd = null
+                wasdSprintPreview = null
+            }) {
                 Column(Modifier.padding(24.dp).widthIn(min = 240.dp).verticalScroll(rememberScrollState())) {
                     Text("Shift 疾跑距离", style = MaterialTheme.typography.titleMedium)
                     Text("W 前向：${forward.roundToInt()} px")
-                    Slider(value = forward.coerceIn(10f, 1000f), onValueChange = { forward = it }, valueRange = 10f..1000f)
+                    Slider(value = forward.coerceIn(10f, 1000f), onValueChange = {
+                        forward = it
+                        wasdSprintPreview = forward to side
+                    }, valueRange = 10f..1000f)
                     Text("A / D 横向（共用）：${side.roundToInt()} px")
-                    Slider(value = side.coerceIn(10f, 1000f), onValueChange = { side = it }, valueRange = 10f..1000f)
+                    Slider(value = side.coerceIn(10f, 1000f), onValueChange = {
+                        side = it
+                        wasdSprintPreview = forward to side
+                    }, valueRange = 10f..1000f)
                     Text("疾跑落点统一落在同一圈上，斜跑不再叠加两轴距离；只有 S 取消疾跑。保存后退出编辑生效。", style = MaterialTheme.typography.bodySmall)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -486,17 +508,22 @@ fun ItemsContainer(
                             onClick = {
                                 onRemove(target.id)
                                 configuringWasd = null
+                                wasdSprintPreview = null
                             },
                             colors = ButtonDefaults.textButtonColors(
                                 contentColor = MaterialTheme.colorScheme.error
                             )
                         ) { Text("删除按键") }
                         Row {
-                            TextButton(onClick = { configuringWasd = null }) { Text("取消") }
+                            TextButton(onClick = {
+                                configuringWasd = null
+                                wasdSprintPreview = null
+                            }) { Text("取消") }
                             TextButton(onClick = {
                                 target.sprintForwardDistance = forward
                                 target.sprintSideDistance = side
                                 configuringWasd = null
+                                wasdSprintPreview = null
                             }) { Text("保存") }
                         }
                     }
@@ -1296,6 +1323,38 @@ private fun MenuCell(
     }
 }
 
+
+@Composable
+private fun WasdRadiusRings(item: DraggableItem.WASDGroup, preview: Pair<Float, Float>? = null) {
+    val center = item.center
+    val normalRx = abs(item.d.x - center.x).coerceAtLeast(1f)
+    val normalRy = abs(item.w.y - center.y).coerceAtLeast(1f)
+    val sprintRx = (preview?.second ?: item.sprintSideDistance ?: (normalRx * item.sprintScale))
+        .coerceAtLeast(1f)
+    val sprintRy = (preview?.first ?: item.sprintForwardDistance ?: (normalRy * item.sprintScale))
+        .coerceAtLeast(1f)
+    val normalColor = Color.White.copy(alpha = 0.35f)
+    val sprintColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .drawBehind {
+                val dash = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))
+                drawOval(
+                    color = normalColor,
+                    topLeft = Offset(center.x - normalRx, center.y - normalRy),
+                    size = Size(normalRx * 2, normalRy * 2),
+                    style = Stroke(width = 1.5.dp.toPx(), pathEffect = dash),
+                )
+                drawOval(
+                    color = sprintColor,
+                    topLeft = Offset(center.x - sprintRx, center.y - sprintRy),
+                    size = Size(sprintRx * 2, sprintRy * 2),
+                    style = Stroke(width = 2.dp.toPx(), pathEffect = dash),
+                )
+            }
+    )
+}
 
 @Preview
 @Composable

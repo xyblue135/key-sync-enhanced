@@ -247,6 +247,8 @@ class EventHandler(
 
     private val sprintGate = SprintGate()
     private var wasdMask = 0
+    /** WASD 方向键按下顺序（位掩码），用于 A+D / W+S 同时按住时让最后按下的方向生效。 */
+    private val wasdDirectionOrder = ArrayDeque<Int>()
     private val joystickMotion = JoystickMotion(
         MASK_SPRINT,
         release = { eventInjector.releaseGesture(it) },
@@ -417,15 +419,14 @@ class EventHandler(
     /**
      * 把触点从 [start] 平滑移到 [end]。
      *
-     * 小角度换向沿等半径弧线走；接近 180° 的大换向（A↔D、W↔S）会把半径
-     * 在中间压到 [TRANSITION_MIN_RADIUS_FACTOR]，让触点几乎横穿中心，
-     * 轨迹是一条左右/上下的直线，同时保留最低推动量避免完全停住。
+     * 小角度换向沿等半径弧线走；接近 180° 的大换向（A↔D、W↔S）也保持弧线，
+     * 只在中间把半径收窄到 [TRANSITION_MIN_RADIUS_FACTOR]，形成明显的弯道，
+     * 不会从原点直线穿过去。
      */
     private fun startWasdTransition(
         pointerId: Int,
         mask: Int,
         center: Offset,
-        unit: Offset,
         start: Offset,
         end: Offset,
     ) {
@@ -440,7 +441,6 @@ class EventHandler(
                 if (!isActive) return@launch
                 val point = if (i == steps) end else arcPoint(center, start, end, i.toFloat() / steps)
                 joystickMotion.jitter(pointerId, mask, point)
-                recordWasdVector(center, unit, point)
             }
         }
     }
@@ -497,7 +497,6 @@ class EventHandler(
         pointerId: Int,
         mask: Int,
         map: KeyMap,
-        unit: Offset,
         baseTarget: Offset,
     ) {
         wasdJitterJob?.cancel()
@@ -508,7 +507,6 @@ class EventHandler(
                 // 只拖 current 触点，绝不 reanchor（见 JoystickMotion.jitter）。
                 val center = map.center ?: return@launch
                 val target = jitterTarget(center, baseTarget)
-                recordWasdVector(center, unit, target)
                 joystickMotion.jitter(pointerId, mask, target)
             }
         }
@@ -824,6 +822,8 @@ class EventHandler(
                     if (handlesAsWasd) {
                         sprintGate.directionPressed(wasdBit == MASK_S)
                         wasdMask = wasdMask or wasdBit
+                        wasdDirectionOrder.remove(wasdBit)
+                        wasdDirectionOrder.addLast(wasdBit)
                         handleWasd(pointerId)
                     } else {
                         handleKeyDown(event.keyCode, pointerId)
@@ -840,6 +840,7 @@ class EventHandler(
                 if (pointerId != null) {
                     if (handlesAsWasd) {
                         wasdMask = wasdMask and wasdBit.inv()
+                        wasdDirectionOrder.remove(wasdBit)
                         handleWasd(pointerId)
                     } else {
                         handleKeyUp(event.keyCode, pointerId)
@@ -859,14 +860,20 @@ class EventHandler(
         // no entry in wasdMap, so the joystick stayed at its previous position
         // until another key changed the mask. Treat opposite axes as neutral.
         val rawDirectionMask = wasdMask and (MASK_W or MASK_A or MASK_S or MASK_D)
+        // 同时按住相反方向时不再当成中立：用最后按下的那个方向，避免 A→D 交替时
+        // 触点被松开回中、再从原点重新按下（表现为瞬移/直线穿心）。
+        val latestVertical = wasdDirectionOrder.lastOrNull { it == MASK_W || it == MASK_S } ?: 0
+        val latestHorizontal = wasdDirectionOrder.lastOrNull { it == MASK_A || it == MASK_D } ?: 0
         val vertical = when {
             rawDirectionMask and MASK_W != 0 && rawDirectionMask and MASK_S == 0 -> MASK_W
             rawDirectionMask and MASK_S != 0 && rawDirectionMask and MASK_W == 0 -> MASK_S
+            rawDirectionMask and MASK_W != 0 && rawDirectionMask and MASK_S != 0 -> latestVertical
             else -> 0
         }
         val horizontal = when {
             rawDirectionMask and MASK_A != 0 && rawDirectionMask and MASK_D == 0 -> MASK_A
             rawDirectionMask and MASK_D != 0 && rawDirectionMask and MASK_A == 0 -> MASK_D
+            rawDirectionMask and MASK_A != 0 && rawDirectionMask and MASK_D != 0 -> latestHorizontal
             else -> 0
         }
         val directionMask = vertical or horizontal
@@ -875,7 +882,6 @@ class EventHandler(
             stopWasdTransition()
             pressVariationMask = 0
             pressVariation = 1f
-            TrajectoryRecorder.recordWasd(0f, 0f)
             joystickMotion.update(pointerId, 0, Offset.Zero, Offset.Zero)
             return
         }
@@ -918,17 +924,9 @@ class EventHandler(
             directionChanged &&
             joystickMotion.activeMask != 0 &&
             actualStart != target
-        // 返回 false 表示 update 把落点交给过渡协程，不能在这里先记终点，
-        // 否则录像里会先出现终点、再出现弧线中间点。
-        // 录像归一化基准取「非疾跑方向落点」：疾跑条目坐标在 sprintScale（默认 1.5）
-        // 倍半径上，用它自己归一化会把奔跑也画成 1.0，轨迹里看不出 Shift。
-        // 录像按轴归一化：x 用 A/D 落点距离、y 用 W 落点距离，普通方向就是半径 1
-        // 的菱形、斜向 0.71；疾跑是同一圈 1.5–1.68，和实际注入形状一致。若按当前
-        // 方向自己的落点距离归一化，斜向疾跑会被放大到 2 倍以上再被画布裁成圆弧。
+        // 返回 false 表示 update 把落点交给过渡协程；触点轨迹由注入层统一录制，
+        // 过渡的每个中间点都会按真实注入坐标落到轨迹里。
         val center = entry.center!!
-        val sideUnit = abs((wasdMap[MASK_D]?.position ?: entry.position).x - center.x)
-        val forwardUnit = abs((wasdMap[MASK_W]?.position ?: entry.position).y - center.y)
-        val unit = Offset(sideUnit.coerceAtLeast(1f), forwardUnit.coerceAtLeast(1f))
         val moved = joystickMotion.update(
             pointerId,
             effectiveMask,
@@ -939,30 +937,13 @@ class EventHandler(
         )
         if (moved) {
             stopWasdTransition()
-            recordWasdVector(center, unit, target)
         } else {
-            startWasdTransition(pointerId, effectiveMask, center, unit, actualStart, target)
+            startWasdTransition(pointerId, effectiveMask, center, actualStart, target)
         }
         if (wasdHumanization) {
-            restartWasdJitter(pointerId, effectiveMask, entry, unit, nominal)
+            restartWasdJitter(pointerId, effectiveMask, entry, nominal)
         } else stopWasdJitter()
     }
-
-    /**
-     * 把摇杆落点换算成以中心为原点、普通方向键距离为 1 的向量，供轨迹录制使用。
-     *
-     * [unit] 是按轴取的基准距离（x 用 A/D、y 用 W），不能用当前落点自己的半径：
-     * 疾跑落点本身就在 1.5 倍半径上，用它会画成 1.0；斜向用方向自己的半径又会
-     * 被放大到 2 倍以上。记录的是 [target]（已含方向偏置与低频晃动），也就是
-     * 真正注入给游戏的那个点。
-     */
-    private fun recordWasdVector(center: Offset, unit: Offset, target: Offset) {
-        TrajectoryRecorder.recordWasd(
-            (target.x - center.x) / unit.x.coerceAtLeast(1f),
-            (target.y - center.y) / unit.y.coerceAtLeast(1f),
-        )
-    }
-
 
     /* ---------- normal keys ---------- */
 
@@ -1127,7 +1108,6 @@ class EventHandler(
             aimPosition = clampAimToBounds(requested)
             val applied = aimPosition - previous
             if (applied != Offset.Zero) {
-                TrajectoryRecorder.recordMouse(applied.x, applied.y)
                 eventInjector.updatePointerPosition(pointerId, applied)
             }
             if (aimPosition != requested) {
@@ -1396,6 +1376,7 @@ class EventHandler(
         // eventInjector.clear() above lifted the joystick contact, so the
         // Reset the joystick transition tracker after cancelling its contact.
         wasdMask = 0
+        wasdDirectionOrder.clear()
         joystickMotion.reset()
         stopWasdJitter()
         stopWasdTransition()
@@ -1521,6 +1502,7 @@ class EventHandler(
         mappingPressed.clear()
         cancelToggle.clear()
         wasdMask = 0
+        wasdDirectionOrder.clear()
         joystickMotion.reset()
         stopWasdJitter()
         stopWasdTransition()
@@ -1552,7 +1534,7 @@ class EventHandler(
          * 触点几乎横穿摇杆中心，轨迹呈现为一条从左到右（或上到下）的线；
          * 保留一点推动量，避免游戏里出现完全归零的“停顿帧”。
          */
-        const val TRANSITION_MIN_RADIUS_FACTOR = 0.18f
+        const val TRANSITION_MIN_RADIUS_FACTOR = 0.62f
 
         /** 疾跑半径在 sprintScale 之上再随机上浮 0–12%，避免每次都是同一圈。 */
         const val SPRINT_VARIATION_RANGE = 0.12f

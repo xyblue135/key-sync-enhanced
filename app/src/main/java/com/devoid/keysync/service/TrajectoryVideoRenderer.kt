@@ -10,45 +10,64 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import com.devoid.keysync.domain.TrajectoryItemKind
+import com.devoid.keysync.domain.TrajectoryItemSnapshot
+import com.devoid.keysync.domain.TrajectoryKeyEvent
+import com.devoid.keysync.domain.TrajectoryPointSample
+import com.devoid.keysync.domain.TrajectoryPointerTrack
 import com.devoid.keysync.domain.TrajectoryRecording
-import com.devoid.keysync.domain.WasdTrajectorySample
+import com.devoid.keysync.util.keyCodeToString
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /**
- * 把轨迹录制渲染成 720p / 30fps 的 H.264 MP4。
+ * 把全量轨迹录制渲染成 720p / 30fps 的 H.264 MP4。
  *
- * 画面左边是 WASD 摇杆向量（不是游戏内角色位置），右边是射击模式鼠标增量积分出的
- * 视角路径。渲染完全离线，不需要录屏权限，也不会把游戏画面录进去。
+ * 画面是「映射层的全屏回放」：按停止录制时的布局画出所有按钮，并把每个触点的
+ * 运动轨迹、按下/长按/点击波纹、宏触点颜色、物理按键条一起画出来。
+ * 不录游戏画面、不录声音，也不需要录屏权限。
  */
 object TrajectoryVideoRenderer {
-    const val WIDTH = 1280
-    const val HEIGHT = 720
     const val FPS = 30
 
-    private const val BG = 0xFF0E1116.toInt()
-    private const val PANEL = 0xFF151B24.toInt()
-    private const val GRID = 0xFF232C38.toInt()
+    private const val MAX_DURATION_MS = 60_000L
+    private const val MIN_DURATION_MS = 600L
+
+    private const val MACRO_POINTER_BASE = 1_000_000
+    private const val EXTRA_TAP_POINTER_BASE = 1_200_000
+
+    private const val BG = 0xFF090C11.toInt()
+    private const val STAGE = 0xFF10151C.toInt()
+    private const val STAGE_BORDER = 0xFF273242.toInt()
+    private const val GRID = 0xFF1A2230.toInt()
     private const val TEXT = 0xFFE6EAF0.toInt()
     private const val MUTED = 0xFF8A94A6.toInt()
-    private const val WASD_COLOR = 0xFF4EA1FF.toInt()
-    private const val MOUSE_COLOR = 0xFFFF8A4C.toInt()
-    private const val OK_COLOR = 0xFF5BD68A.toInt()
+    private const val ITEM_BORDER = 0xFF44546A.toInt()
+    private const val ITEM_FILL = 0x14FFFFFF
+    private const val ITEM_PRESSED = 0x552FA8FF
+    private const val PRESS_COLOR = 0xFF5BD68A.toInt()
+    private const val TRACK_COLOR = 0xFF4EA1FF.toInt()
+    private const val MACRO_COLOR = 0xFFC77DFF.toInt()
+    private const val TAP_COLOR = 0xFFFFB74D.toInt()
+    private const val ACCENT = 0xFF4EA1FF.toInt()
 
     suspend fun render(
         recording: TrajectoryRecording,
+        items: List<TrajectoryItemSnapshot>,
         presetName: String,
         outFile: File,
         onProgress: (Int) -> Unit,
     ): Boolean = withContext(Dispatchers.Default) {
         runCatching {
-            renderBlocking(recording, presetName, outFile, onProgress)
+            renderBlocking(recording, items, presetName, outFile, onProgress)
         }.getOrElse {
             outFile.delete()
             false
@@ -57,26 +76,30 @@ object TrajectoryVideoRenderer {
 
     private fun renderBlocking(
         recording: TrajectoryRecording,
+        items: List<TrajectoryItemSnapshot>,
         presetName: String,
         outFile: File,
         onProgress: (Int) -> Unit,
     ): Boolean {
-        val durationMs = recording.durationMs.coerceIn(1_000L, 60_000L)
+        val durationMs = recording.durationMs.coerceIn(MIN_DURATION_MS, MAX_DURATION_MS)
+        val portrait = recording.viewportHeight > recording.viewportWidth
+        val width = if (portrait) 720 else 1280
+        val height = if (portrait) 1280 else 720
         val frames = max(1, (durationMs / 1000.0 * FPS).roundToInt())
         outFile.parentFile?.mkdirs()
 
-        val bitmap = Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888)
+        val stage = stageTransform(recording, width, height)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        val pixels = IntArray(WIDTH * HEIGHT)
-        val mousePath = recording.mousePath()
+        val pixels = IntArray(width * height)
         val paints = Paints()
 
-        val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, WIDTH, HEIGHT).apply {
+        val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
             setInteger(
                 MediaFormat.KEY_COLOR_FORMAT,
                 MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible
             )
-            setInteger(MediaFormat.KEY_BIT_RATE, 4_000_000)
+            setInteger(MediaFormat.KEY_BIT_RATE, if (portrait) 6_000_000 else 4_000_000)
             setInteger(MediaFormat.KEY_FRAME_RATE, FPS)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
         }
@@ -96,13 +119,16 @@ object TrajectoryVideoRenderer {
                 if (inputIndex >= 0) {
                     val image = codec.getInputImage(inputIndex) ?: return false
                     val tMs = frame * 1000L / FPS
-                    drawFrame(canvas, paints, recording, mousePath, presetName, tMs, durationMs)
-                    bitmap.getPixels(pixels, 0, WIDTH, 0, 0, WIDTH, HEIGHT)
-                    fillYuv(image, pixels)
+                    drawFrame(
+                        canvas, paints, recording, items, presetName,
+                        tMs, durationMs, width, height, stage,
+                    )
+                    bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+                    fillYuv(image, pixels, width, height)
                     codec.queueInputBuffer(
                         inputIndex,
                         0,
-                        WIDTH * HEIGHT * 3 / 2,
+                        width * height * 3 / 2,
                         frame * 1_000_000L / FPS,
                         0
                     )
@@ -177,7 +203,7 @@ object TrajectoryVideoRenderer {
         }
     }
 
-    private fun fillYuv(image: android.media.Image, pixels: IntArray) {
+    private fun fillYuv(image: android.media.Image, pixels: IntArray, width: Int, height: Int) {
         val yPlane = image.planes[0]
         val uPlane = image.planes[1]
         val vPlane = image.planes[2]
@@ -185,14 +211,14 @@ object TrajectoryVideoRenderer {
         val uBuffer = uPlane.buffer
         val vBuffer = vPlane.buffer
 
-        for (row in 0 until HEIGHT) {
+        for (row in 0 until height) {
             val yBase = row * yPlane.rowStride
             val uvRow = row / 2
             val uBase = uvRow * uPlane.rowStride
             val vBase = uvRow * vPlane.rowStride
             val evenRow = (row and 1) == 0
-            for (col in 0 until WIDTH) {
-                val color = pixels[row * WIDTH + col]
+            for (col in 0 until width) {
+                val color = pixels[row * width + col]
                 val r = (color shr 16) and 0xFF
                 val g = (color shr 8) and 0xFF
                 val b = color and 0xFF
@@ -214,13 +240,13 @@ object TrajectoryVideoRenderer {
         val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
         val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = 3f
+            strokeWidth = 2f
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
         }
         val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = 1.5f
+            strokeWidth = 1f
         }
         val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = TEXT
@@ -228,261 +254,411 @@ object TrajectoryVideoRenderer {
         }
     }
 
+    /** 屏幕像素坐标 → 视频像素坐标的缩放与偏移。 */
+    private class Stage(
+        val scale: Float,
+        val left: Float,
+        val top: Float,
+        val width: Float,
+        val height: Float,
+    ) {
+        fun x(value: Float): Float = left + value * scale
+        fun y(value: Float): Float = top + value * scale
+        fun r(value: Float): Float = value * scale
+    }
+
+    private fun stageTransform(recording: TrajectoryRecording, videoWidth: Int, videoHeight: Int): Stage {
+        val viewportWidth = recording.viewportWidth.takeIf { it > 1f } ?: videoWidth.toFloat()
+        val viewportHeight = recording.viewportHeight.takeIf { it > 1f } ?: videoHeight.toFloat()
+        val marginX = if (videoWidth < 900) 28f else 40f
+        val headerHeight = 88f
+        val footerHeight = 92f
+        val availableWidth = videoWidth - marginX * 2f
+        val availableHeight = videoHeight - headerHeight - footerHeight
+        val scale = min(availableWidth / viewportWidth, availableHeight / viewportHeight)
+        val width = viewportWidth * scale
+        val height = viewportHeight * scale
+        return Stage(
+            scale = scale,
+            left = (videoWidth - width) / 2f,
+            top = headerHeight + (availableHeight - height) / 2f,
+            width = width,
+            height = height,
+        )
+    }
+
     private fun drawFrame(
         canvas: Canvas,
         p: Paints,
         recording: TrajectoryRecording,
-        mousePath: List<com.devoid.keysync.domain.TrajectoryPoint>,
+        items: List<TrajectoryItemSnapshot>,
         presetName: String,
         tMs: Long,
         durationMs: Long,
+        videoWidth: Int,
+        videoHeight: Int,
+        stage: Stage,
     ) {
         canvas.drawColor(BG)
+        drawHeader(canvas, p, recording, presetName, durationMs, videoWidth)
+        drawStage(canvas, p, stage)
 
-        p.text.textSize = 30f
+        canvas.save()
+        canvas.clipRect(stage.left, stage.top, stage.left + stage.width, stage.top + stage.height)
+        drawItems(canvas, p, items, recording.tracks, tMs, stage)
+        drawTracks(canvas, p, recording.tracks, tMs, stage)
+        canvas.restore()
+
+        drawKeyChips(canvas, p, recording.keys, tMs, stage)
+        drawFooter(canvas, p, tMs, durationMs, videoWidth, videoHeight)
+    }
+
+    private fun drawHeader(
+        canvas: Canvas,
+        p: Paints,
+        recording: TrajectoryRecording,
+        presetName: String,
+        durationMs: Long,
+        videoWidth: Int,
+    ) {
+        val margin = if (videoWidth < 900) 28f else 40f
+        p.text.textAlign = Paint.Align.LEFT
         p.text.color = TEXT
-        canvas.drawText("轨迹回放", 48f, 56f, p.text)
-        p.text.textSize = 18f
+        p.text.textSize = if (videoWidth < 900) 26f else 32f
+        canvas.drawText("映射轨迹回放", margin, 40f, p.text)
+
         p.text.color = MUTED
-        canvas.drawText(
-            "预设：${presetName.ifBlank { "未命名" }}    时长：${formatTime(durationMs)}",
-            48f,
-            86f,
-            p.text
+        p.text.textSize = if (videoWidth < 900) 15f else 17f
+        val subtitle = "预设 ${presetName.ifBlank { "未命名" }} · " +
+            "时长 ${formatTime(durationMs)} · 触点 ${recording.tracks.size} · 按键 ${recording.keys.size}"
+        canvas.drawText(subtitle, margin, 68f, p.text)
+    }
+
+    private fun drawStage(canvas: Canvas, p: Paints, stage: Stage) {
+        p.fill.color = STAGE
+        canvas.drawRoundRect(
+            stage.left, stage.top, stage.left + stage.width, stage.top + stage.height,
+            20f, 20f, p.fill
         )
 
-        drawWasdPanel(canvas, p, recording.wasd, tMs)
-        drawMousePanel(canvas, p, mousePath, tMs)
+        // 细网格：方便看出触点在屏幕上的相对位置。
+        p.grid.color = GRID
+        val columns = 6
+        val rows = 10
+        for (i in 1 until columns) {
+            val x = stage.left + stage.width * i / columns
+            canvas.drawLine(x, stage.top + 2f, x, stage.top + stage.height - 2f, p.grid)
+        }
+        for (i in 1 until rows) {
+            val y = stage.top + stage.height * i / rows
+            canvas.drawLine(stage.left + 2f, y, stage.left + stage.width - 2f, y, p.grid)
+        }
+
+        p.line.color = STAGE_BORDER
+        p.line.strokeWidth = 2f
+        canvas.drawRoundRect(
+            stage.left, stage.top, stage.left + stage.width, stage.top + stage.height,
+            20f, 20f, p.line
+        )
+    }
+
+    private fun isItemPressed(
+        item: TrajectoryItemSnapshot,
+        tracks: List<TrajectoryPointerTrack>,
+        tMs: Long,
+    ): Boolean {
+        for (track in tracks) {
+            if (!track.isActiveAt(tMs)) continue
+            val point = track.positionAt(tMs) ?: continue
+            val dx = point.x - item.centerX
+            val dy = point.y - item.centerY
+            if (item.kind == TrajectoryItemKind.WASD) {
+                val rx = item.radiusX.coerceAtLeast(1f)
+                val ry = item.radiusY.coerceAtLeast(1f)
+                val nx = dx / rx
+                val ny = dy / ry
+                if (nx * nx + ny * ny <= 1.35f) return true
+            } else {
+                if (abs(dx) <= item.radiusX * 1.25f && abs(dy) <= item.radiusY * 1.25f) return true
+            }
+        }
+        return false
+    }
+
+    private fun drawItems(
+        canvas: Canvas,
+        p: Paints,
+        items: List<TrajectoryItemSnapshot>,
+        tracks: List<TrajectoryPointerTrack>,
+        tMs: Long,
+        stage: Stage,
+    ) {
+        for (item in items) {
+            val cx = stage.x(item.centerX)
+            val cy = stage.y(item.centerY)
+            val rx = max(6f, stage.r(item.radiusX))
+            val ry = max(6f, stage.r(item.radiusY))
+            val pressed = isItemPressed(item, tracks, tMs)
+
+            if (item.kind == TrajectoryItemKind.WASD) {
+                p.fill.color = if (pressed) ITEM_PRESSED else ITEM_FILL
+                canvas.drawOval(cx - rx, cy - ry, cx + rx, cy + ry, p.fill)
+
+                p.line.color = if (pressed) PRESS_COLOR else ITEM_BORDER
+                p.line.strokeWidth = if (pressed) 3.5f else 2f
+                canvas.drawOval(cx - rx, cy - ry, cx + rx, cy + ry, p.line)
+
+                p.line.color = ITEM_BORDER
+                p.line.alpha = 90
+                p.line.strokeWidth = 1f
+                canvas.drawLine(cx - rx, cy, cx + rx, cy, p.line)
+                canvas.drawLine(cx, cy - ry, cx, cy + ry, p.line)
+                p.line.alpha = 255
+
+                if (rx > 26f && ry > 26f) {
+                    val size = min(18f, max(11f, rx * 0.18f))
+                    drawCenteredText(canvas, p, "W", cx, cy - ry + 20f, size, MUTED)
+                    drawCenteredText(canvas, p, "S", cx, cy + ry - 8f, size, MUTED)
+                    drawCenteredText(canvas, p, "A", cx - rx + 18f, cy + 6f, size, MUTED)
+                    drawCenteredText(canvas, p, "D", cx + rx - 18f, cy + 6f, size, MUTED)
+                }
+            } else {
+                val radius = min(rx, ry)
+                p.fill.color = if (pressed) ITEM_PRESSED else ITEM_FILL
+                canvas.drawRoundRect(
+                    cx - rx, cy - ry, cx + rx, cy + ry,
+                    radius * 0.42f, radius * 0.42f, p.fill
+                )
+                p.line.color = if (pressed) PRESS_COLOR else ITEM_BORDER
+                p.line.strokeWidth = if (pressed) 3f else 1.8f
+                canvas.drawRoundRect(
+                    cx - rx, cy - ry, cx + rx, cy + ry,
+                    radius * 0.42f, radius * 0.42f, p.line
+                )
+                if (radius >= 13f) {
+                    val size = min(radius * 0.62f, 22f).coerceAtLeast(10f)
+                    val label = if (item.label.length > 6) item.label.take(6) else item.label
+                    drawCenteredText(canvas, p, label, cx, cy, size, TEXT)
+                }
+            }
+        }
+    }
+
+    private fun drawTracks(
+        canvas: Canvas,
+        p: Paints,
+        tracks: List<TrajectoryPointerTrack>,
+        tMs: Long,
+        stage: Stage,
+    ) {
+        for (track in tracks) {
+            if (track.downTimeMs > tMs) continue
+            val endTime = min(tMs, track.upTimeMs ?: tMs)
+            val points = ArrayList<TrajectoryPointSample>()
+            for (sample in track.samples) {
+                if (sample.timeMs > endTime) break
+                points += sample
+            }
+            if (points.isEmpty()) continue
+
+            val color = trackColor(track.pointerId)
+
+            if (points.size >= 2) {
+                val path = Path()
+                points.forEachIndexed { index, sample ->
+                    if (index == 0) path.moveTo(stage.x(sample.x), stage.y(sample.y))
+                    else path.lineTo(stage.x(sample.x), stage.y(sample.y))
+                }
+                p.line.color = color
+                p.line.alpha = 55
+                p.line.strokeWidth = 2.2f
+                canvas.drawPath(path, p.line)
+            }
+
+            // 最近 1.5 秒的轨迹高亮，方便看清「此刻」触点在怎样运动。
+            val recentStart = endTime - 1_500L
+            val recent = points.filter { it.timeMs >= recentStart }
+            if (recent.size >= 2) {
+                val path = Path()
+                recent.forEachIndexed { index, sample ->
+                    if (index == 0) path.moveTo(stage.x(sample.x), stage.y(sample.y))
+                    else path.lineTo(stage.x(sample.x), stage.y(sample.y))
+                }
+                p.line.color = color
+                p.line.alpha = 255
+                p.line.strokeWidth = 3.4f
+                canvas.drawPath(path, p.line)
+            } else if (recent.size == 1) {
+                p.fill.color = color
+                p.fill.alpha = 180
+                canvas.drawCircle(stage.x(recent.first().x), stage.y(recent.first().y), 3f, p.fill)
+                p.fill.alpha = 255
+            }
+
+            val down = points.first()
+            val sinceDown = tMs - track.downTimeMs
+            if (sinceDown in 0..280) {
+                val progress = sinceDown / 280f
+                p.line.color = color
+                p.line.alpha = ((1f - progress) * 220f).toInt().coerceIn(0, 255)
+                p.line.strokeWidth = 2.5f
+                canvas.drawCircle(stage.x(down.x), stage.y(down.y), 8f + progress * 26f, p.line)
+                p.line.alpha = 255
+            }
+
+            val anchor = points.last()
+            val ax = stage.x(anchor.x)
+            val ay = stage.y(anchor.y)
+            if (track.isActiveAt(tMs)) {
+                val holdMs = tMs - track.downTimeMs
+                // 长按：触点外圈持续扩散，明显区别于点击。
+                if (holdMs > 450) {
+                    val wave = (sin((holdMs % 900) / 900.0 * 2 * PI).toFloat() * 0.5f + 0.5f)
+                    p.line.color = color
+                    p.line.alpha = (70f + wave * 90f).toInt().coerceIn(0, 255)
+                    p.line.strokeWidth = 2f
+                    canvas.drawCircle(ax, ay, 13f + wave * 7f, p.line)
+                    p.line.alpha = 255
+                }
+                p.fill.color = color
+                canvas.drawCircle(ax, ay, 7f, p.fill)
+                p.fill.color = Color.WHITE
+                canvas.drawCircle(ax, ay, 3f, p.fill)
+            } else {
+                val upTime = track.upTimeMs ?: continue
+                val sinceUp = tMs - upTime
+                if (sinceUp in 0..320) {
+                    val progress = sinceUp / 320f
+                    p.line.color = color
+                    p.line.alpha = ((1f - progress) * 200f).toInt().coerceIn(0, 255)
+                    p.line.strokeWidth = 2f
+                    canvas.drawCircle(ax, ay, 10f, p.line)
+                    p.line.alpha = 255
+                }
+            }
+        }
+    }
+
+    private fun trackColor(pointerId: Int): Int = when {
+        pointerId >= EXTRA_TAP_POINTER_BASE -> TAP_COLOR
+        pointerId >= MACRO_POINTER_BASE -> MACRO_COLOR
+        else -> TRACK_COLOR
+    }
+
+    /** 按键条：屏幕左上角显示最近按过的物理键/鼠标键，按下时高亮。 */
+    private fun drawKeyChips(
+        canvas: Canvas,
+        p: Paints,
+        keys: List<TrajectoryKeyEvent>,
+        tMs: Long,
+        stage: Stage,
+    ) {
+        val latestByKey = LinkedHashMap<Int, TrajectoryKeyEvent>()
+        for (event in keys) {
+            if (event.timeMs > tMs) break
+            latestByKey.remove(event.keyCode)
+            latestByKey[event.keyCode] = event
+        }
+        val chips = latestByKey.values.toList().takeLast(10)
+        if (chips.isEmpty()) return
+
+        val chipHeight = 30f
+        val chipGap = 8f
+        val rowGap = 6f
+        var x = stage.left + 16f
+        var y = stage.top + 16f
+        val maxRight = stage.left + stage.width - 16f
+
+        p.text.textAlign = Paint.Align.LEFT
+        p.text.textSize = 15f
+        for (chip in chips) {
+            val label = chip.keyCode.keyCodeToString()
+            val chipWidth = p.text.measureText(label) + 22f
+            if (x + chipWidth > maxRight && x > stage.left + 16f) {
+                x = stage.left + 16f
+                y += chipHeight + rowGap
+                if (y + chipHeight > stage.top + 16f + (chipHeight + rowGap) * 2) break
+            }
+
+            p.fill.color = 0xB30A0E14.toInt()
+            canvas.drawRoundRect(x, y, x + chipWidth, y + chipHeight, 8f, 8f, p.fill)
+            p.line.color = if (chip.pressed) PRESS_COLOR else 0x55FFFFFF
+            p.line.strokeWidth = 1.5f
+            canvas.drawRoundRect(x, y, x + chipWidth, y + chipHeight, 8f, 8f, p.line)
+            p.text.color = if (chip.pressed) TEXT else MUTED
+            canvas.drawText(label, x + 11f, y + chipHeight / 2f + 5f, p.text)
+            x += chipWidth + chipGap
+        }
+    }
+
+    private fun drawFooter(
+        canvas: Canvas,
+        p: Paints,
+        tMs: Long,
+        durationMs: Long,
+        videoWidth: Int,
+        videoHeight: Int,
+    ) {
+        val margin = if (videoWidth < 900) 28f else 40f
+        val barY = videoHeight - 46f
+
+        // 图例
+        p.text.textAlign = Paint.Align.LEFT
+        p.text.textSize = 14f
+        p.text.color = MUTED
+        val legendY = barY - 18f
+        var legendX = margin
+        legendX = drawLegend(canvas, p, legendX, legendY, TRACK_COLOR, "普通触点")
+        legendX = drawLegend(canvas, p, legendX, legendY, MACRO_COLOR, "宏")
+        drawLegend(canvas, p, legendX, legendY, TAP_COLOR, "连点")
 
         val progress = if (durationMs <= 0) 0f else (tMs.toFloat() / durationMs).coerceIn(0f, 1f)
         p.fill.color = GRID
-        canvas.drawRoundRect(48f, 664f, WIDTH - 48f, 672f, 4f, 4f, p.fill)
-        p.fill.color = WASD_COLOR
-        canvas.drawRoundRect(48f, 664f, 48f + (WIDTH - 96f) * progress, 672f, 4f, 4f, p.fill)
-        p.text.textSize = 16f
-        p.text.color = MUTED
-        canvas.drawText(formatTime(tMs), 48f, 700f, p.text)
-        canvas.drawText(formatTime(durationMs), WIDTH - 48f - 52f, 700f, p.text)
-    }
-
-    private fun drawWasdPanel(
-        canvas: Canvas,
-        p: Paints,
-        samples: List<WasdTrajectorySample>,
-        tMs: Long,
-    ) {
-        val left = 64f
-        val top = 120f
-        val size = 480f
-        val centerX = left + size / 2f
-        val centerY = top + size / 2f
-        val half = size / 2f
-        // 疾跑落点是普通方向点的 sprintScale 倍（默认 1.5），每次还会再随机上浮约 12%，
-        // 画布留到 1.8 才不会把变化裁成一条恒定半径的圆弧。
-        val domain = 1.8f
-
-        p.fill.color = PANEL
-        canvas.drawRoundRect(left, top, left + size, top + size, 20f, 20f, p.fill)
-
-        p.grid.color = GRID
-        for (i in 0..4) {
-            val x = left + size * i / 4f
-            val y = top + size * i / 4f
-            canvas.drawLine(x, top, x, top + size, p.grid)
-            canvas.drawLine(left, y, left + size, y, p.grid)
-        }
-        p.grid.color = 0xFF3A4658.toInt()
-        canvas.drawCircle(centerX, centerY, half / domain, p.grid)
-
-        p.text.textSize = 20f
-        p.text.color = MUTED
-        canvas.drawText("W", centerX - 8f, top + 26f, p.text)
-        canvas.drawText("S", centerX - 8f, top + size - 12f, p.text)
-        canvas.drawText("A", left + 12f, centerY + 7f, p.text)
-        canvas.drawText("D", left + size - 28f, centerY + 7f, p.text)
-
-        fun px(x: Float) = centerX + x / domain * half
-        fun py(y: Float) = centerY + y / domain * half
-
-        // 自定义疾跑距离可能远超画布范围，按方向等比缩回边缘，避免点画到面板外。
-        val visible = samples.filter { it.timeMs <= tMs }.map { s ->
-            val r = kotlin.math.hypot(s.x, s.y)
-            val limit = domain - 0.05f
-            if (r > limit) s.copy(x = s.x * limit / r, y = s.y * limit / r) else s
-        }
-        if (visible.isNotEmpty()) {
-            val segments = wasdSegments(visible)
-            p.line.color = WASD_COLOR
-            p.line.alpha = 45
-            segments.forEach { segment ->
-                val path = Path()
-                segment.forEachIndexed { index, s ->
-                    if (index == 0) path.moveTo(px(s.x), py(s.y)) else path.lineTo(px(s.x), py(s.y))
-                }
-                canvas.drawPath(path, p.line)
-            }
-            p.line.alpha = 255
-
-            val recent = visible.filter { it.timeMs >= tMs - 2_000 }
-            wasdSegments(recent).forEach { segment ->
-                val path = Path()
-                segment.forEachIndexed { index, s ->
-                    if (index == 0) path.moveTo(px(s.x), py(s.y)) else path.lineTo(px(s.x), py(s.y))
-                }
-                canvas.drawPath(path, p.line)
-            }
-
-            // 最近两秒的采样点也画出来：换向很快时没有连续线段，至少能看到落点。
-            p.fill.color = WASD_COLOR
-            p.fill.alpha = 140
-            recent.forEach { canvas.drawCircle(px(it.x), py(it.y), 3f, p.fill) }
-            p.fill.alpha = 255
-
-            val last = visible.last()
-            if (abs(last.x) < 0.02f && abs(last.y) < 0.02f) {
-                p.line.color = MUTED
-                canvas.drawCircle(centerX, centerY, 10f, p.line)
-            } else {
-                p.fill.color = WASD_COLOR
-                canvas.drawCircle(px(last.x), py(last.y), 7f, p.fill)
-            }
-            p.text.color = TEXT
-            p.text.textSize = 18f
-            canvas.drawText(
-                String.format(Locale.US, "x %+.2f   y %+.2f", last.x, last.y),
-                left,
-                top + size + 30f,
-                p.text
-            )
-        } else {
-            p.text.color = MUTED
-            p.text.textSize = 18f
-            canvas.drawText("未记录到 WASD 输入", left, top + size + 30f, p.text)
-        }
-
-        p.text.color = MUTED
-        p.text.textSize = 16f
-        canvas.drawText("虚拟摇杆向量 · 断线 = 松手或长时间无输入", left, top + size + 56f, p.text)
-    }
-
-    /**
-     * 把采样点拆成「一次连续按压」的线段。
-     *
-     * 只在松手（零向量）或超过 300ms 没有新样本时断开。
-     * 方向/半径突变不再断线：A→D 这类大换向会在过渡中几乎横穿中心，
-     * 关掉这两条规则后整段才会连成一条从左到右的完整轨迹，
-     * 而“A 松开很久再按 D”仍会被零向量/超时分开。
-     */
-    private fun wasdSegments(samples: List<WasdTrajectorySample>): List<List<WasdTrajectorySample>> {
-        val result = ArrayList<List<WasdTrajectorySample>>()
-        var current = ArrayList<WasdTrajectorySample>()
-        var previous: WasdTrajectorySample? = null
-        for (sample in samples) {
-            val zero = abs(sample.x) < 0.02f && abs(sample.y) < 0.02f
-            if (zero) {
-                if (current.size >= 2) result += current
-                current = ArrayList()
-                previous = null
-                continue
-            }
-            val last = previous
-            if (last != null && wasdBreak(last, sample)) {
-                if (current.size >= 2) result += current
-                current = ArrayList()
-            }
-            current += sample
-            previous = sample
-        }
-        if (current.size >= 2) result += current
-        return result
-    }
-
-    private fun wasdBreak(a: WasdTrajectorySample, b: WasdTrajectorySample): Boolean =
-        b.timeMs - a.timeMs > 300
-
-    private fun drawMousePanel(
-        canvas: Canvas,
-        p: Paints,
-        pathPoints: List<com.devoid.keysync.domain.TrajectoryPoint>,
-        tMs: Long,
-    ) {
-        val left = 584f
-        val top = 120f
-        val width = 632f
-        val height = 480f
-
-        p.fill.color = PANEL
-        canvas.drawRoundRect(left, top, left + width, top + height, 20f, 20f, p.fill)
-
-        p.text.textSize = 18f
-        p.text.color = TEXT
-        canvas.drawText("鼠标视角位移", left + 16f, top + 30f, p.text)
-
-        val visible = pathPoints.filter { it.timeMs <= tMs }
-        if (visible.size < 2) {
-            p.text.color = MUTED
-            p.text.textSize = 18f
-            canvas.drawText("未记录到鼠标位移（未进入射击模式）", left + 16f, top + 70f, p.text)
-            return
-        }
-
-        var minX = 0f
-        var maxX = 0f
-        var minY = 0f
-        var maxY = 0f
-        visible.forEach {
-            minX = min(minX, it.x)
-            maxX = max(maxX, it.x)
-            minY = min(minY, it.y)
-            maxY = max(maxY, it.y)
-        }
-        val spanX = max(maxX - minX, 120f)
-        val spanY = max(maxY - minY, 120f)
-        val pad = 28f
-        val scale = min((width - pad * 2) / spanX, (height - pad * 2 - 30f) / spanY)
-        val offsetX = left + width / 2f - (minX + maxX) / 2f * scale
-        val offsetY = top + 30f + (height - 30f) / 2f - (minY + maxY) / 2f * scale
-
-        fun sx(x: Float) = offsetX + x * scale
-        fun sy(y: Float) = offsetY + y * scale
-
-        val all = Path()
-        visible.forEachIndexed { index, point ->
-            if (index == 0) all.moveTo(sx(point.x), sy(point.y)) else all.lineTo(sx(point.x), sy(point.y))
-        }
-        p.line.color = MOUSE_COLOR
-        p.line.alpha = 70
-        canvas.drawPath(all, p.line)
-        p.line.alpha = 255
-
-        val recent = visible.filter { it.timeMs >= tMs - 2_000 }
-        if (recent.size > 1) {
-            val recentPath = Path()
-            recent.forEachIndexed { index, point ->
-                if (index == 0) recentPath.moveTo(sx(point.x), sy(point.y))
-                else recentPath.lineTo(sx(point.x), sy(point.y))
-            }
-            canvas.drawPath(recentPath, p.line)
-        }
-
-        val start = visible.first()
-        val end = visible.last()
-        p.fill.color = OK_COLOR
-        canvas.drawCircle(sx(start.x), sy(start.y), 6f, p.fill)
-        p.fill.color = MOUSE_COLOR
-        canvas.drawCircle(sx(end.x), sy(end.y), 8f, p.fill)
-
-        p.text.color = TEXT
-        p.text.textSize = 18f
-        canvas.drawText(
-            String.format(Locale.US, "总位移  Δx %+.0f   Δy %+.0f", end.x, end.y),
-            left + 16f,
-            top + height + 30f,
-            p.text
+        canvas.drawRoundRect(margin, barY, videoWidth - margin, barY + 8f, 4f, 4f, p.fill)
+        p.fill.color = ACCENT
+        canvas.drawRoundRect(
+            margin, barY,
+            margin + (videoWidth - margin * 2f) * progress, barY + 8f,
+            4f, 4f, p.fill
         )
+
+        p.text.textSize = 14f
         p.text.color = MUTED
-        p.text.textSize = 16f
-        canvas.drawText("绿点起点 · 橙点当前位置", left + 16f, top + height + 56f, p.text)
+        canvas.drawText(formatTime(tMs), margin, videoHeight - 16f, p.text)
+        p.text.textAlign = Paint.Align.RIGHT
+        canvas.drawText(formatTime(durationMs), videoWidth - margin, videoHeight - 16f, p.text)
+        p.text.textAlign = Paint.Align.LEFT
+    }
+
+    private fun drawLegend(
+        canvas: Canvas,
+        p: Paints,
+        x: Float,
+        y: Float,
+        color: Int,
+        label: String,
+    ): Float {
+        p.fill.color = color
+        canvas.drawCircle(x + 4f, y - 5f, 4f, p.fill)
+        p.text.color = MUTED
+        canvas.drawText(label, x + 12f, y, p.text)
+        return x + 12f + p.text.measureText(label) + 18f
+    }
+
+    private fun drawCenteredText(
+        canvas: Canvas,
+        p: Paints,
+        text: String,
+        centerX: Float,
+        centerY: Float,
+        size: Float,
+        color: Int,
+    ) {
+        p.text.textAlign = Paint.Align.CENTER
+        p.text.textSize = size
+        p.text.color = color
+        canvas.drawText(text, centerX, centerY + size * 0.36f, p.text)
+        p.text.textAlign = Paint.Align.LEFT
     }
 
     private fun formatTime(ms: Long): String {

@@ -248,9 +248,9 @@
     <string name="notification_action_start_trajectory">录制</string>
     <string name="notification_action_stop_trajectory">停止</string>
     <string name="trajectory_started">轨迹录制已开始，最长 60 秒，再点一次停止</string>
-    <string name="trajectory_empty">没有录到 WASD 或鼠标输入</string>
+    <string name="trajectory_empty">没有录到任何触点或按键</string>
     <string name="trajectory_channel_name">轨迹视频</string>
-    <string name="trajectory_channel_desc">WASD 与鼠标轨迹动画的生成通知</string>
+    <string name="trajectory_channel_desc">全量映射轨迹回放视频的生成通知</string>
     <string name="trajectory_rendering">正在生成轨迹视频</string>
     <string name="trajectory_done">轨迹视频已生成</string>
     <string name="trajectory_failed">轨迹视频生成失败</string>
