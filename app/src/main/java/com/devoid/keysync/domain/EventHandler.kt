@@ -491,7 +491,7 @@ class EventHandler(
     private fun advanceSway() {
         val sway = swayFactor
         if (sway <= 0.001f) return
-        val maxAngle = (1.5f * sway) * (Math.PI.toFloat() / 180f)
+        val maxAngle = (2.5f * sway) * (Math.PI.toFloat() / 180f)
         swayPhase += (swayPhaseTarget - swayPhase) * 0.35f
         if (abs(swayPhaseTarget - swayPhase) < maxAngle * 0.2f) {
             swayPhaseTarget = (Random.nextFloat() * 2f - 1f) * maxAngle
@@ -551,7 +551,7 @@ class EventHandler(
             useArc -> 0f
             starting -> 0.25f + Random.nextFloat() * 0.15f        // 近处起按，弯一小段
             !hasRadius -> 0.38f + Random.nextFloat() * 0.14f      // 从中心起按
-            else -> 0.16f + Random.nextFloat() * 0.20f            // Shift 推杆/换向
+            else -> 0.22f + Random.nextFloat() * 0.20f            // Shift 推杆/同轴换向
         }
         val normal = Offset(-chord.y / chordLength, chord.x / chordLength) *
             (chordLength * bowRatio * bowSign)
@@ -638,9 +638,15 @@ class EventHandler(
         val radius = delta.getDistance()
         if (radius <= 1f) return center
         val baseAngle = atan2(delta.y, delta.x)
-        val angle = baseAngle + (Random.nextFloat() * 2f - 1f) * (8f * (PI.toFloat() / 180f))
-        val r = radius * (0.55f + Random.nextFloat() * 0.20f)
-        return center + Offset(cos(angle) * r, sin(angle) * r)
+        // 沿目标方向 55%–75%，再叠加垂直方向的 8%–18% 侧移。
+        // 只靠角度抖动会让起点仍贴着轴线；侧移能让起按段本身是斜的，
+        // 大量按键叠加时不会在正上/正下/正左/正右描出十字亮线。
+        val along = radius * (0.55f + Random.nextFloat() * 0.20f)
+        val lateral = radius * (0.08f + Random.nextFloat() * 0.10f) *
+            if (Random.nextBoolean()) 1f else -1f
+        val dx = cos(baseAngle) * along - sin(baseAngle) * lateral
+        val dy = sin(baseAngle) * along + cos(baseAngle) * lateral
+        return center + Offset(dx, dy)
     }
 
     /**
@@ -656,6 +662,16 @@ class EventHandler(
         }
         val start = joystickMotion.target
         val center = lastWasdCenter
+        // 回中不再沿半径直线收回：控制点向垂直方向随机偏 15%–30% 半径。
+        // 直线回中会在同一根轴上反复描线，几百次按键后叠成明显的十字。
+        val chord = center - start
+        val chordLength = chord.getDistance()
+        val bowSign = if (Random.nextBoolean()) 1f else -1f
+        val perp = if (chordLength > 1f) {
+            Offset(-chord.y / chordLength, chord.x / chordLength)
+        } else Offset.Zero
+        val control = (start + center) / 2f +
+            perp * (chordLength * (0.15f + Random.nextFloat() * 0.15f) * bowSign)
         // 下一次按下重新采样推力与落点。
         pressVariationMask = 0
         pressVariation = 1f
@@ -667,7 +683,7 @@ class EventHandler(
                 val t = i.toFloat() / steps
                 // ease-out：越接近中心越慢，像手指自然收回。
                 val eased = 1f - (1f - t) * (1f - t)
-                joystickMotion.jitter(pointerId, mask, start + (center - start) * eased)
+                joystickMotion.jitter(pointerId, mask, bezierPoint(start, control, center, eased))
             }
             if (isActive) joystickMotion.update(pointerId, 0, Offset.Zero, Offset.Zero)
         }
@@ -1147,10 +1163,14 @@ class EventHandler(
             // 落点也带一次随机：半径只向外延伸（避免推进死区），角度只偏 2° 上下，
             // 让每次按下的落点都略有差异，而不是永远精确落在同一个像素上。
             val sprinting = effectiveMask and MASK_SPRINT != 0
+            // 落点半径在 0.97–1.05（普通）/ 0.97–1.035（疾跑）之间随机：
+            // 保留少量向内收缩，让外圈有厚度，不再是一条贴边的亮线；
+            // 最低仍为 97%，远高于慢走死区。
+            val landingInset = Random.nextFloat() * 0.03f
             pressLandingScale = if (sprinting) {
-                1f + Random.nextFloat() * SPRINT_LANDING_RADIUS_RANGE
+                1f - landingInset + Random.nextFloat() * SPRINT_LANDING_RADIUS_RANGE
             } else {
-                1f + Random.nextFloat() * WALK_LANDING_RADIUS_RANGE
+                1f - landingInset + Random.nextFloat() * WALK_LANDING_RADIUS_RANGE
             }
             val maxAngleDeg = if (sprinting) SPRINT_LANDING_ANGLE_DEG else WALK_LANDING_ANGLE_DEG
             pressLandingAngle = (Random.nextFloat() * 2f - 1f) * maxAngleDeg * (Math.PI.toFloat() / 180f)
