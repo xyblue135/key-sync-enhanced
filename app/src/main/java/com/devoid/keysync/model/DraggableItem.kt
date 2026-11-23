@@ -113,6 +113,8 @@ data class KeyMap(
     val position: Offset,
     val center: Offset? = null,
     val end: Offset? = null,
+    /** 按钮实际像素尺寸（用于把按压随机限制在按钮内部）。 */
+    val hitSizePx: Float = 0f,
 )
 
 enum class KeymapType {

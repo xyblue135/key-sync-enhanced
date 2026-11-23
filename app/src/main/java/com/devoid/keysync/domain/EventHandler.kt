@@ -33,6 +33,7 @@ import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.ln
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
@@ -380,16 +381,35 @@ class EventHandler(
     private var swayRadiusTarget = 1f
     private val keyJitterJobs = HashMap<Int, Job>(16)
 
-    /** 拟人化抖动偏移（px）。强度 0 时返回零偏移。 */
-    private fun jitterOffset(): Offset {
-        // 强度 1–100 换算成 0–1；满强度时最大偏移 8px。
-        val radius = strengthFactor * 8f
-        if (radius <= 0f) return Offset.Zero
-        // 圆内均匀采样：真实手指落点集中在目标中心附近，方形分布会让四个角
-        // 概率与中心相同，统计上比圆分布更容易被识别。
-        val r = radius * sqrt(Random.nextFloat())
+    /**
+     * 拟人化抖动偏移（px）。
+     *
+     * 范围按按钮自身尺寸限制：最多偏到直径的 18%（半径的 36%），保证落点仍在
+     * 按钮判定区内，不会因为全局调大而「按空」。
+     *
+     * 分布用二维高斯（Rayleigh 半径）：多数落点靠近中心，但保留长尾，
+     * 偶尔会偏得比较远——比均匀圆盘更像真人，也不会每次都落在同一圈上。
+     */
+    private fun jitterOffset(map: KeyMap): Offset {
+        val maxRadius = keyJitterMaxRadius(map)
+        if (maxRadius <= 0f) return Offset.Zero
+        // Rayleigh：σ = 0.45R，均值约 0.56R，约 10% 的点会贴到最大半径。
+        val sigma = maxRadius * 0.45f
+        val u = Random.nextFloat().coerceAtLeast(1e-4f)
+        val r = (sigma * sqrt(-2f * ln(u))).coerceAtMost(maxRadius)
         val angle = Random.nextFloat() * (2 * Math.PI).toFloat()
         return Offset(r * cos(angle), r * sin(angle))
+    }
+
+    /** 按钮允许的最大随机半径：优先按实际像素尺寸，未知时退回 8px。 */
+    private fun keyJitterMaxRadius(map: KeyMap): Float {
+        if (!keyHumanization || strengthFactor <= 0.001f) return 0f
+        val base = if (map.hitSizePx > 1f) {
+            map.hitSizePx * KEY_JITTER_SAFE_FRACTION
+        } else {
+            KEY_JITTER_FALLBACK_PX
+        }
+        return base * strengthFactor
     }
 
     /** 抖动周期可配置，并在 ±20% 内随机，避免固定间隔形成周期性信号。 */
@@ -693,7 +713,7 @@ class EventHandler(
             while (isActive) {
                 delay(nextJitterDelay())
                 if (!keyHumanization || strengthFactor <= 0.001f) break
-                eventInjector.transFormGesture(pointerId, anchor + jitterOffset())
+                eventInjector.transFormGesture(pointerId, anchor + jitterOffset(map))
             }
         }
     }
@@ -717,18 +737,16 @@ class EventHandler(
 
     /** TAP 按下与抬起之间补一帧小幅位移：真实手指不会在两次采样之间完全静止。 */
     private fun tapWiggle(pointerId: Int, map: KeyMap) {
-        if (!keyHumanization || strengthFactor <= 0.001f) return
-        // 与 jitterOffset 同一尺度：满强度 1.2px 以内。
-        val max = 0.3f + strengthFactor * 0.9f
-        val dx = (Random.nextFloat() * 2f - 1f) * max
-        val dy = (Random.nextFloat() * 2f - 1f) * max
-        eventInjector.transFormGesture(pointerId, map.position + Offset(dx, dy))
+        val j = jitterOffset(map)
+        if (j == Offset.Zero) return
+        // TAP 只有一帧，幅度取一半，避免把点击拖出按钮。
+        eventInjector.transFormGesture(pointerId, map.position + j * 0.5f)
     }
 
     /** 普通按键的触点位置加随机抖动（仅当「其他按键拟人化」开启时）。 */
     private fun humanizedMap(map: KeyMap): KeyMap {
         if (!keyHumanization || strengthFactor <= 0.001f) return map
-        val j = jitterOffset()
+        val j = jitterOffset(map)
         return map.copy(position = map.position + j, end = map.end?.plus(j))
     }
 
@@ -1799,7 +1817,7 @@ class EventHandler(
                 is DraggableItem.VariableKey -> {
                     val k = item.keyCode ?: return@forEach
                     val center = item.touchCenter ?: item.position + Offset(item.size / 2f, item.size / 2f)
-                    keyMap[k] = KeyMap(position = center, end = center)
+                    keyMap[k] = KeyMap(position = center, end = center, hitSizePx = item.size.toFloat())
                     item.touchMode?.let { keyTouchMode[k] = it }
                     wheelRadii[k] = item.wheelRadius
                     wheelCenterOffsets[k] = item.wheelCenterOffset
@@ -1809,7 +1827,7 @@ class EventHandler(
                 is DraggableItem.FixedKey -> {
                     val k = item.keyCode
                     val center = item.touchCenter ?: item.position + Offset(item.size / 2f, item.size / 2f)
-                    keyMap[k] = KeyMap(position = center, end = center)
+                    keyMap[k] = KeyMap(position = center, end = center, hitSizePx = item.size.toFloat())
                     item.touchMode?.let { keyTouchMode[k] = it }
                     wheelRadii[k] = item.wheelRadius
                     wheelCenterOffsets[k] = item.wheelCenterOffset
@@ -1820,8 +1838,8 @@ class EventHandler(
                     val k = item.keyCode ?: return@forEach
                     val center = item.touchCenter ?: item.position + Offset(item.size / 2f, item.size / 2f)
                     val cancel = item.cancelTouchCenter ?: item.cancelPosition + Offset(item.size / 2f, item.size / 2f)
-                    keyMap[k] = KeyMap(type = KeymapType.CANCELABLE, position = center, end = center)
-                    cancelKeyMap[k] = KeyMap(type = KeymapType.CANCELABLE, position = cancel, end = cancel)
+                    keyMap[k] = KeyMap(type = KeymapType.CANCELABLE, position = center, end = center, hitSizePx = item.size.toFloat())
+                    cancelKeyMap[k] = KeyMap(type = KeymapType.CANCELABLE, position = cancel, end = cancel, hitSizePx = item.size.toFloat())
                     item.touchMode?.let { keyTouchMode[k] = it }
                     wheelRadii[k] = item.wheelRadius
                     wheelCenterOffsets[k] = item.wheelCenterOffset
@@ -1958,5 +1976,10 @@ class EventHandler(
 
         /** 普通移动的推力在基准之上随机上浮 0–8%（再乘「WASD 晃动」系数）。 */
         const val WALK_VARIATION_RANGE = 0.08f
+
+        /** 普通按钮按压随机：最多偏到按钮直径的 18%（半径 36%），确保仍在判定区内。 */
+        const val KEY_JITTER_SAFE_FRACTION = 0.18f
+        /** 按钮尺寸未知时的兜底最大随机半径（px）。 */
+        const val KEY_JITTER_FALLBACK_PX = 8f
     }
 }
