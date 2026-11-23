@@ -35,12 +35,14 @@ data class VariableKey(
     // 每键独立触摸模式；null 表示跟随全局 normalBtnTouchMode。
     var touchMode: TouchMode? = null,
     var wheelRadius: Float = 50f,
+    /** 轮盘旋转中心相对按钮中心的偏移；Zero 表示就以按钮位置为圆心。 */
+    var wheelCenterOffset: Offset = Offset.Zero,
     /** 每按钮独立尺寸（dp）。渲染用它，`size` 仍记录实际测量的像素宽度。 */
     var customSizeDp: Float = 50f,
     override var anchorPosition: Offset? = null,
 ) : DraggableItem(){
     override fun copy(id: Int, position: Offset): DraggableItem =
-        VariableKey(id, position, keyCode, size, touchMode, wheelRadius, customSizeDp, anchorPosition)
+        VariableKey(id, position, keyCode, size, touchMode, wheelRadius, wheelCenterOffset, customSizeDp, anchorPosition)
 
 }
 
@@ -75,11 +77,13 @@ data class VariableKey(
         // 每键独立触摸模式；null 表示跟随全局 normalBtnTouchMode。
         var touchMode: TouchMode? = null,
     var wheelRadius: Float = 50f,
+    /** 轮盘旋转中心相对按钮中心的偏移；Zero 表示就以按钮位置为圆心。 */
+    var wheelCenterOffset: Offset = Offset.Zero,
     var customSizeDp: Float = 50f,
     override var anchorPosition: Offset? = null,
     ) : DraggableItem(){
         override fun copy(id: Int, position: Offset): DraggableItem =
-            FixedKey(id, position, type, keyCode, size, touchMode, wheelRadius, customSizeDp, anchorPosition)
+            FixedKey(id, position, type, keyCode, size, touchMode, wheelRadius, wheelCenterOffset, customSizeDp, anchorPosition)
     }
     @Serializable
     data class CancelableKey(
@@ -93,11 +97,13 @@ data class VariableKey(
         // 每键独立触摸模式；null 表示跟随全局 cancellableTouchMode。
         var touchMode: TouchMode? = null,
     var wheelRadius: Float = 50f,
+    /** 轮盘旋转中心相对按钮中心的偏移；Zero 表示就以按钮位置为圆心。 */
+    var wheelCenterOffset: Offset = Offset.Zero,
     var customSizeDp: Float = 50f,
     override var anchorPosition: Offset? = null,
     ) : DraggableItem(){
         override fun copy(id: Int, position: Offset): DraggableItem =
-            CancelableKey(id, position,cancelPosition, type, keyCode, size, touchMode, wheelRadius, customSizeDp, anchorPosition)
+            CancelableKey(id, position,cancelPosition, type, keyCode, size, touchMode, wheelRadius, wheelCenterOffset, customSizeDp, anchorPosition)
     }
 }
 

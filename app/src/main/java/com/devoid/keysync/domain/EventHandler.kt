@@ -753,6 +753,8 @@ class EventHandler(
     private var wheelControlPointerId = -1
     private var wheelOffset = Offset.Zero
     private val wheelRadii = mutableMapOf<Int, Float>()
+    /** 每个轮盘按钮的旋转中心相对按钮中心的偏移。 */
+    private val wheelCenterOffsets = mutableMapOf<Int, Offset>()
     private val _wheelCursor = MutableStateFlow<Offset?>(null)
     val wheelCursor = _wheelCursor.asStateFlow()
     val isWheelActive: Boolean get() = wheelActive
@@ -1130,13 +1132,14 @@ class EventHandler(
                     wheelActive = true
                     wheelPointerId = pointerId
                     wheelRadius = (wheelRadii[keyCode] ?: 50f).coerceIn(10f, 500f)
-                    wheelCenter = it.position
+                    // 旋转中心默认就是按钮中心；可在按钮设置里加偏移，让圆心与按钮分离。
+                    wheelCenter = it.position + (wheelCenterOffsets[keyCode] ?: Offset.Zero)
                     wheelOffset = Offset.Zero
                     wheelAngleDeg = 0f
                     // Drag the same finger that opened the wheel, around this button.
                     wheelControlPointerId = pointerId
                     mappingPressed[keyId(keyCode)] = true
-                    eventInjector.injectPointer(pointerId, it.position)
+                    eventInjector.injectPointer(pointerId, wheelCenter)
                     _wheelCursor.value = wheelCenter
                 } else {
                     val handler = normalHandler(mode)
@@ -1689,6 +1692,7 @@ class EventHandler(
         cancelToggle.clear()
         keyTouchMode.clear()
         wheelRadii.clear()
+        wheelCenterOffsets.clear()
         nextKeyId = 0
         // eventInjector.clear() above lifted the joystick contact, so the
         // Reset the joystick transition tracker after cancelling its contact.
@@ -1736,6 +1740,7 @@ class EventHandler(
                     keyMap[k] = KeyMap(position = center, end = center)
                     item.touchMode?.let { keyTouchMode[k] = it }
                     wheelRadii[k] = item.wheelRadius
+                    wheelCenterOffsets[k] = item.wheelCenterOffset
                     alloc(k)
                 }
 
@@ -1745,6 +1750,7 @@ class EventHandler(
                     keyMap[k] = KeyMap(position = center, end = center)
                     item.touchMode?.let { keyTouchMode[k] = it }
                     wheelRadii[k] = item.wheelRadius
+                    wheelCenterOffsets[k] = item.wheelCenterOffset
                     alloc(k)
                 }
 
@@ -1756,6 +1762,7 @@ class EventHandler(
                     cancelKeyMap[k] = KeyMap(type = KeymapType.CANCELABLE, position = cancel, end = cancel)
                     item.touchMode?.let { keyTouchMode[k] = it }
                     wheelRadii[k] = item.wheelRadius
+                    wheelCenterOffsets[k] = item.wheelCenterOffset
                     alloc(k)
                 }
             }

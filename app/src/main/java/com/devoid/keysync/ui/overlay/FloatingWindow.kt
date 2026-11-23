@@ -606,6 +606,8 @@ fun ItemsContainer(
                     currentKeyCode = target.keyCode,
                     currentWheelRadius = target.wheelRadius,
                     onWheelRadiusChange = { target.wheelRadius = it },
+                    currentWheelCenterOffset = target.wheelCenterOffset,
+                    onWheelCenterOffsetChange = { target.wheelCenterOffset = it },
                     currentSizeDp = target.customSizeDp,
                     onSizeDpChange = { onUpdateItemSize(target.id, it) },
                     currentTouchMode = target.touchMode,
@@ -629,6 +631,8 @@ fun ItemsContainer(
                 currentKeyCode = target.keyCode ?: KeyEvent.KEYCODE_UNKNOWN,
                 currentWheelRadius = target.wheelRadius,
                 onWheelRadiusChange = { target.wheelRadius = it },
+                currentWheelCenterOffset = target.wheelCenterOffset,
+                onWheelCenterOffsetChange = { target.wheelCenterOffset = it },
                 currentSizeDp = target.customSizeDp,
                 onSizeDpChange = { onUpdateItemSize(target.id, it) },
                 currentTouchMode = target.touchMode,
@@ -655,6 +659,8 @@ fun ItemsContainer(
                 currentKeyCode = target.keyCode ?: KeyEvent.KEYCODE_UNKNOWN,
                 currentWheelRadius = target.wheelRadius,
                 onWheelRadiusChange = { target.wheelRadius = it },
+                currentWheelCenterOffset = target.wheelCenterOffset,
+                onWheelCenterOffsetChange = { target.wheelCenterOffset = it },
                 currentSizeDp = target.customSizeDp,
                 onSizeDpChange = { onUpdateItemSize(target.id, it) },
                 currentTouchMode = target.touchMode,
@@ -860,6 +866,8 @@ private fun otherOccupiedKeys(items: List<DraggableItem>, selfId: Int): Set<Int>
 @Composable
 fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
     onWheelRadiusChange: (Float) -> Unit = {},
+    currentWheelCenterOffset: Offset = Offset.Zero,
+    onWheelCenterOffsetChange: (Offset) -> Unit = {},
     currentSizeDp: Float = 50f,
     onSizeDpChange: (Float) -> Unit = {},
     walkCustomization: Boolean = false,
@@ -882,6 +890,8 @@ fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
     var captured by remember { mutableStateOf<Int?>(null) }
     var selectedMode by remember { mutableStateOf(currentTouchMode) }
     var radius by remember { mutableFloatStateOf(currentWheelRadius.coerceIn(10f, 500f)) }
+    var wheelOffsetX by remember { mutableFloatStateOf(currentWheelCenterOffset.x) }
+    var wheelOffsetY by remember { mutableFloatStateOf(currentWheelCenterOffset.y) }
     var sizeDp by remember { mutableFloatStateOf(currentSizeDp.coerceIn(28f, 110f)) }
     val borderColor = MaterialTheme.colorScheme.outline
 
@@ -995,7 +1005,18 @@ fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
             if (selectedMode == TouchMode.WHEEL) {
                 Text("鼠标轮盘半径：${radius.roundToInt()} px")
                 Slider(value = radius, onValueChange = { radius = it }, valueRange = 10f..500f)
-                Text("按住此键打开轮盘，移动鼠标选择，松开确认。圆心为此轮盘按钮的位置，默认半径 50px。", style = MaterialTheme.typography.bodySmall)
+                Text("旋转中心偏移：X ${wheelOffsetX.roundToInt()} / Y ${wheelOffsetY.roundToInt()} px")
+                Slider(
+                    value = wheelOffsetX,
+                    onValueChange = { wheelOffsetX = it },
+                    valueRange = -600f..600f,
+                )
+                Slider(
+                    value = wheelOffsetY,
+                    onValueChange = { wheelOffsetY = it },
+                    valueRange = -600f..600f,
+                )
+                Text("按住此键打开轮盘，移动鼠标选择，松开确认。圆心默认是此按钮的位置，可用偏移移到屏幕中间；默认半径 50px。", style = MaterialTheme.typography.bodySmall)
             }
             if (walkCustomization) {
                 Text("静步定制化：按一次开启，再按一次关闭；开启后按 Shift 自动取消。默认 Caps Lock。不能绑定 Shift 或 WASD。", style = MaterialTheme.typography.bodySmall)
@@ -1074,7 +1095,7 @@ fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
                         enabled = !conflict && (!walkCustomization || (captured ?: currentKeyCode) !in setOf(
                             KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT,
                             KeyEvent.KEYCODE_W, KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_S, KeyEvent.KEYCODE_D)),
-                        onClick = { onWheelRadiusChange(radius); onConfirm(captured ?: currentKeyCode, if (walkCustomization) TouchMode.TAP else selectedMode) }
+                        onClick = { onWheelRadiusChange(radius); onWheelCenterOffsetChange(Offset(wheelOffsetX, wheelOffsetY)); onConfirm(captured ?: currentKeyCode, if (walkCustomization) TouchMode.TAP else selectedMode) }
                     ) {
                         Text(stringResource(R.string.key_rebind_confirm))
                     }
