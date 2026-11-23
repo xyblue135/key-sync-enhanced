@@ -131,6 +131,10 @@ class MainActivityViewModel @Inject constructor(
     val tabEscAimEnabled: StateFlow<Boolean> = stateManager.tabEscAimEnabled
     /** ESC / Tab 回瞄准延迟（ms）。 */
     val tabEscAimDelayMs: StateFlow<Int> = stateManager.tabEscAimDelayMs
+    /** ESC 按下后批量点击落点（全局，默认关闭）。 */
+    val escAfterTapEnabled: StateFlow<Boolean> = stateManager.escAfterTapEnabled
+    val escAfterTapDelayMs: StateFlow<Int> = stateManager.escAfterTapDelayMs
+    val escAfterTapIntervalMs: StateFlow<Int> = stateManager.escAfterTapIntervalMs
     /** F 光标滚轮操控（全局，默认开启）。 */
     val fScrollControlEnabled: StateFlow<Boolean> = stateManager.fScrollControlEnabled
     /** 每格滚轮的短滑距离（px）。 */
@@ -281,6 +285,9 @@ class MainActivityViewModel @Inject constructor(
     fun setFCursorClickWindowMs(ms: Int) = stateManager.setFCursorClickWindowMs(ms)
     fun setTabEscAimEnabled(enabled: Boolean) = stateManager.setTabEscAimEnabled(enabled)
     fun setTabEscAimDelayMs(ms: Int) = stateManager.setTabEscAimDelayMs(ms)
+    fun setEscAfterTapEnabled(enabled: Boolean) = stateManager.setEscAfterTapEnabled(enabled)
+    fun setEscAfterTapDelayMs(ms: Int) = stateManager.setEscAfterTapDelayMs(ms)
+    fun setEscAfterTapIntervalMs(ms: Int) = stateManager.setEscAfterTapIntervalMs(ms)
     fun setFScrollControlEnabled(enabled: Boolean) = stateManager.setFScrollControlEnabled(enabled)
     fun setFScrollSwipePx(px: Float) = stateManager.setFScrollSwipePx(px)
     fun setFScrollInvert(invert: Boolean) = stateManager.setFScrollInvert(invert)

@@ -231,6 +231,9 @@ class MainActivity : ComponentActivity() {
                         val fCursorClickWindowMs by viewModel.fCursorClickWindowMs.collectAsStateWithLifecycle()
                         val tabEscAimEnabled by viewModel.tabEscAimEnabled.collectAsStateWithLifecycle()
                         val tabEscAimDelayMs by viewModel.tabEscAimDelayMs.collectAsStateWithLifecycle()
+                        val escAfterTapEnabled by viewModel.escAfterTapEnabled.collectAsStateWithLifecycle()
+                        val escAfterTapDelayMs by viewModel.escAfterTapDelayMs.collectAsStateWithLifecycle()
+                        val escAfterTapIntervalMs by viewModel.escAfterTapIntervalMs.collectAsStateWithLifecycle()
                         val fScrollControlEnabled by viewModel.fScrollControlEnabled.collectAsStateWithLifecycle()
                         val fScrollSwipePx by viewModel.fScrollSwipePx.collectAsStateWithLifecycle()
                         val fScrollInvert by viewModel.fScrollInvert.collectAsStateWithLifecycle()
@@ -305,6 +308,12 @@ class MainActivity : ComponentActivity() {
                             onSetTabEscAimEnabled = viewModel::setTabEscAimEnabled,
                             tabEscAimDelayMs = tabEscAimDelayMs,
                             onSetTabEscAimDelayMs = viewModel::setTabEscAimDelayMs,
+                            escAfterTapEnabled = escAfterTapEnabled,
+                            onSetEscAfterTapEnabled = viewModel::setEscAfterTapEnabled,
+                            escAfterTapDelayMs = escAfterTapDelayMs,
+                            onSetEscAfterTapDelayMs = viewModel::setEscAfterTapDelayMs,
+                            escAfterTapIntervalMs = escAfterTapIntervalMs,
+                            onSetEscAfterTapIntervalMs = viewModel::setEscAfterTapIntervalMs,
                             fScrollControlEnabled = fScrollControlEnabled,
                             onSetFScrollControlEnabled = viewModel::setFScrollControlEnabled,
                             fScrollSwipePx = fScrollSwipePx,

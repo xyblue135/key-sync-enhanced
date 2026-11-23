@@ -94,6 +94,37 @@ class EventHandler(
     private val extraTapPointerBase = 1_200_000
     private var extraTapCursor = 0
     private val extraTapPulse = TapPulse(schedule = { delay, action -> mainHandler.postDelayed({ action() }, delay) })
+    private var extraTapSequenceJob: Job? = null
+
+    /** 取消 ESC 批量落点序列（关闭功能或重建映射时）。 */
+    fun cancelExtraTapSequence() {
+        extraTapSequenceJob?.cancel()
+        extraTapSequenceJob = null
+    }
+
+    /**
+     * ESC 按下后的批量落点：先等 [initialDelayMs]，再依次点击 [points]，
+     * 每次按下保持 45–95ms，间隔 [intervalMs]。本体按键映射不受影响。
+     */
+    fun tapExtraPointsSequential(
+        points: List<Offset>,
+        initialDelayMs: Long,
+        intervalMs: Long,
+    ) {
+        cancelExtraTapSequence()
+        if (points.isEmpty()) return
+        extraTapSequenceJob = humanizeScope.launch {
+            delay(initialDelayMs.coerceAtLeast(0L))
+            for ((index, position) in points.withIndex()) {
+                if (!isActive) return@launch
+                val pointer = extraTapPointerBase + (extraTapCursor++ % 8)
+                eventInjector.injectPointer(pointer, position)
+                delay(sampleMacroHoldDuration().coerceIn(30L, 200L))
+                eventInjector.releasePointer(pointer)
+                if (index != points.lastIndex) delay(intervalMs.coerceAtLeast(0L))
+            }
+        }
+    }
 
     /** 在指定屏幕坐标补一次点击（连按落点）。不阻塞按键路径，抬起时刻由 TapPulse 采样。 */
     fun tapExtraPoint(position: Offset) {
@@ -1782,6 +1813,7 @@ class EventHandler(
         stopWasdJitter()
         stopWasdTransition()
         stopAllKeyJitter()
+        cancelExtraTapSequence()
         wheelActive = false
         _wheelCursor.value = null
         wheelPointerId = -1
@@ -1913,6 +1945,7 @@ class EventHandler(
         stopWasdJitter()
         stopWasdTransition()
         stopAllKeyJitter()
+        cancelExtraTapSequence()
         wheelActive = false
         _wheelCursor.value = null
         wheelPointerId = -1

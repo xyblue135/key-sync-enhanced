@@ -985,7 +985,8 @@ fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    "同一按键在 ${com.devoid.keysync.model.EXTRA_TAP_WINDOW_MS}ms 内连续按下时，第 2/3/4 次会额外点击一个落点，本体始终照常触发。添加后在编辑态拖动小圆圈定位。",
+                    "同一按键在 ${com.devoid.keysync.model.EXTRA_TAP_WINDOW_MS}ms 内连续按下时，第 2 次起依次点击对应落点（最多 $MAX_EXTRA_TAP_POINTS 个），本体始终照常触发。" +
+                        "开启设置里的「ESC 按下后批量点击落点」后，ESC 每次按下都会延迟依次点击它的全部落点。添加后在编辑态拖动小圆圈定位。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1202,6 +1203,7 @@ fun EditToolbar(
     onToggleEditMode: () -> Unit,
     onAddItem: (DraggableItemType) -> Unit,
     onAddDiscardPoint: () -> Unit = {},
+    onAddEscTapPoint: () -> Unit = {},
 ) {
     var itemsMenuVisible by remember { mutableStateOf(false) }
     // 编辑条会挡住想摆放的位置，因此允许直接拖动（按 ⠿ 手柄拖动，避免和按钮点击冲突）。
@@ -1299,6 +1301,9 @@ fun EditToolbar(
                 }, onAddDiscardPoint = {
                     onAddDiscardPoint()
                     itemsMenuVisible = false
+                }, onAddEscTapPoint = {
+                    onAddEscTapPoint()
+                    itemsMenuVisible = false
                 })
             }
         }
@@ -1310,7 +1315,8 @@ fun EditToolbar(
 fun MenuItems(
     modifier: Modifier = Modifier,
     onItemClick: (DraggableItemType) -> Unit,
-    onAddDiscardPoint: () -> Unit = {}
+    onAddDiscardPoint: () -> Unit = {},
+    onAddEscTapPoint: () -> Unit = {}
 ) {
     val itemModifier = Modifier
         .size(30.dp)
@@ -1402,7 +1408,7 @@ fun MenuItems(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     MenuCell(itemModifier, symbol("▮"), "丢弃点") { onAddDiscardPoint() }
-                    Spacer(modifier = Modifier.size(30.dp))
+                    MenuCell(itemModifier, symbol("E"), "ESC 落点") { onAddEscTapPoint() }
                     Spacer(modifier = Modifier.size(30.dp))
                     Spacer(modifier = Modifier.size(30.dp))
                 }

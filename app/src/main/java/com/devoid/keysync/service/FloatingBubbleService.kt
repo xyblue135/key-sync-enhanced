@@ -904,6 +904,9 @@ class FloatingBubbleService : Service() {
                             onToggleEditMode = { stateManager.get().toggleEditMode() },
                             onAddItem = { stateManager.get().addNewItem(it) },
                             onAddDiscardPoint = { stateManager.get().addDiscardPoint() },
+                            onAddEscTapPoint = {
+                                stateManager.get().addExtraTapPoint(android.view.KeyEvent.KEYCODE_ESCAPE)
+                            },
                         )
                     }
                 }

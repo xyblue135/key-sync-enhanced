@@ -271,6 +271,12 @@ class FloatingWindowStateManager @Inject constructor(
     val tabEscAimEnabled = MutableStateFlow(true)
     /** 回瞄准延迟（ms），默认 110。 */
     val tabEscAimDelayMs = MutableStateFlow(DEFAULT_TAB_ESC_AIM_DELAY_MS)
+    /** ESC 按下后批量点击落点（全局），默认关闭；ESC 本体映射不受影响。 */
+    val escAfterTapEnabled = MutableStateFlow(false)
+    /** ESC 后首次点击延迟（ms），默认 100。 */
+    val escAfterTapDelayMs = MutableStateFlow(DEFAULT_ESC_AFTER_TAP_DELAY_MS)
+    /** 多个落点之间的间隔（ms），默认 50。 */
+    val escAfterTapIntervalMs = MutableStateFlow(DEFAULT_ESC_AFTER_TAP_INTERVAL_MS)
     /** 回瞄准延迟任务：等游戏把界面关掉再重建瞄准触点。 */
     private var aimReturnJob: Job? = null
 
@@ -476,6 +482,14 @@ class FloatingWindowStateManager @Inject constructor(
             tabEscAimDelayMs.value =
                 (dataStoreManager.getInt(DataStoreManager.TAB_ESC_AIM_DELAY_MS).first()
                     ?: DEFAULT_TAB_ESC_AIM_DELAY_MS).coerceIn(50, 1000)
+            escAfterTapEnabled.value =
+                dataStoreManager.getBoolean(DataStoreManager.ESC_AFTER_TAP_ENABLED).first() ?: false
+            escAfterTapDelayMs.value =
+                (dataStoreManager.getInt(DataStoreManager.ESC_AFTER_TAP_DELAY_MS).first()
+                    ?: DEFAULT_ESC_AFTER_TAP_DELAY_MS).coerceIn(0, 1000)
+            escAfterTapIntervalMs.value =
+                (dataStoreManager.getInt(DataStoreManager.ESC_AFTER_TAP_INTERVAL_MS).first()
+                    ?: DEFAULT_ESC_AFTER_TAP_INTERVAL_MS).coerceIn(0, 500)
             fScrollUpKeyCode.value =
                 dataStoreManager.getInt(DataStoreManager.F_SCROLL_UP_KEY_CODE).first()
                     ?: KEYCODE_SCROLL_UP
@@ -751,6 +765,10 @@ class FloatingWindowStateManager @Inject constructor(
         const val DEFAULT_F_CURSOR_CLICK_WINDOW_MS = 1000
         /** ESC / Tab 关闭界面后的回瞄准延迟（ms）默认值。 */
         const val DEFAULT_TAB_ESC_AIM_DELAY_MS = 110
+        /** ESC 后首次点击延迟（ms）默认值。 */
+        const val DEFAULT_ESC_AFTER_TAP_DELAY_MS = 100
+        /** ESC 后多个落点之间的间隔（ms）默认值。 */
+        const val DEFAULT_ESC_AFTER_TAP_INTERVAL_MS = 50
         /** 光标渲染刷新率默认 60Hz，可调 15–144Hz；只影响显示。 */
         const val DEFAULT_CURSOR_RENDER_HZ = 60
         const val MIN_CURSOR_RENDER_HZ = 15
@@ -976,6 +994,18 @@ class FloatingWindowStateManager @Inject constructor(
      * 本体映射不受影响，由调用方继续走普通按键流程。
      */
     private fun handleExtraTap(keyCode: Int) {
+        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return
+        // ESC 专属模式：每次按下 ESC 后延迟依次点击全部落点，本体映射仍照常触发。
+        if (keyCode == KeyEvent.KEYCODE_ESCAPE && escAfterTapEnabled.value) {
+            val points = profile.extraTapPoints.filter { it.keyCode == keyCode }
+            if (points.isEmpty()) return
+            eventHandler.tapExtraPointsSequential(
+                points.map { Offset(it.x, it.y) },
+                escAfterTapDelayMs.value.toLong(),
+                escAfterTapIntervalMs.value.toLong(),
+            )
+            return
+        }
         val now = SystemClock.uptimeMillis()
         if (keyCode != extraTapKeyCode || now - extraTapLastAt > EXTRA_TAP_WINDOW_MS) {
             extraTapKeyCode = keyCode
@@ -985,7 +1015,6 @@ class FloatingWindowStateManager @Inject constructor(
         extraTapCount++
         val index = extraTapCount - 2
         if (index !in 0 until MAX_EXTRA_TAP_POINTS) return
-        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return
         val point = profile.extraTapPoints.filter { it.keyCode == keyCode }.getOrNull(index) ?: return
         eventHandler.tapExtraPoint(Offset(point.x, point.y))
     }
@@ -1402,11 +1431,17 @@ class FloatingWindowStateManager @Inject constructor(
     fun addExtraTapPoint(keyCode: Int) {
         val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return
         if (keyCode == KeyEvent.KEYCODE_UNKNOWN) return
-        if (profile.extraTapPoints.count { it.keyCode == keyCode } >= MAX_EXTRA_TAP_POINTS) return
+        val count = profile.extraTapPoints.count { it.keyCode == keyCode }
+        if (count >= MAX_EXTRA_TAP_POINTS) return
         val anchor = _containerItems.value.firstOrNull { it.boundKeyCode() == keyCode }?.position
             ?: Offset(240f, 520f)
+        // 依次错开，避免多个落点叠在同一个像素上。
         updateExtraTapPoints(
-            profile.extraTapPoints + ExtraTapPoint(keyCode, anchor.x + 90f, anchor.y + 90f)
+            profile.extraTapPoints + ExtraTapPoint(
+                keyCode,
+                anchor.x + 90f + count * 44f,
+                anchor.y + 90f + count * 44f,
+            )
         )
     }
 
@@ -1469,6 +1504,27 @@ class FloatingWindowStateManager @Inject constructor(
         val safe = ms.coerceIn(50, 1000)
         tabEscAimDelayMs.value = safe
         scope.launch { dataStoreManager.save(DataStoreManager.TAB_ESC_AIM_DELAY_MS, safe) }
+    }
+
+    /** 全局开关：ESC 按下后延迟依次点击配置的落点（ESC 本体映射不变）。 */
+    fun setEscAfterTapEnabled(enabled: Boolean) {
+        escAfterTapEnabled.value = enabled
+        if (!enabled) eventHandler.cancelExtraTapSequence()
+        scope.launch { dataStoreManager.save(DataStoreManager.ESC_AFTER_TAP_ENABLED, enabled) }
+    }
+
+    /** ESC 后首次点击延迟（0–1000ms）。 */
+    fun setEscAfterTapDelayMs(ms: Int) {
+        val safe = ms.coerceIn(0, 1000)
+        escAfterTapDelayMs.value = safe
+        scope.launch { dataStoreManager.save(DataStoreManager.ESC_AFTER_TAP_DELAY_MS, safe) }
+    }
+
+    /** ESC 后多个落点之间的间隔（0–500ms）。 */
+    fun setEscAfterTapIntervalMs(ms: Int) {
+        val safe = ms.coerceIn(0, 500)
+        escAfterTapIntervalMs.value = safe
+        scope.launch { dataStoreManager.save(DataStoreManager.ESC_AFTER_TAP_INTERVAL_MS, safe) }
     }
 
     /** F 交互后左键唤出光标的窗口（100–3000ms）。 */

@@ -177,6 +177,12 @@ fun SettingsScreen(
     onSetTabEscAimEnabled: (Boolean) -> Unit = {},
     tabEscAimDelayMs: Int = 110,
     onSetTabEscAimDelayMs: (Int) -> Unit = {},
+    escAfterTapEnabled: Boolean = false,
+    onSetEscAfterTapEnabled: (Boolean) -> Unit = {},
+    escAfterTapDelayMs: Int = 100,
+    onSetEscAfterTapDelayMs: (Int) -> Unit = {},
+    escAfterTapIntervalMs: Int = 50,
+    onSetEscAfterTapIntervalMs: (Int) -> Unit = {},
     onStopOverlay: () -> Unit = {},
     wasdHumanization: Boolean = false,
     keyHumanization: Boolean = false,
@@ -680,6 +686,61 @@ fun SettingsScreen(
                         )
                         Text(
                             "界面关闭动画较长或回瞄准总被吞时可调高；默认 110ms。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "ESC 按下后批量点击落点",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                "物理 ESC 本体映射照常触发；按下后等待设定时间，再依次点击为 ESC 配置的全部「连按落点」，" +
+                                    "落点之间间隔可调。适合关背包后补点两个位置。落点在 ESC 的齿轮里或工具菜单的「ESC 落点」添加。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = escAfterTapEnabled,
+                            onCheckedChange = onSetEscAfterTapEnabled
+                        )
+                    }
+                    if (escAfterTapEnabled) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "首次点击延迟",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text("${escAfterTapDelayMs} ms", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Slider(
+                            value = escAfterTapDelayMs.toFloat().coerceIn(0f, 1000f),
+                            valueRange = 0f..1000f,
+                            steps = 19,
+                            onValueChange = { onSetEscAfterTapDelayMs(it.roundToInt()) }
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "落点间隔",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text("${escAfterTapIntervalMs} ms", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Slider(
+                            value = escAfterTapIntervalMs.toFloat().coerceIn(0f, 500f),
+                            valueRange = 0f..500f,
+                            steps = 9,
+                            onValueChange = { onSetEscAfterTapIntervalMs(it.roundToInt()) }
+                        )
+                        Text(
+                            "默认：按下后 100ms 点第一个，之后每 50ms 点下一个；每次按下保持 45–95ms。" +
+                                "快速连按 ESC 会取消上一轮并从最新一次重新计时。",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

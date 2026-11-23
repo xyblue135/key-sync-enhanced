@@ -137,6 +137,12 @@ class DataStoreManager internal constructor(
         val TAB_ESC_AIM_ENABLED = booleanPreferencesKey("tab_esc_aim_enabled")
         /** 回瞄准延迟（ms），默认 110。 */
         val TAB_ESC_AIM_DELAY_MS = intPreferencesKey("tab_esc_aim_delay_ms")
+        /** ESC 按下后批量点击落点（全局），默认关闭。 */
+        val ESC_AFTER_TAP_ENABLED = booleanPreferencesKey("esc_after_tap_enabled")
+        /** ESC 后首次点击的延迟（ms），默认 100。 */
+        val ESC_AFTER_TAP_DELAY_MS = intPreferencesKey("esc_after_tap_delay_ms")
+        /** ESC 后多个落点之间的间隔（ms），默认 50。 */
+        val ESC_AFTER_TAP_INTERVAL_MS = intPreferencesKey("esc_after_tap_interval_ms")
         /** F 交互后允许左键唤出光标的窗口（ms），默认 1000。 */
         val F_CURSOR_CLICK_WINDOW_MS = intPreferencesKey("f_cursor_click_window_ms")
         /** 快速近战默认键已从 V 迁移到右侧小键盘 num0 的一次性标记。 */

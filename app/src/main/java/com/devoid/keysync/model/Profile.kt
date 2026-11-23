@@ -69,7 +69,7 @@ data class ExtraTapPoint(
 )
 
 /** 每个按键最多保留的连按落点数。 */
-const val MAX_EXTRA_TAP_POINTS = 3
+const val MAX_EXTRA_TAP_POINTS = 6
 
 /** 连按判定窗口（ms）：两次按下间隔超过该值就重新从第 1 次开始计数。 */
 const val EXTRA_TAP_WINDOW_MS = 250L
