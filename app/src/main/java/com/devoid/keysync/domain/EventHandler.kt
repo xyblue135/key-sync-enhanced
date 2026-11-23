@@ -363,6 +363,10 @@ class EventHandler(
     private val humanizeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var wasdJitterJob: Job? = null
     private var wasdTransitionJob: Job? = null
+    /** 松开全部方向键后的回中协程；新方向按下时会取消它，直接接弧。 */
+    private var wasdReturnJob: Job? = null
+    /** 最近一次 WASD 使用的摇杆中心，回中时用它。 */
+    private var lastWasdCenter = Offset.Zero
     /** 本次按压段使用的推力倍率；换向或重新按下时重采样。 */
     private var pressVariationMask = 0
     private var pressVariation = 1f
@@ -473,6 +477,7 @@ class EventHandler(
         center: Offset,
         start: Offset,
         end: Offset,
+        starting: Boolean = false,
     ) {
         stopWasdTransition()
         val baseDuration = wasdTransitionMs.coerceIn(MIN_WASD_TRANSITION_MS, MAX_WASD_TRANSITION_MS)
@@ -489,11 +494,13 @@ class EventHandler(
         // 有半径且不是同向推杆时才贴圈画弧；从中心起按仍是贝塞尔，但弯得更明显。
         val useArc = hasRadius && turn >= SMALL_TURN_RAD
         val bowSign = if (Random.nextBoolean()) 1f else -1f
-        val arcScale = if (useArc) 0.94f + Random.nextFloat() * 0.06f else 1f
+        // 弧线内切幅度、弯曲方向和时长每次都独立随机，避免所有回路叠成一朵对称的花。
+        val arcScale = if (useArc) 0.86f + Random.nextFloat() * 0.10f else 1f
         val bowRatio = when {
             useArc -> 0f
-            !hasRadius -> 0.38f + Random.nextFloat() * 0.14f   // 从中心起按
-            else -> 0.20f + Random.nextFloat() * 0.14f          // Shift 推杆
+            starting -> 0.25f + Random.nextFloat() * 0.15f        // 近处起按，弯一小段
+            !hasRadius -> 0.38f + Random.nextFloat() * 0.14f      // 从中心起按
+            else -> 0.16f + Random.nextFloat() * 0.20f            // Shift 推杆/换向
         }
         val normal = Offset(-chord.y / chordLength, chord.x / chordLength) *
             (chordLength * bowRatio * bowSign)
@@ -506,9 +513,11 @@ class EventHandler(
         }
         val steps = kotlin.math.ceil(pathLength / TRANSITION_SEGMENT_PX)
             .toInt().coerceIn(6, 18)
-        // 大换向略延长过渡，让弧线有足够时间铺开；仍在可调范围内。
-        val duration = (baseDuration * (1f + 0.35f * (turn / PI))).toInt()
-            .coerceIn(baseDuration, MAX_WASD_TRANSITION_MS)
+        // 大换向略延长过渡，让弧线有足够时间铺开；再叠 ±15% 时长抖动，
+        // 避免每段花瓣的节奏完全一致；仍在可调范围内。
+        val duration = (baseDuration * (1f + 0.35f * (turn / PI)) *
+            (0.85f + Random.nextFloat() * 0.30f)).toInt()
+            .coerceIn(MIN_WASD_TRANSITION_MS, MAX_WASD_TRANSITION_MS)
         wasdTransitionJob = humanizeScope.launch {
             val stepDelay = (duration / steps).coerceAtLeast(6).toLong()
             for (i in 1..steps) {
@@ -565,6 +574,52 @@ class EventHandler(
         val baseRadius = startRadius + (endRadius - startRadius) * t
         val radius = baseRadius * (1f - (1f - arcScale) * sin((PI * t).toFloat()))
         return center + Offset(cos(angle) * radius, sin(angle) * radius)
+    }
+
+    /**
+     * 新按下时的起点：目标方向 55%–75% 半径处，角度 ±8° 随机。
+     *
+     * 手游浮动摇杆的手指就是落在偏移位置，而不是每次都戳正中心；这样轨迹里不会
+     * 出现一圈从圆心放射出去的直线。
+     */
+    private fun randomPressStart(center: Offset, target: Offset): Offset {
+        val delta = target - center
+        val radius = delta.getDistance()
+        if (radius <= 1f) return center
+        val baseAngle = atan2(delta.y, delta.x)
+        val angle = baseAngle + (Random.nextFloat() * 2f - 1f) * (8f * (PI.toFloat() / 180f))
+        val r = radius * (0.55f + Random.nextFloat() * 0.20f)
+        return center + Offset(cos(angle) * r, sin(angle) * r)
+    }
+
+    /**
+     * 松开所有 WASD 后的 80ms 回中：3–4 帧把触点收向中心再抬指。
+     * 新方向在这期间按下时会取消本协程，从当前位置直接接弧，避免「回中心再出发」。
+     */
+    private fun startWasdReturnToCenter(pointerId: Int) {
+        wasdReturnJob?.cancel()
+        val mask = joystickMotion.activeMask
+        if (mask == 0) {
+            wasdReturnJob = null
+            return
+        }
+        val start = joystickMotion.target
+        val center = lastWasdCenter
+        // 下一次按下重新采样推力与落点。
+        pressVariationMask = 0
+        pressVariation = 1f
+        wasdReturnJob = humanizeScope.launch {
+            val steps = 4
+            for (i in 1..steps) {
+                delay(20L)
+                if (!isActive) return@launch
+                val t = i.toFloat() / steps
+                // ease-out：越接近中心越慢，像手指自然收回。
+                val eased = 1f - (1f - t) * (1f - t)
+                joystickMotion.jitter(pointerId, mask, start + (center - start) * eased)
+            }
+            if (isActive) joystickMotion.update(pointerId, 0, Offset.Zero, Offset.Zero)
+        }
     }
 
     /** 起点/终点方向之间的夹角；从摇杆中心起按时按大角度处理（弯得更明显）。 */
@@ -1011,11 +1066,13 @@ class EventHandler(
         if (directionMask == 0) {
             stopWasdJitter()
             stopWasdTransition()
-            pressVariationMask = 0
-            pressVariation = 1f
-            joystickMotion.update(pointerId, 0, Offset.Zero, Offset.Zero)
+            // 松开所有方向键不立刻抬指：先用 80ms 把触点收向中心再 UP。
+            // 期间若按下新方向，会取消回中并从当前位置接弧，避免「回中心再出发」。
+            startWasdReturnToCenter(pointerId)
             return
         }
+        wasdReturnJob?.cancel()
+        wasdReturnJob = null
 
         val sprintAllowed = sprintGate.allowed(wasdMask and MASK_S != 0)
         val requestedMask = directionMask or (if (sprintAllowed) wasdMask and MASK_SPRINT else 0)
@@ -1070,12 +1127,16 @@ class EventHandler(
         if (!directionChanged && wasdTransitionJob?.isActive == true) return
         val starting = joystickMotion.activeMask == 0
         val actualStart = joystickMotion.target
+        val center = entry.center!!
+        lastWasdCenter = center
+        // 新按下不再从摇杆正中心起：落在目标方向 55%–75% 半径处，再弯一小段到落点。
+        // 真人按浮动摇杆时手指就落在偏移位置，不会每次都精确戳中心。
+        val startPoint = if (starting) randomPressStart(center, target) else actualStart
         val wantsTransition = wasdTransitionEnabled &&
             (directionChanged || starting) &&
-            actualStart != target
+            startPoint != target
         // 返回 false 表示 update 把落点交给过渡协程；触点轨迹由注入层统一录制，
         // 过渡的每个中间点都会按真实注入坐标落到轨迹里。
-        val center = entry.center!!
         val moved = joystickMotion.update(
             pointerId,
             effectiveMask,
@@ -1083,9 +1144,7 @@ class EventHandler(
             target,
             sendTarget = !wantsTransition,
             reanchorOnSprint = !wantsTransition,
-            // 从中心起按时先 down 在中心，再由过渡曲线拉到落点；否则
-            // injectGesture 会直接「中心 → 落点」瞬移出一条直线。
-            startOffset = center,
+            startOffset = startPoint,
         )
         if (moved) {
             stopWasdTransition()
@@ -1094,8 +1153,9 @@ class EventHandler(
                 pointerId,
                 effectiveMask,
                 center,
-                if (starting) center else actualStart,
+                startPoint,
                 target,
+                starting,
             )
         }
         if (wasdHumanization) {
@@ -1698,6 +1758,8 @@ class EventHandler(
         // Reset the joystick transition tracker after cancelling its contact.
         wasdMask = 0
         wasdDirectionOrder.clear()
+        wasdReturnJob?.cancel()
+        wasdReturnJob = null
         joystickMotion.reset()
         stopWasdJitter()
         stopWasdTransition()
@@ -1827,6 +1889,8 @@ class EventHandler(
         cancelToggle.clear()
         wasdMask = 0
         wasdDirectionOrder.clear()
+        wasdReturnJob?.cancel()
+        wasdReturnJob = null
         joystickMotion.reset()
         stopWasdJitter()
         stopWasdTransition()
@@ -1881,10 +1945,11 @@ class EventHandler(
 
         /**
          * 落点随机：半径只向外延伸，避免把推力压进游戏的慢走/死区。
-         * 普通移动最多 +5%，疾跑最多 +8%；方向偏移不超过 2.5°。
+         * 普通移动最多 +5%，疾跑最多 +3.5%（收到更小，避免轨迹冲出疾跑圈）；
+         * 方向偏移不超过 2.5°。
          */
         const val WALK_LANDING_RADIUS_RANGE = 0.05f
-        const val SPRINT_LANDING_RADIUS_RANGE = 0.08f
+        const val SPRINT_LANDING_RADIUS_RANGE = 0.035f
         const val WALK_LANDING_ANGLE_DEG = 1.8f
         const val SPRINT_LANDING_ANGLE_DEG = 2.5f
 
