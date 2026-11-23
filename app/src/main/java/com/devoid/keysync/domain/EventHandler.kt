@@ -586,7 +586,9 @@ class EventHandler(
                     } else {
                         bezierPoint(start, control, end, t)
                     }
-                    joystickMotion.jitter(pointerId, mask, point)
+                    // 中间点叠加高频毛刺，避免 WA/WD 疾跑这类长弧变成完美的圆。
+                    // 最后一帧不抖，保证落点精确。
+                    joystickMotion.jitter(pointerId, mask, point + tremorOffset(center, point, 0.8f))
                 }
             }
         }
@@ -683,7 +685,12 @@ class EventHandler(
                 val t = i.toFloat() / steps
                 // ease-out：越接近中心越慢，像手指自然收回。
                 val eased = 1f - (1f - t) * (1f - t)
-                joystickMotion.jitter(pointerId, mask, bezierPoint(start, control, center, eased))
+                joystickMotion.jitter(
+                    pointerId,
+                    mask,
+                    bezierPoint(start, control, center, eased) +
+                        tremorOffset(center, start, 0.6f * (1f - eased))
+                )
             }
             if (isActive) joystickMotion.update(pointerId, 0, Offset.Zero, Offset.Zero)
         }
@@ -724,6 +731,26 @@ class EventHandler(
         return center + rotated * radius
     }
 
+    /**
+     * 人手高频毛刺：沿轨迹法线方向叠加的小幅随机偏移。
+     *
+     * 慢速摆动只改变整体方向，路径本身仍然是一条光滑曲线，轨迹图上会显得「太圆」。
+     * 真人拇指在推杆时会有 1%–3% 半径的快速抖动，偶尔还带一次更大的抽动；
+     * 这里按每次采样独立随机方向，形成锯齿状毛刺，但角度偏差仍远小于 8 向判定的 22.5°。
+     */
+    private fun tremorOffset(center: Offset, point: Offset, fraction: Float = 1f): Offset {
+        val sway = swayFactor
+        if (sway <= 0.001f) return Offset.Zero
+        val delta = point - center
+        val length = delta.getDistance()
+        if (length <= 1f) return Offset.Zero
+        val perp = Offset(-delta.y / length, delta.x / length)
+        val base = 0.005f + Random.nextFloat() * 0.02f
+        val spike = if (Random.nextFloat() < 0.12f) 0.02f + Random.nextFloat() * 0.02f else 0f
+        val amplitude = length * (base + spike) * sway * fraction
+        return perp * (if (Random.nextBoolean()) amplitude else -amplitude)
+    }
+
     private fun restartWasdJitter(
         pointerId: Int,
         mask: Int,
@@ -732,13 +759,22 @@ class EventHandler(
     ) {
         wasdJitterJob?.cancel()
         wasdJitterJob = humanizeScope.launch {
+            // 高频毛刺固定 55–80ms 一次；慢速摆头仍按用户设定的「抖动间隔」推进。
+            // 轨迹图里这样才能看到密集的小锯齿，而不是每 200ms 一个折角。
+            var nextSwayAt = 0L
             while (isActive && wasdHumanization) {
-                delay(nextWasdJitterDelay())
+                delay(55L + Random.nextLong(0L, 25L))
                 if (!wasdHumanization) break
+                // 过渡弧线正在铺开时不要插毛刺，否则会把弧线拽乱。
+                if (wasdTransitionJob?.isActive == true) continue
                 // 只拖 current 触点，绝不 reanchor（见 JoystickMotion.jitter）。
                 val center = map.center ?: return@launch
-                advanceSway()
-                val target = jitterTarget(center, baseTarget)
+                val now = SystemClock.uptimeMillis()
+                if (now >= nextSwayAt) {
+                    advanceSway()
+                    nextSwayAt = now + nextWasdJitterDelay()
+                }
+                val target = jitterTarget(center, baseTarget) + tremorOffset(center, baseTarget)
                 joystickMotion.jitter(pointerId, mask, target)
             }
         }
