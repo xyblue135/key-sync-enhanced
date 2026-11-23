@@ -29,7 +29,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.acos
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -367,6 +369,11 @@ class EventHandler(
     /** 本次落点的额外随机：向外延伸的半径比例与方向偏移（弧度）。 */
     private var pressLandingScale = 1f
     private var pressLandingAngle = 0f
+    /** WASD 按住期间的连续摆动状态（角度/半径都做指数平滑，避免逐次跳变）。 */
+    private var swayPhase = 0f
+    private var swayPhaseTarget = 0f
+    private var swayRadius = 1f
+    private var swayRadiusTarget = 1f
     private val keyJitterJobs = HashMap<Int, Job>(16)
 
     /** 拟人化抖动偏移（px）。强度 0 时返回零偏移。 */
@@ -404,6 +411,9 @@ class EventHandler(
      * 把触点拉回摇杆死区，游戏判定为没有推动 —— 表现为「强度往上调就完全不动」。
      * 因此这里只旋转一个极小角度，并允许半径 ±2%~±8% 的变化，且绝不低于原距离的
      * 97%，保证方向与推动量始终有效。
+     *
+     * 角度/半径用 [swayPhase] / [swayRadius] 的慢速漂移，而不是每次重新随机，
+     * 这样按住时是连续的轻微摆动，不会每 200ms 跳一下。
      */
     private fun jitterTarget(center: Offset, target: Offset): Offset {
         // WASD 晃动只看独立的「方向晃动」参数，不再跟着整体偏移强度放大，
@@ -411,17 +421,30 @@ class EventHandler(
         val sway = swayFactor
         if (sway <= 0.001f) return target
         val delta = target - center
-        val length = delta.getDistance()
-        if (length <= 0.5f) return target
-        // 满幅度也只旋转 ±1.5°：足以打破机械角度，又不会让按住 W 时明显跑偏。
-        val maxAngle = (1.5f * sway) * (Math.PI.toFloat() / 180f)
-        val angle = (Random.nextFloat() * 2f - 1f) * maxAngle
-        val cosA = cos(angle)
-        val sinA = sin(angle)
-        // 半径最多收缩 0.6%，且不低于原距离的 99%，避免掉进游戏摇杆的慢走/死区。
-        val scale = (1f - Random.nextFloat() * 0.006f * sway).coerceAtLeast(0.99f)
+        if (delta.getDistance() <= 0.5f) return target
+        val cosA = cos(swayPhase)
+        val sinA = sin(swayPhase)
+        val scale = swayRadius.coerceAtLeast(0.99f)
         val rotated = Offset(delta.x * cosA - delta.y * sinA, delta.x * sinA + delta.y * cosA)
         return center + rotated * scale
+    }
+
+    /**
+     * 推进一次低频漂移：角度朝一个新的随机目标缓慢靠近（指数平滑），
+     * 而不是直接跳到随机值；半径同理。
+     */
+    private fun advanceSway() {
+        val sway = swayFactor
+        if (sway <= 0.001f) return
+        val maxAngle = (1.5f * sway) * (Math.PI.toFloat() / 180f)
+        swayPhase += (swayPhaseTarget - swayPhase) * 0.35f
+        if (abs(swayPhaseTarget - swayPhase) < maxAngle * 0.2f) {
+            swayPhaseTarget = (Random.nextFloat() * 2f - 1f) * maxAngle
+        }
+        swayRadius += (swayRadiusTarget - swayRadius) * 0.3f
+        if (abs(swayRadiusTarget - swayRadius) < 0.0015f) {
+            swayRadiusTarget = 1f - Random.nextFloat() * 0.006f * sway
+        }
     }
 
     private fun stopWasdJitter() {
@@ -437,9 +460,12 @@ class EventHandler(
     /**
      * 把触点从 [start] 平滑移到 [end]。
      *
-     * 真人推摇杆不会走直线：换向时拇指是划一道弧过去，Shift 疾跑则是沿原方向
-     * 稍微斜着推出去。这里统一用二次贝塞尔曲线，弯的方向与幅度每次随机，
-     * 但首尾点严格落在 [start] / [end]，不影响最终落点。
+     * 真人换向时拇指是贴着摇杆外圈划过去，所以有半径的换向用**圆弧**，
+     * 而不是可能横穿中心的直线/浅弧；Shift 推杆（同方向加半径）与从中心
+     * 起按则用轻微侧弯的二次贝塞尔。首尾点严格落在 [start] / [end]。
+     *
+     * 中间点按路程长度采样（不是固定步数），大角度换向会补更多点；
+     * 时间轴上再用 smoothstep 缓动，避免匀速机械感。
      */
     private fun startWasdTransition(
         pointerId: Int,
@@ -449,28 +475,42 @@ class EventHandler(
         end: Offset,
     ) {
         stopWasdTransition()
-        val duration = wasdTransitionMs.coerceIn(MIN_WASD_TRANSITION_MS, MAX_WASD_TRANSITION_MS)
-        // 再密的中间点也受录制采样下限约束；这里按 10ms 一步，保证短视频里能看出轨迹。
-        val steps = (duration / 10).coerceIn(4, 10)
+        val baseDuration = wasdTransitionMs.coerceIn(MIN_WASD_TRANSITION_MS, MAX_WASD_TRANSITION_MS)
         val chord = end - start
         val chordLength = chord.getDistance()
         if (chordLength < 1f) {
             joystickMotion.finishMove(pointerId, mask, end)
             return
         }
-        // 弯道参数在整段过渡里固定，否则每个中间点重新随机会抖成折线。
         val turn = directionTurn(center, start, end)
-        val bowRatio = when {
-            turn > 2.2f -> 0.55f + Random.nextFloat() * 0.15f   // 接近 180°：明显的半圆弧
-            turn > 1.2f -> 0.34f + Random.nextFloat() * 0.14f   // 大角度换向
-            else -> 0.20f + Random.nextFloat() * 0.14f          // Shift 推杆 / 正向起按
-        }
+        val startRadius = (start - center).getDistance()
+        val endRadius = (end - center).getDistance()
+        val hasRadius = startRadius > 1f && endRadius > 1f
+        // 有半径且不是同向推杆时才贴圈画弧；从中心起按仍是贝塞尔，但弯得更明显。
+        val useArc = hasRadius && turn >= SMALL_TURN_RAD
         val bowSign = if (Random.nextBoolean()) 1f else -1f
+        val arcScale = if (useArc) 0.94f + Random.nextFloat() * 0.06f else 1f
+        val bowRatio = when {
+            useArc -> 0f
+            !hasRadius -> 0.38f + Random.nextFloat() * 0.14f   // 从中心起按
+            else -> 0.20f + Random.nextFloat() * 0.14f          // Shift 推杆
+        }
         val normal = Offset(-chord.y / chordLength, chord.x / chordLength) *
             (chordLength * bowRatio * bowSign)
         val control = (start + end) / 2f + normal
+        // 大角度换向的弧长更长，需要更多中间点，否则回放里会被拉成折线。
+        val pathLength = if (useArc) {
+            abs(turn) * maxOf(startRadius, endRadius)
+        } else {
+            chordLength * 1.35f
+        }
+        val steps = kotlin.math.ceil(pathLength / TRANSITION_SEGMENT_PX)
+            .toInt().coerceIn(6, 18)
+        // 大换向略延长过渡，让弧线有足够时间铺开；仍在可调范围内。
+        val duration = (baseDuration * (1f + 0.35f * (turn / PI))).toInt()
+            .coerceIn(baseDuration, MAX_WASD_TRANSITION_MS)
         wasdTransitionJob = humanizeScope.launch {
-            val stepDelay = (duration / steps).coerceAtLeast(8).toLong()
+            val stepDelay = (duration / steps).coerceAtLeast(6).toLong()
             for (i in 1..steps) {
                 delay(stepDelay)
                 if (!isActive) return@launch
@@ -478,7 +518,15 @@ class EventHandler(
                     // 最后一帧必须精确落到目标点；jitter 会因为目标相同而跳过。
                     joystickMotion.finishMove(pointerId, mask, end)
                 } else {
-                    joystickMotion.jitter(pointerId, mask, bezierPoint(start, control, end, i.toFloat() / steps))
+                    val raw = i.toFloat() / steps
+                    // smoothstep：两端慢、中段快，接近人手推杆的加减速。
+                    val t = raw * raw * (3f - 2f * raw)
+                    val point = if (useArc) {
+                        arcPoint(center, start, end, t, arcScale, bowSign)
+                    } else {
+                        bezierPoint(start, control, end, t)
+                    }
+                    joystickMotion.jitter(pointerId, mask, point)
                 }
             }
         }
@@ -487,6 +535,36 @@ class EventHandler(
     private fun bezierPoint(start: Offset, control: Offset, end: Offset, t: Float): Offset {
         val u = 1f - t
         return start * (u * u) + control * (2f * u * t) + end * (t * t)
+    }
+
+    /**
+     * 贴外圈的圆弧过渡：角度从起点扫到终点，半径在两端保持精确值，
+     * 中段最多内收 [arcScale]（6% 以内）模拟拇指的轻微内切。
+     */
+    private fun arcPoint(
+        center: Offset,
+        start: Offset,
+        end: Offset,
+        t: Float,
+        arcScale: Float,
+        sweepSign: Float,
+    ): Offset {
+        val startDelta = start - center
+        val endDelta = end - center
+        val startRadius = startDelta.getDistance()
+        val endRadius = endDelta.getDistance()
+        if (startRadius < 1f || endRadius < 1f) return start + (end - start) * t
+        val startAngle = atan2(startDelta.y, startDelta.x)
+        val endAngle = atan2(endDelta.y, endDelta.x)
+        var sweep = endAngle - startAngle
+        while (sweep > PI) sweep -= (2 * PI).toFloat()
+        while (sweep <= -PI) sweep += (2 * PI).toFloat()
+        // 正好 180° 时两个方向等价，由本次采样的 sweepSign 决定走上边还是下边。
+        if (abs(abs(sweep) - PI) < 0.02f) sweep = if (sweepSign > 0) PI.toFloat() else -PI.toFloat()
+        val angle = startAngle + sweep * t
+        val baseRadius = startRadius + (endRadius - startRadius) * t
+        val radius = baseRadius * (1f - (1f - arcScale) * sin((PI * t).toFloat()))
+        return center + Offset(cos(angle) * radius, sin(angle) * radius)
     }
 
     /** 起点/终点方向之间的夹角；从摇杆中心起按时按大角度处理（弯得更明显）。 */
@@ -537,6 +615,7 @@ class EventHandler(
                 if (!wasdHumanization) break
                 // 只拖 current 触点，绝不 reanchor（见 JoystickMotion.jitter）。
                 val center = map.center ?: return@launch
+                advanceSway()
                 val target = jitterTarget(center, baseTarget)
                 joystickMotion.jitter(pointerId, mask, target)
             }
@@ -957,6 +1036,11 @@ class EventHandler(
             }
             val maxAngleDeg = if (sprinting) SPRINT_LANDING_ANGLE_DEG else WALK_LANDING_ANGLE_DEG
             pressLandingAngle = (Random.nextFloat() * 2f - 1f) * maxAngleDeg * (Math.PI.toFloat() / 180f)
+            // 新按压段从「无额外摆动」开始，随后由 advanceSway() 缓慢漂移。
+            swayPhase = 0f
+            swayPhaseTarget = 0f
+            swayRadius = 1f
+            swayRadiusTarget = 1f
         }
         val nominal = entry.center!!.let { center ->
             val delta = (entry.position - center) * (pressVariation * pressLandingScale)
@@ -1621,6 +1705,11 @@ class EventHandler(
         const val DEFAULT_WASD_TRANSITION_MS = 60
         const val MIN_WASD_TRANSITION_MS = 40
         const val MAX_WASD_TRANSITION_MS = 200
+
+        /** 转角超过该值（约 34°）且两端都在摇杆半径上时，换向贴外圈画圆弧。 */
+        const val SMALL_TURN_RAD = 0.6f
+        /** 过渡采样目标：每段弧长不超过约 34px，避免回放被拉成折线。 */
+        const val TRANSITION_SEGMENT_PX = 34f
 
         /**
          * 落点随机：半径只向外延伸，避免把推力压进游戏的慢走/死区。
