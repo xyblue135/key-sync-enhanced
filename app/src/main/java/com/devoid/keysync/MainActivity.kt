@@ -218,6 +218,7 @@ class MainActivity : ComponentActivity() {
                         val wasdTransition by viewModel.wasdTransition.collectAsStateWithLifecycle()
                         val wasdTransitionMs by viewModel.wasdTransitionMs.collectAsStateWithLifecycle()
                         val overlayOpacity by viewModel.overlayOpacity.collectAsStateWithLifecycle()
+                        val cursorRenderHz by viewModel.cursorRenderHz.collectAsStateWithLifecycle()
                         val statusBarVisible by viewModel.statusBarVisible.collectAsStateWithLifecycle()
                         val mouseJumpThresholdPx by viewModel.mouseJumpThresholdPx.collectAsStateWithLifecycle()
                         val mouseModeLatch by viewModel.mouseModeLatch.collectAsStateWithLifecycle()
@@ -278,6 +279,8 @@ class MainActivity : ComponentActivity() {
                             onSetWasdTransitionMs = viewModel::setWasdTransitionMs,
                             overlayOpacity = overlayOpacity,
                             onSetOverlayOpacity = viewModel::setOverlayOpacity,
+                            cursorRenderHz = cursorRenderHz,
+                            onSetCursorRenderHz = viewModel::setCursorRenderHz,
                             statusBarVisible = statusBarVisible,
                             onSetStatusBarVisible = viewModel::setStatusBarVisible,
                             mouseJumpThresholdPx = mouseJumpThresholdPx,

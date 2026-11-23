@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.coroutines.FlowPreview::class)
+
 package com.devoid.keysync.service
 
 import android.annotation.SuppressLint
@@ -88,6 +90,7 @@ import com.devoid.keysync.ui.theme.KeySyncTheme
 import dagger.Lazy
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -682,7 +685,12 @@ class FloatingBubbleService : Service() {
                 val itemsContainerOpacity by stateManager.get().overlayOpacity.collectAsState()
                 val isEditMode by stateManager.get().isEditMode.collectAsState()
                 val isShootingMode by stateManager.get().isShootingMode.collectAsState()
-                val pointerOffset by stateManager.get().pointerOffset.collectAsState()
+                val cursorRenderHz by stateManager.get().cursorRenderHz.collectAsState()
+                // 光标显示按自定义刷新率采样，逻辑坐标仍全速更新，避免每个鼠标事件都重绘全屏层。
+                val pointerOffsetFlow = stateManager.get().pointerOffset
+                val pointerOffset by remember(pointerOffsetFlow, cursorRenderHz) {
+                    pointerOffsetFlow.sample(1000L / cursorRenderHz.coerceIn(15, 144))
+                }.collectAsState(initial = stateManager.get().currentPointerOffset())
                 val keysConfig by stateManager.get().keysConfig.collectAsState()
                 val keysVisible by stateManager.get().keysVisible.collectAsState()
                 val advancedVisible by stateManager.get().advancedVisible.collectAsState()

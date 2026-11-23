@@ -77,6 +77,8 @@ class DataStoreManager internal constructor(
         val ADDED_PACKAGES = stringPreferencesKey("added_packages")
         val POINTER_SENSITIVITY = floatPreferencesKey("pointer_sensitivity")
         val OVERLAY_OPACITY = floatPreferencesKey("overlay_opacity")
+        /** 光标渲染刷新率（Hz），默认 60；只影响显示，不影响鼠标逻辑。 */
+        val CURSOR_RENDER_HZ = intPreferencesKey("cursor_render_hz")
 
         /**
          * 悬浮窗顶部状态提示条（预设名 · 模式 · 最近输入）的显隐。

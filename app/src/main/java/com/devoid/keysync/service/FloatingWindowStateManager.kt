@@ -98,6 +98,8 @@ class FloatingWindowStateManager @Inject constructor(
 
     val pointerSensitivity = MutableStateFlow(0.5f)
     val overlayOpacity = MutableStateFlow(0.5f)
+    /** 光标渲染刷新率（Hz），默认 60；只影响显示，鼠标逻辑仍全速更新。 */
+    val cursorRenderHz = MutableStateFlow(DEFAULT_CURSOR_RENDER_HZ)
 
     // 按键拟人化（随机偏移）：全局生效、对所有预设统一，不随预设存储。
     val wasdHumanization = MutableStateFlow(true)
@@ -162,6 +164,9 @@ class FloatingWindowStateManager @Inject constructor(
     private val _mousePointerOffset =
         MutableStateFlow(Offset(displayMetrics.widthPixels / 2f, displayMetrics.heightPixels / 2f))
     val pointerOffset = _mousePointerOffset.asStateFlow()
+
+    /** 供合成层取初始值，避免直接在组合里读 StateFlow.value 触发 lint。 */
+    fun currentPointerOffset(): Offset = _mousePointerOffset.value
 
     // Captured-pointer 事件里 rawX/rawY 不携带位移信息（真正的位移在相对轴，
     // 见 onMouseEvent）。少数 ROM 不填 AXIS_RELATIVE_X/Y，需要退回「相邻事件
@@ -351,6 +356,9 @@ class FloatingWindowStateManager @Inject constructor(
             dataStoreManager.getFloat(DataStoreManager.OVERLAY_OPACITY).first()?.let {
                 overlayOpacity.value = it
             }
+            cursorRenderHz.value =
+                (dataStoreManager.getInt(DataStoreManager.CURSOR_RENDER_HZ).first()
+                    ?: DEFAULT_CURSOR_RENDER_HZ).coerceIn(MIN_CURSOR_RENDER_HZ, MAX_CURSOR_RENDER_HZ)
             dataStoreManager.getFloat(DataStoreManager.POINTER_SENSITIVITY).first()?.let {
                 pointerSensitivity.value = it
             }
@@ -701,6 +709,10 @@ class FloatingWindowStateManager @Inject constructor(
         const val DEFAULT_F_CURSOR_CLICK_WINDOW_MS = 1000
         /** ESC / Tab 关闭界面后的回瞄准延迟（ms）默认值。 */
         const val DEFAULT_TAB_ESC_AIM_DELAY_MS = 110
+        /** 光标渲染刷新率默认 60Hz，可调 15–144Hz；只影响显示。 */
+        const val DEFAULT_CURSOR_RENDER_HZ = 60
+        const val MIN_CURSOR_RENDER_HZ = 15
+        const val MAX_CURSOR_RENDER_HZ = 144
         /** Alt+D 拖拽：单程分几步、每步间隔（ms）；12 步 × 14ms ≈ 170ms。 */
         const val DRAG_STEPS = 12
         const val DRAG_STEP_MS = 14L
@@ -1911,6 +1923,13 @@ class FloatingWindowStateManager @Inject constructor(
     fun saveOverlayOpacity(value: Float) {
         overlayOpacity.value = value
         scope.launch { dataStoreManager.save(DataStoreManager.OVERLAY_OPACITY, value) }
+    }
+
+    /** 光标渲染刷新率（Hz），默认 60；降低可减少悬浮层重绘。 */
+    fun setCursorRenderHz(hz: Int) {
+        val safe = hz.coerceIn(MIN_CURSOR_RENDER_HZ, MAX_CURSOR_RENDER_HZ)
+        cursorRenderHz.value = safe
+        scope.launch { dataStoreManager.save(DataStoreManager.CURSOR_RENDER_HZ, safe) }
     }
 
     /* ----------------- 按键拟人化（全局设置） ----------------- */

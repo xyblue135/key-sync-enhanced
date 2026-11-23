@@ -1,5 +1,7 @@
 package com.devoid.keysync.domain
 
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
@@ -73,8 +75,11 @@ class EventHandler(
 
     // Macro touches use a separate logical id and never recursively synthesize keyboard events.
     private val macroPointerId = 1_000_000
+    /** 点击宏在独立线程上调度，避免大量步骤和主线程的悬浮层重绘抢帧。 */
+    private val macroThread = HandlerThread("key-sync-macro").apply { start() }
+    private val macroHandler = Handler(macroThread.looper)
     private val macroRunner = ClickMacroRunner(
-        schedule = { delay, action -> mainHandler.postDelayed({ action() }, delay) },
+        schedule = { delay, action -> macroHandler.postDelayed(action, delay.coerceAtLeast(0L)) },
         down = { position -> eventInjector.injectPointer(macroPointerId, position) },
         up = { eventInjector.releasePointer(macroPointerId) },
     )

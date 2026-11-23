@@ -134,6 +134,9 @@ fun SettingsScreen(
     onSaveProfileAssist: (String, ProfileAssist) -> Unit = { _, _ -> },
     overlayOpacity: Float = 0.5f,
     onSetOverlayOpacity: (Float) -> Unit = {},
+    /** 光标渲染刷新率（Hz），默认 60；只影响显示。 */
+    cursorRenderHz: Int = 60,
+    onSetCursorRenderHz: (Int) -> Unit = {},
     statusBarVisible: Boolean = true,
     onSetStatusBarVisible: (Boolean) -> Unit = {},
     mouseJumpThresholdPx: Int = 240,
@@ -445,6 +448,26 @@ fun SettingsScreen(
                     )
                     Text(
                         "0% 时按键完全不显示；改动立即生效，无需点保存。",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "光标渲染刷新率",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text("${cursorRenderHz} Hz")
+                    }
+                    Slider(
+                        value = cursorRenderHz.toFloat().coerceIn(15f, 144f),
+                        valueRange = 15f..144f,
+                        onValueChange = { onSetCursorRenderHz(it.roundToInt()) }
+                    )
+                    Text(
+                        "默认 60Hz。只影响光标的显示刷新，鼠标坐标、点击、滚轮和宏仍全速处理；" +
+                            "调低可减少悬浮层重绘、缓解偶发掉帧，调高更跟手。",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

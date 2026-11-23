@@ -108,6 +108,8 @@ class MainActivityViewModel @Inject constructor(
     val wasdTransitionMs: StateFlow<Int> = stateManager.wasdTransitionMs
     /** 悬浮窗透明度（全局设置），设置页用；改动立即持久化。 */
     val overlayOpacity: StateFlow<Float> = stateManager.overlayOpacity
+    /** 光标渲染刷新率（Hz），默认 60。 */
+    val cursorRenderHz: StateFlow<Int> = stateManager.cursorRenderHz
     /** 顶部状态提示条（预设名 · 模式 · 最近输入）的显隐；全局设置，立即持久化。 */
     val statusBarVisible: StateFlow<Boolean> = stateManager.statusBarVisible
 
@@ -263,6 +265,7 @@ class MainActivityViewModel @Inject constructor(
     fun setWasdTransition(enabled: Boolean) = stateManager.setWasdTransition(enabled)
     fun setWasdTransitionMs(ms: Int) = stateManager.setWasdTransitionMs(ms)
     fun setOverlayOpacity(value: Float) = stateManager.saveOverlayOpacity(value)
+    fun setCursorRenderHz(hz: Int) = stateManager.setCursorRenderHz(hz)
     fun setStatusBarVisible(visible: Boolean) = stateManager.setStatusBarVisible(visible)
     fun setMouseJumpThreshold(px: Int) = stateManager.setMouseJumpThreshold(px)
     fun setMouseModeLatch(enabled: Boolean) = stateManager.setMouseModeLatch(enabled)
