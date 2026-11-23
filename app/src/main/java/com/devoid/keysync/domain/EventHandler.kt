@@ -1285,17 +1285,14 @@ class EventHandler(
     /**
      * 把瞄准逻辑坐标钳制在鼠标活动范围内。
      *
-     * 优先使用用户拖出来的「大方形」活动范围；没有设置时才退回整屏（含边缘留白）。
-     * 这样视角触点永远不会被鼠标位移带到屏幕另一侧。
+     * 大范围是一条手绘的不规则闭合轮廓（不是方框）：点在轮廓内保持不变，
+     * 越界时投影到最近的轮廓边上。这样鼠标再甩也不会跑到屏幕另一侧，
+     * 同时路径边界像真人手部扫过的范围。
      */
     private fun clampAimToBounds(p: Offset): Offset {
         val areaHalf = mouseAreaHalfSize
         if (areaHalf > 0f) {
-            val c = mouseAreaCenter
-            return Offset(
-                p.x.coerceIn(c.x - areaHalf, c.x + areaHalf),
-                p.y.coerceIn(c.y - areaHalf, c.y + areaHalf)
-            )
+            return clampToMouseShape(p, mouseAreaCenter, areaHalf)
         }
         val w = screenSize.x
         val h = screenSize.y
@@ -1305,6 +1302,64 @@ class EventHandler(
             p.x.coerceIn(margin, w - margin),
             p.y.coerceIn(margin, h - margin)
         )
+    }
+
+    /** 把点限制在手绘轮廓内：内部原样返回，外部投影到最近边。 */
+    private fun clampToMouseShape(p: Offset, center: Offset, half: Float): Offset {
+        val nx = (p.x - center.x) / half
+        val ny = (p.y - center.y) / half
+        if (isInsideMouseShape(nx, ny)) return p
+        val shape = MOUSE_AREA_SHAPE
+        val count = shape.size / 2
+        var bestX = nx
+        var bestY = ny
+        var bestDist = Float.MAX_VALUE
+        var j = count - 1
+        for (i in 0 until count) {
+            val ax = shape[i * 2]
+            val ay = shape[i * 2 + 1]
+            val bx = shape[j * 2]
+            val by = shape[j * 2 + 1]
+            val abx = bx - ax
+            val aby = by - ay
+            val lenSq = abx * abx + aby * aby
+            val t = if (lenSq < 0.000001f) 0f else {
+                (((nx - ax) * abx + (ny - ay) * aby) / lenSq).coerceIn(0f, 1f)
+            }
+            val px = ax + abx * t
+            val py = ay + aby * t
+            val dx = nx - px
+            val dy = ny - py
+            val dist = dx * dx + dy * dy
+            if (dist < bestDist) {
+                bestDist = dist
+                bestX = px
+                bestY = py
+            }
+            j = i
+        }
+        return center + Offset(bestX * half, bestY * half)
+    }
+
+    /** 射线法判断归一化坐标是否在手绘轮廓内。 */
+    private fun isInsideMouseShape(x: Float, y: Float): Boolean {
+        val shape = MOUSE_AREA_SHAPE
+        val count = shape.size / 2
+        var inside = false
+        var j = count - 1
+        for (i in 0 until count) {
+            val xi = shape[i * 2]
+            val yi = shape[i * 2 + 1]
+            val xj = shape[j * 2]
+            val yj = shape[j * 2 + 1]
+            if ((yi > y) != (yj > y) &&
+                x < (xj - xi) * (y - yi) / (yj - yi) + xi
+            ) {
+                inside = !inside
+            }
+            j = i
+        }
+        return inside
     }
 
     /**
@@ -1710,6 +1765,24 @@ class EventHandler(
         const val SMALL_TURN_RAD = 0.6f
         /** 过渡采样目标：每段弧长不超过约 34px，避免回放被拉成折线。 */
         const val TRANSITION_SEGMENT_PX = 34f
+
+        /**
+         * 鼠标活动范围的形状：按用户手绘的不规则闭合轮廓采样（归一化到 [-1, 1]），
+         * 比正方形自然得多。x 向右、y 向下，与屏幕坐标一致。
+         */
+        val MOUSE_AREA_SHAPE = floatArrayOf(
+            -0.9871f, -0.0640f, -0.9806f, -0.3468f, -0.9161f, -0.4747f,
+            -0.7677f, -0.6229f, -0.6194f, -0.7441f, -0.4452f, -0.8114f,
+            -0.2581f, -0.8114f, -0.0645f, -0.9394f, 0.0710f, -0.9259f,
+            0.3161f, -0.9798f, 0.4839f, -0.9865f, 0.6516f, -0.8249f,
+            0.6968f, -0.6364f, 0.8323f, -0.4411f, 0.8645f, -0.2929f,
+            0.8968f, -0.0774f, 0.9226f, 0.1246f, 1.0000f, 0.3535f,
+            0.9613f, 0.4949f, 0.7871f, 0.7172f, 0.6452f, 0.8721f,
+            0.5226f, 0.9529f, 0.3226f, 1.0000f, 0.1097f, 1.0000f,
+            -0.0645f, 0.9394f, -0.2065f, 0.7845f, -0.3161f, 0.6633f,
+            -0.4516f, 0.5488f, -0.6323f, 0.5084f, -0.8581f, 0.4478f,
+            -0.9355f, 0.2997f, -0.9677f, 0.0707f,
+        )
 
         /**
          * 落点随机：半径只向外延伸，避免把推力压进游戏的慢走/死区。

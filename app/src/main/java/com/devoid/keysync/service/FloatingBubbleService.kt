@@ -785,6 +785,7 @@ class FloatingBubbleService : Service() {
                 val landingAreaCenter by stateManager.get().landingAreaCenter.collectAsState()
                 val landingAreaHalf by stateManager.get().landingAreaHalf.collectAsState()
                 val overlayOrigin by stateManager.get().overlayOriginFlow.collectAsState()
+                val shootingAnchor by stateManager.get().shootingAnchorFlow.collectAsState()
                 Box {
                     // 光标：用半透明触摸指示圈代替箭头，视觉上更接近"手指触点"。
                     if (!isEditMode && !mappingPaused && !isShootingMode && wheelCursor == null) {
@@ -855,6 +856,7 @@ class FloatingBubbleService : Service() {
                             landingAreaCenter = if (landingAreaHalf > 0f)
                                 landingAreaCenter - overlayOrigin else null,
                             landingAreaHalf = landingAreaHalf,
+                            shootingModeAnchor = shootingAnchor?.minus(overlayOrigin),
                             onMouseAreaChange = { center, half ->
                                 stateManager.get().setMouseArea(center + overlayOrigin, half)
                             },

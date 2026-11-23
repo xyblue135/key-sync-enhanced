@@ -207,7 +207,11 @@ class FloatingWindowStateManager @Inject constructor(
         overlayOrigin = origin
         _overlayOriginFlow.value = origin
         _reportedViewport.value = viewport
-        clampMouseAreasToScreen()
+        _shootingAnchorFlow.value = shootingModeAnchor()
+        if (mouseAreaHalf.value > 0f) {
+            recomputeMouseAreaCenters()
+            syncMouseAreas()
+        }
         val held = eventHandler.heldKeyCodes()
         val mouseHeld = eventHandler.heldMouseButtons()
         applyActiveProfile()
@@ -233,15 +237,21 @@ class FloatingWindowStateManager @Inject constructor(
     /** Alt+D 拖拽速度倍数（1–100）：值越大移动越快，默认 25。 */
     val discardDragSpeed = MutableStateFlow(DEFAULT_DISCARD_DRAG_SPEED)
 
-    /* -------- 鼠标双范围（全局）：大方形限制位移，小方形随机回中落点（屏幕坐标） -------- */
-    val mouseAreaCenter = MutableStateFlow(Offset.Zero)
+    /* -------- 鼠标双范围（全局）：位置相对 ` 按钮，主按钮移动时整体跟随（屏幕坐标） -------- */
+    private val mouseAreaOffset = MutableStateFlow(Offset.Zero)
     val mouseAreaHalf = MutableStateFlow(0f)
-    val landingAreaCenter = MutableStateFlow(Offset.Zero)
+    private val landingAreaOffset = MutableStateFlow(Offset.Zero)
     val landingAreaHalf = MutableStateFlow(0f)
+    /** 派生的绝对中心，供事件处理器与悬浮层使用。 */
+    val mouseAreaCenter = MutableStateFlow(Offset.Zero)
+    val landingAreaCenter = MutableStateFlow(Offset.Zero)
     private var mouseAreaCustomized = false
     /** 悬浮窗原点（屏幕坐标），供高级层把双范围从屏幕坐标换算到本地坐标。 */
     private val _overlayOriginFlow = MutableStateFlow(Offset.Zero)
     val overlayOriginFlow = _overlayOriginFlow.asStateFlow()
+    /** ` 按钮中心（屏幕坐标），` 移动后更新，供齿轮设置显示相对偏移。 */
+    private val _shootingAnchorFlow = MutableStateFlow<Offset?>(null)
+    val shootingAnchorFlow = _shootingAnchorFlow.asStateFlow()
     private var discardDragJob: Job? = null
     /** M 键开关地图并切换鼠标（全局），默认开启。 */
     val mapMouseToggleEnabled = MutableStateFlow(true)
@@ -472,22 +482,23 @@ class FloatingWindowStateManager @Inject constructor(
             fScrollDownKeyCode.value =
                 dataStoreManager.getInt(DataStoreManager.F_SCROLL_DOWN_KEY_CODE).first()
                     ?: KEYCODE_SCROLL_DOWN
-            // 鼠标双范围：已自定义过就恢复；没有记录时等预设布局就绪后按准心位置生成默认值。
-            val areaCx = dataStoreManager.getFloat(DataStoreManager.MOUSE_AREA_CENTER_X).first()
-            val areaCy = dataStoreManager.getFloat(DataStoreManager.MOUSE_AREA_CENTER_Y).first()
+            // 鼠标双范围：位置保存为相对 ` 按钮的偏移，主按钮移动后整体跟随。
+            val areaOx = dataStoreManager.getFloat(DataStoreManager.MOUSE_AREA_OFFSET_X).first()
+            val areaOy = dataStoreManager.getFloat(DataStoreManager.MOUSE_AREA_OFFSET_Y).first()
             val areaHalf = dataStoreManager.getFloat(DataStoreManager.MOUSE_AREA_HALF).first()
-            if (areaCx != null && areaCy != null && areaHalf != null && areaHalf > 0f) {
-                mouseAreaCenter.value = Offset(areaCx, areaCy)
+            if (areaOx != null && areaOy != null && areaHalf != null && areaHalf > 0f) {
+                mouseAreaOffset.value = Offset(areaOx, areaOy)
                 mouseAreaHalf.value = areaHalf
                 mouseAreaCustomized = true
             }
-            val landCx = dataStoreManager.getFloat(DataStoreManager.LANDING_AREA_CENTER_X).first()
-            val landCy = dataStoreManager.getFloat(DataStoreManager.LANDING_AREA_CENTER_Y).first()
+            val landOx = dataStoreManager.getFloat(DataStoreManager.LANDING_AREA_OFFSET_X).first()
+            val landOy = dataStoreManager.getFloat(DataStoreManager.LANDING_AREA_OFFSET_Y).first()
             val landHalf = dataStoreManager.getFloat(DataStoreManager.LANDING_AREA_HALF).first()
-            if (landCx != null && landCy != null && landHalf != null && landHalf > 0f) {
-                landingAreaCenter.value = Offset(landCx, landCy)
+            if (landOx != null && landOy != null && landHalf != null && landHalf > 0f) {
+                landingAreaOffset.value = Offset(landOx, landOy)
                 landingAreaHalf.value = landHalf
             }
+            recomputeMouseAreaCenters()
             clampMouseAreasToScreen()
             syncMouseAreas()
             val loadedModes = runCatching {
@@ -1560,79 +1571,110 @@ class FloatingWindowStateManager @Inject constructor(
         eventHandler.landingAreaHalfSize = landingAreaHalf.value
     }
 
-    /** 旋转 / 分辨率变化后把已保存的双范围裁回屏幕内，避免视角触点被夹到屏幕外。 */
+    /** ` 按钮当前测得的屏幕中心；供悬浮层换算本地坐标。 */
+    fun shootingModeAnchorPoint(): Offset? =
+        _containerItems.value.filterIsInstance<DraggableItem.FixedKey>()
+            .firstOrNull { it.type == DraggableItemType.SHOOTING_MODE }?.touchCenter
+
+    /** ` 按钮的屏幕中心；没有该按钮时回落到右半屏默认位置。 */
+    private fun shootingModeAnchor(): Offset {
+        val viewport = overlayViewport ?: currentScreenSize()
+        val origin = overlayOrigin ?: Offset.Zero
+        val fallback = origin + Offset(viewport.x * 0.68f, viewport.y * 0.5f)
+        val toggle = _containerItems.value.filterIsInstance<DraggableItem.FixedKey>()
+            .firstOrNull { it.type == DraggableItemType.SHOOTING_MODE }
+            ?: return fallback
+        return toggle.touchCenter
+            ?: origin + toggle.position + Offset(toggle.size / 2f, toggle.size / 2f)
+    }
+
+    /** 由「相对 ` 的偏移」换算出绝对中心，主按钮移动后自动跟随。 */
+    private fun recomputeMouseAreaCenters() {
+        val anchor = shootingModeAnchor()
+        mouseAreaCenter.value = anchor + mouseAreaOffset.value
+        landingAreaCenter.value = anchor + landingAreaOffset.value
+    }
+
+    /** 旋转 / 分辨率变化后把双范围裁回屏幕内，并同步回相对偏移。 */
     private fun clampMouseAreasToScreen() {
         val half = mouseAreaHalf.value
         if (half <= 0f) return
         val screen = currentScreenSize()
         if (screen.x <= 0f || screen.y <= 0f) return
+        val anchor = shootingModeAnchor()
         val safeHalf = half.coerceAtMost(minOf(screen.x, screen.y) * 0.48f)
-        val center = mouseAreaCenter.value
+        mouseAreaHalf.value = safeHalf
+        val center = anchor + mouseAreaOffset.value
         val safeCenter = Offset(
             center.x.coerceIn(safeHalf, (screen.x - safeHalf).coerceAtLeast(safeHalf)),
             center.y.coerceIn(safeHalf, (screen.y - safeHalf).coerceAtLeast(safeHalf)),
         )
-        mouseAreaHalf.value = safeHalf
-        mouseAreaCenter.value = safeCenter
+        mouseAreaOffset.value = safeCenter - anchor
         val landHalf = landingAreaHalf.value.coerceAtMost(safeHalf)
         landingAreaHalf.value = landHalf
-        landingAreaCenter.value = Offset(
-            landingAreaCenter.value.x.coerceIn(safeCenter.x - safeHalf, safeCenter.x + safeHalf),
-            landingAreaCenter.value.y.coerceIn(safeCenter.y - safeHalf, safeCenter.y + safeHalf),
-        )
+        val landCenter = anchor + landingAreaOffset.value
+        landingAreaOffset.value = Offset(
+            landCenter.x.coerceIn(safeCenter.x - safeHalf, safeCenter.x + safeHalf),
+            landCenter.y.coerceIn(safeCenter.y - safeHalf, safeCenter.y + safeHalf),
+        ) - anchor
+        recomputeMouseAreaCenters()
         syncMouseAreas()
     }
 
     /**
-     * 首次使用时，以准心（` 按钮）为中心生成默认双范围：
-     * 大方形限制视角触点只在右半屏附近移动，小方形用于每次回中的随机落点。
+     * 首次使用时生成默认双范围：都以准心（` 按钮）为中心，
+     * 大范围限制视角触点的活动区域，小范围用于每次回中的随机落点。
      */
     private fun ensureDefaultMouseAreas() {
-        if (mouseAreaCustomized) return
+        if (mouseAreaCustomized) {
+            recomputeMouseAreaCenters()
+            syncMouseAreas()
+            return
+        }
         val viewport = overlayViewport ?: currentScreenSize()
         if (viewport.x <= 0f || viewport.y <= 0f) return
-        val origin = overlayOrigin ?: Offset.Zero
         val minSide = minOf(viewport.x, viewport.y)
-        val toggle = _containerItems.value.filterIsInstance<DraggableItem.FixedKey>()
-            .firstOrNull { it.type == DraggableItemType.SHOOTING_MODE }
-        val center = toggle?.touchCenter
-            ?: (origin + Offset(viewport.x * 0.68f, viewport.y * 0.5f))
-        val half = (minSide * 0.30f).coerceIn(60f, minSide * 0.45f)
-        val screen = currentScreenSize()
-        mouseAreaCenter.value = Offset(
-            center.x.coerceIn(half, (screen.x - half).coerceAtLeast(half)),
-            center.y.coerceIn(half, (screen.y - half).coerceAtLeast(half)),
-        )
-        mouseAreaHalf.value = half
-        landingAreaCenter.value = mouseAreaCenter.value
-        landingAreaHalf.value = (minSide * 0.05f).coerceIn(10f, half)
+        mouseAreaOffset.value = Offset.Zero
+        mouseAreaHalf.value = (minSide * 0.30f).coerceIn(60f, minSide * 0.45f)
+        landingAreaOffset.value = Offset.Zero
+        landingAreaHalf.value = (minSide * 0.05f).coerceIn(10f, mouseAreaHalf.value)
+        recomputeMouseAreaCenters()
         syncMouseAreas()
     }
 
-    /** 高级层拖动/缩放「鼠标活动范围」（大方形）。 */
+    /** 主按钮 ` 移动后重新锚定双范围（编辑态拖动时实时跟随）。 */
+    fun refreshMouseAreaAnchor() {
+        if (mouseAreaHalf.value <= 0f) return
+        recomputeMouseAreaCenters()
+        syncMouseAreas()
+    }
+
+    /** 高级层拖动/缩放「鼠标活动范围」（大范围，形状为手绘不规则多边形）。 */
     fun setMouseArea(center: Offset, half: Float) {
         mouseAreaCustomized = true
         val screen = currentScreenSize()
         val safeHalf = half.coerceIn(MIN_MOUSE_AREA_HALF, maxOf(MIN_MOUSE_AREA_HALF, minOf(screen.x, screen.y) * 0.48f))
+        val anchor = shootingModeAnchor()
         val safeCenter = Offset(
             center.x.coerceIn(safeHalf, (screen.x - safeHalf).coerceAtLeast(safeHalf)),
             center.y.coerceIn(safeHalf, (screen.y - safeHalf).coerceAtLeast(safeHalf)),
         )
-        mouseAreaCenter.value = safeCenter
+        mouseAreaOffset.value = safeCenter - anchor
         mouseAreaHalf.value = safeHalf
-        // 小方形必须落在大方形内，否则回中落点会被大方形裁掉。
-        landingAreaCenter.value = Offset(
-            landingAreaCenter.value.x.coerceIn(safeCenter.x - safeHalf, safeCenter.x + safeHalf),
-            landingAreaCenter.value.y.coerceIn(safeCenter.y - safeHalf, safeCenter.y + safeHalf),
-        )
+        val landCenter = landingAreaCenter.value
+        landingAreaOffset.value = Offset(
+            landCenter.x.coerceIn(safeCenter.x - safeHalf, safeCenter.x + safeHalf),
+            landCenter.y.coerceIn(safeCenter.y - safeHalf, safeCenter.y + safeHalf),
+        ) - anchor
         landingAreaHalf.value = landingAreaHalf.value.coerceAtMost(safeHalf)
+        recomputeMouseAreaCenters()
         syncMouseAreas()
         scope.launch {
-            dataStoreManager.save(DataStoreManager.MOUSE_AREA_CENTER_X, safeCenter.x)
-            dataStoreManager.save(DataStoreManager.MOUSE_AREA_CENTER_Y, safeCenter.y)
+            dataStoreManager.save(DataStoreManager.MOUSE_AREA_OFFSET_X, mouseAreaOffset.value.x)
+            dataStoreManager.save(DataStoreManager.MOUSE_AREA_OFFSET_Y, mouseAreaOffset.value.y)
             dataStoreManager.save(DataStoreManager.MOUSE_AREA_HALF, safeHalf)
-            dataStoreManager.save(DataStoreManager.LANDING_AREA_CENTER_X, landingAreaCenter.value.x)
-            dataStoreManager.save(DataStoreManager.LANDING_AREA_CENTER_Y, landingAreaCenter.value.y)
+            dataStoreManager.save(DataStoreManager.LANDING_AREA_OFFSET_X, landingAreaOffset.value.x)
+            dataStoreManager.save(DataStoreManager.LANDING_AREA_OFFSET_Y, landingAreaOffset.value.y)
             dataStoreManager.save(DataStoreManager.LANDING_AREA_HALF, landingAreaHalf.value)
         }
     }
@@ -1642,6 +1684,7 @@ class FloatingWindowStateManager @Inject constructor(
         mouseAreaCustomized = true
         val bigHalf = mouseAreaHalf.value
         val bigCenter = mouseAreaCenter.value
+        val anchor = shootingModeAnchor()
         val safeHalf = half.coerceIn(MIN_LANDING_AREA_HALF, maxOf(MIN_LANDING_AREA_HALF, bigHalf))
         val clampedCenter = if (bigHalf > 0f) {
             Offset(
@@ -1649,12 +1692,13 @@ class FloatingWindowStateManager @Inject constructor(
                 center.y.coerceIn(bigCenter.y - bigHalf, bigCenter.y + bigHalf),
             )
         } else center
-        landingAreaCenter.value = clampedCenter
+        landingAreaOffset.value = clampedCenter - anchor
         landingAreaHalf.value = safeHalf
+        recomputeMouseAreaCenters()
         syncMouseAreas()
         scope.launch {
-            dataStoreManager.save(DataStoreManager.LANDING_AREA_CENTER_X, clampedCenter.x)
-            dataStoreManager.save(DataStoreManager.LANDING_AREA_CENTER_Y, clampedCenter.y)
+            dataStoreManager.save(DataStoreManager.LANDING_AREA_OFFSET_X, landingAreaOffset.value.x)
+            dataStoreManager.save(DataStoreManager.LANDING_AREA_OFFSET_Y, landingAreaOffset.value.y)
             dataStoreManager.save(DataStoreManager.LANDING_AREA_HALF, safeHalf)
         }
     }
@@ -1908,6 +1952,11 @@ class FloatingWindowStateManager @Inject constructor(
         }
         if (size > 0) item.touchCenter?.let {
             overlayOrigin = it - item.position - Offset(size / 2f, size / 2f)
+        }
+        // ` 按钮的位置变化（拖动/改布局）时，双范围整体跟着走。
+        if (item is DraggableItem.FixedKey && item.type == DraggableItemType.SHOOTING_MODE) {
+            _shootingAnchorFlow.value = item.touchCenter
+            refreshMouseAreaAnchor()
         }
         eventHandler.updateMeasuredPosition(item)
         pullItemIntoViewport(item)

@@ -97,6 +97,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import com.devoid.keysync.R
 import com.devoid.keysync.ui.MouseInputPicker
 import com.devoid.keysync.ui.touchModeColor
+import com.devoid.keysync.domain.EventHandler
 import com.devoid.keysync.domain.KEYCODE_MMC
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.AppConfig
@@ -146,11 +147,13 @@ fun ItemsContainer(
     cursorSpawn: Offset? = null,
     onMoveCursorSpawn: (Offset) -> Unit = {},
     onResetCursorSpawn: () -> Unit = {},
-    /** 鼠标活动范围（大方形）与回中随机落点范围（小方形），均为悬浮层本地坐标。 */
+    /** 鼠标活动范围（大范围，手绘轮廓）与回中随机落点范围（小方形），均为悬浮层本地坐标。 */
     mouseMoveAreaCenter: Offset? = null,
     mouseMoveAreaHalf: Float = 0f,
     landingAreaCenter: Offset? = null,
     landingAreaHalf: Float = 0f,
+    /** ` 按钮的本地中心，用于齿轮设置里按相对偏移调整双范围。 */
+    shootingModeAnchor: Offset? = null,
     onMouseAreaChange: (Offset, Float) -> Unit = { _, _ -> },
     onLandingAreaChange: (Offset, Float) -> Unit = { _, _ -> },
     /** 编辑态图层：true = 高级层（丢弃点可拖动，按键层半透明预览）。 */
@@ -165,6 +168,8 @@ fun ItemsContainer(
     var configuringWasd by remember { mutableStateOf<DraggableItem.WASDGroup?>(null) }
     /** 疾跑距离滑杆的实时预览（前向, 横向），让半径圈跟着滑杆变化。 */
     var wasdSprintPreview by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    // WASD 组在拖动时 item.center 是原地修改的，不会触发重组；这里用快照让外圈跟着走。
+    var wasdRingGeometry by remember { mutableStateOf<WasdRingGeometry?>(null) }
     var configuringFixedKey by remember { mutableStateOf<DraggableItem.FixedKey?>(null) }
     var configuringVariableKey by remember { mutableStateOf<DraggableItem.VariableKey?>(null) }
     var configuringCancelableKey by remember { mutableStateOf<DraggableItem.CancelableKey?>(null) }
@@ -202,8 +207,10 @@ fun ItemsContainer(
     ) {
         // 编辑态显示 WASD 的普通 / 疾跑半径圈，方便对照 Shift 位移设置是否合理。
         if (editing) {
-            containerItems.filterIsInstance<DraggableItem.WASDGroup>().firstOrNull()?.let {
-                WasdRadiusRings(it, wasdSprintPreview)
+            val wasdGroup = containerItems.filterIsInstance<DraggableItem.WASDGroup>().firstOrNull()
+            val ring = wasdRingGeometry
+            if (wasdGroup != null && ring != null) {
+                WasdRadiusRings(wasdGroup, ring, wasdSprintPreview)
             }
         }
         // 鼠标双范围：大方形限制视角触点的活动范围，小方形决定每次回中的随机落点。
@@ -211,7 +218,7 @@ fun ItemsContainer(
         if (editing || showAdvancedMarkers) {
             val areaAlpha = if (!editing) 0.6f else if (advancedLayerActive) 1f else 0.22f
             mouseMoveAreaCenter?.let { c ->
-                MouseAreaBox(
+                MouseAreaBlob(
                     center = c,
                     half = mouseMoveAreaHalf,
                     label = "鼠标范围",
@@ -349,6 +356,12 @@ fun ItemsContainer(
                                     item.a = Offset(layoutX, item.center.y)
                                     item.s = Offset(item.center.x, layoutY + coordinates.size.height * scale)
                                     item.d = Offset(layoutX + coordinates.size.width * scale, item.center.y)
+                                    // 拖动/缩放时同步外圈几何，避免大外圈停留在旧位置。
+                                    wasdRingGeometry = WasdRingGeometry(
+                                        center = item.center,
+                                        normalRx = abs(item.d.x - item.center.x).coerceAtLeast(1f),
+                                        normalRy = abs(item.w.y - item.center.y).coerceAtLeast(1f),
+                                    )
                                     // The joystick map is built from these four
                                     // points, but it is populated before the
                                     // first layout pass, so it would otherwise
@@ -577,7 +590,14 @@ fun ItemsContainer(
                     onDelete = {
                         onRemove(target.id)
                         configuringFixedKey = null
-                    }
+                    },
+                    anchor = shootingModeAnchor,
+                    mouseCenter = mouseMoveAreaCenter,
+                    mouseHalf = mouseMoveAreaHalf,
+                    landingCenter = landingAreaCenter,
+                    landingHalf = landingAreaHalf,
+                    onMouseAreaChange = onMouseAreaChange,
+                    onLandingAreaChange = onLandingAreaChange,
                 )
             } else {
                 KeyCaptureDialog(
@@ -696,7 +716,15 @@ fun ShootingModeKeyDialog(
     currentKeyCode: Int,
     onConfirm: (Int) -> Unit,
     onDismiss: () -> Unit,
-    onDelete: (() -> Unit)? = null
+    onDelete: (() -> Unit)? = null,
+    /** ` 按钮的本地中心，以及当前双范围，用于在齿轮里按相对偏移调整。 */
+    anchor: Offset? = null,
+    mouseCenter: Offset? = null,
+    mouseHalf: Float = 0f,
+    landingCenter: Offset? = null,
+    landingHalf: Float = 0f,
+    onMouseAreaChange: ((Offset, Float) -> Unit)? = null,
+    onLandingAreaChange: ((Offset, Float) -> Unit)? = null,
 ) {
     var selected by remember { mutableStateOf(currentKeyCode) }
     InlineDialog(onDismiss = onDismiss) {
@@ -738,6 +766,50 @@ fun ShootingModeKeyDialog(
                     text = stringResource(R.string.shooting_mode_key_mmb),
                     modifier = Modifier.padding(start = 4.dp)
                 )
+            }
+        }
+        if (anchor != null && mouseCenter != null && onMouseAreaChange != null) {
+            val bigAnchor = anchor
+            val bigCurrent = mouseCenter
+            val smallCurrent = landingCenter ?: mouseCenter
+            var bigOx by remember(bigAnchor, bigCurrent) { mutableFloatStateOf(bigCurrent.x - bigAnchor.x) }
+            var bigOy by remember(bigAnchor, bigCurrent) { mutableFloatStateOf(bigCurrent.y - bigAnchor.y) }
+            var bigHalfValue by remember(mouseHalf) { mutableFloatStateOf(mouseHalf) }
+            var smallOx by remember(bigAnchor, smallCurrent) { mutableFloatStateOf(smallCurrent.x - bigAnchor.x) }
+            var smallOy by remember(bigAnchor, smallCurrent) { mutableFloatStateOf(smallCurrent.y - bigAnchor.y) }
+            var smallHalfValue by remember(landingHalf) { mutableFloatStateOf(landingHalf) }
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                Text("鼠标范围（相对 ` 的偏移）", style = MaterialTheme.typography.titleSmall)
+                MouseRangeSlider("横向偏移", bigOx, -600f..600f) {
+                    bigOx = it
+                    onMouseAreaChange(bigAnchor + Offset(bigOx, bigOy), bigHalfValue)
+                }
+                MouseRangeSlider("纵向偏移", bigOy, -600f..600f) {
+                    bigOy = it
+                    onMouseAreaChange(bigAnchor + Offset(bigOx, bigOy), bigHalfValue)
+                }
+                MouseRangeSlider("大小（半边长）", bigHalfValue, 40f..700f) {
+                    bigHalfValue = it
+                    onMouseAreaChange(bigAnchor + Offset(bigOx, bigOy), bigHalfValue)
+                }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                Text("回中随机落点（小方形）", style = MaterialTheme.typography.titleSmall)
+                MouseRangeSlider("横向偏移", smallOx, -600f..600f) {
+                    smallOx = it
+                    onLandingAreaChange?.invoke(bigAnchor + Offset(smallOx, smallOy), smallHalfValue)
+                }
+                MouseRangeSlider("纵向偏移", smallOy, -600f..600f) {
+                    smallOy = it
+                    onLandingAreaChange?.invoke(bigAnchor + Offset(smallOx, smallOy), smallHalfValue)
+                }
+                MouseRangeSlider("大小（半边长）", smallHalfValue, 8f..400f) {
+                    smallHalfValue = it
+                    onLandingAreaChange?.invoke(bigAnchor + Offset(smallOx, smallOy), smallHalfValue)
+                }
             }
         }
         Row(
@@ -1321,6 +1393,104 @@ fun MenuItems(
 /** 丢弃点竖条尺寸：宽:高 ≈ 1:5。 */
 private const val DISCARD_BAR_WIDTH_DP = 36
 private const val DISCARD_BAR_HEIGHT_DP = 180
+@Composable
+private fun MouseRangeSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    onChange: (Float) -> Unit,
+) {
+    Text(
+        text = "$label：${value.roundToInt()} px",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Slider(
+        value = value.coerceIn(range),
+        onValueChange = onChange,
+        valueRange = range,
+    )
+}
+
+/**
+ * 高级层的鼠标活动范围：按手绘不规则轮廓绘制，拖框体移动中心，拖右下角改变半边长。
+ * 与正方形相比更接近真人手部扫过的范围。
+ */
+@Composable
+private fun MouseAreaBlob(
+    center: Offset,
+    half: Float,
+    label: String,
+    color: Color,
+    alpha: Float,
+    enabled: Boolean,
+    onCommit: (Offset, Float) -> Unit,
+) {
+    if (half <= 0f) return
+    val density = LocalDensity.current
+    var pos by remember(center) { mutableStateOf(center) }
+    var size by remember(half) { mutableFloatStateOf(half) }
+    Box(
+        modifier = Modifier
+            .offset { IntOffset((pos.x - size).roundToInt(), (pos.y - size).roundToInt()) }
+            .size(with(density) { (size * 2f).toDp() })
+            .alpha(alpha)
+            .drawBehind {
+                val shape = EventHandler.MOUSE_AREA_SHAPE
+                val count = shape.size / 2
+                val stroke = 1.6.dp.toPx()
+                for (i in 0 until count) {
+                    val j = (i + 1) % count
+                    drawLine(
+                        color = color,
+                        start = Offset(
+                            (shape[i * 2] + 1f) / 2f * this.size.width,
+                            (shape[i * 2 + 1] + 1f) / 2f * this.size.height,
+                        ),
+                        end = Offset(
+                            (shape[j * 2] + 1f) / 2f * this.size.width,
+                            (shape[j * 2 + 1] + 1f) / 2f * this.size.height,
+                        ),
+                        strokeWidth = stroke,
+                    )
+                }
+            }
+            .pointerInput(pos, size, enabled) {
+                if (!enabled) return@pointerInput
+                detectDragGestures(
+                    onDrag = { change, drag ->
+                        change.consume()
+                        pos += drag
+                    },
+                    onDragEnd = { onCommit(pos, size) },
+                )
+            }
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            fontSize = 9.sp,
+            color = color,
+            modifier = Modifier.padding(2.dp),
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .size(18.dp)
+                .background(color.copy(alpha = 0.35f), RoundedCornerShape(3.dp))
+                .pointerInput(enabled) {
+                    if (!enabled) return@pointerInput
+                    detectDragGestures(
+                        onDrag = { change, drag ->
+                            change.consume()
+                            size = (size + max(drag.x, drag.y)).coerceIn(8f, 4000f)
+                        },
+                        onDragEnd = { onCommit(pos, size) },
+                    )
+                }
+        )
+    }
+}
+
 /** 光标落点标记尺寸；拖到屏幕中心这么近就视为恢复默认。 */
 private const val CURSOR_SPAWN_MARKER_DP = 56
 private const val CURSOR_SPAWN_SNAP_BACK_DP = 40
@@ -1420,11 +1590,21 @@ private fun MenuCell(
 }
 
 
+private data class WasdRingGeometry(
+    val center: Offset,
+    val normalRx: Float,
+    val normalRy: Float,
+)
+
 @Composable
-private fun WasdRadiusRings(item: DraggableItem.WASDGroup, preview: Pair<Float, Float>? = null) {
-    val center = item.center
-    val normalRx = abs(item.d.x - center.x).coerceAtLeast(1f)
-    val normalRy = abs(item.w.y - center.y).coerceAtLeast(1f)
+private fun WasdRadiusRings(
+    item: DraggableItem.WASDGroup,
+    geometry: WasdRingGeometry,
+    preview: Pair<Float, Float>? = null,
+) {
+    val center = geometry.center
+    val normalRx = geometry.normalRx.coerceAtLeast(1f)
+    val normalRy = geometry.normalRy.coerceAtLeast(1f)
     val sprintRx = (preview?.second ?: item.sprintSideDistance ?: (normalRx * item.sprintScale))
         .coerceAtLeast(1f)
     val sprintRy = (preview?.first ?: item.sprintForwardDistance ?: (normalRy * item.sprintScale))
