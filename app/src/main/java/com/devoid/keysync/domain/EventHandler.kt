@@ -1505,10 +1505,11 @@ class EventHandler(
     }
 
     /**
-     * 溢出量补发：累计超出活动范围约 30% 才回中一次，小溢出直接忽略。
+     * 溢出量补发：一旦顶到边界就立刻回中，不在边界上等一段距离。
      *
-     * 之前是每 50ms 无条件补一段，区域稍小就会形成 20Hz 的「抬手—重按」节拍，
-     * 表现为一顿一顿。现在只有累计溢出达到阈值才回中，正常移动时几乎无感。
+     * 之前设 30% 阈值时，持续朝一个方向转会在边界「冻结」到累计够 30% 才回中，
+     * 表现为转一下停一下、然后突然补一大跳。现在只要溢出超过约 2px 就回中，
+     * 视角几乎不会停；单次落点靠向对侧边缘，连续行程最长，抬按频率也不会变高。
      */
     private fun scheduleAimOverflowDrain() {
         if (overflowDrainJob?.isActive == true) return
@@ -1532,23 +1533,14 @@ class EventHandler(
                 drainAimOverflowOnce(id)
                 segments++
             }
-            // 低于阈值的残差直接丢掉：为几像素再抬一次指不划算，也更容易顿。
+            // 只留下不到 2px 的残差，直接丢掉，避免无意义地再抬一次指。
             if (!shouldRecenterForOverflow()) pendingAimOverflow = Offset.Zero
         }
     }
 
-    /** 溢出是否已经值得回中一次：默认 30% 半宽，且不低于 24px。 */
-    private fun shouldRecenterForOverflow(): Boolean {
-        val length = pendingAimOverflow.getDistance()
-        if (length <= 0.5f) return false
-        val half = mouseAreaHalfSize
-        val threshold = if (half > 0f) {
-            (half * AIM_RECENTER_OVERFLOW_RATIO).coerceAtLeast(AIM_RECENTER_MIN_OVERFLOW_PX)
-        } else {
-            AIM_RECENTER_MIN_OVERFLOW_PX * 2f
-        }
-        return length >= threshold
-    }
+    /** 溢出是否已经值得回中一次：只要确实顶到边界（约 2px）就立刻回中。 */
+    private fun shouldRecenterForOverflow(): Boolean =
+        pendingAimOverflow.getDistance() >= AIM_RECENTER_MIN_OVERFLOW_PX
 
     /**
      * 空闲后重新落指：抬指 → 在小方框内随机重按。
@@ -1696,13 +1688,13 @@ class EventHandler(
             )
         } else fallback
         // 朝溢出方向的反方向偏移：向左转时落到右侧，可用行程接近整个直径，
-        // 回中次数大约减半。小方框仍负责落点的随机抖动，偏移后仍钳在大范围内。
+        // 回中次数大约减半。落点尽量靠对侧边缘，单次回中能换来最长的连续行程。
         val length = direction.getDistance()
         if (length > 1f) {
             val unit = direction / length
             val areaHalf = mouseAreaHalfSize
             if (areaHalf > 0f) {
-                val bias = areaHalf * (0.55f + Random.nextFloat() * 0.10f)
+                val bias = areaHalf * (0.78f + Random.nextFloat() * 0.12f)
                 point -= unit * bias
             }
         }
@@ -2116,10 +2108,8 @@ class EventHandler(
         const val TRANSITION_SEGMENT_PX = 34f
         /** 越界溢出的最大缓存倍数（相对活动范围半宽）。 */
         const val MAX_AIM_OVERFLOW_FACTOR = 4f
-        /** 累计溢出达到活动范围半宽的 30% 才回中一次。 */
-        const val AIM_RECENTER_OVERFLOW_RATIO = 0.30f
-        /** 阈值下限（px），避免范围很小时回中过于频繁。 */
-        const val AIM_RECENTER_MIN_OVERFLOW_PX = 24f
+        /** 累计溢出达到该值（px）就立刻回中，不在边界上「干等」一段距离。 */
+        const val AIM_RECENTER_MIN_OVERFLOW_PX = 2f
         /** 一次甩动最多补发多少段，防止异常残差导致无限抬按。 */
         const val MAX_OVERFLOW_SEGMENTS = 12
         /** 射击模式空闲多久后，下次移动前重新落指（模拟真人抬手换位置）。 */
