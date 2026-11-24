@@ -95,6 +95,7 @@ import androidx.lifecycle.LifecycleRegistry
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
+import androidx.compose.ui.platform.LocalConfiguration
 import com.devoid.keysync.R
 import com.devoid.keysync.ui.MouseInputPicker
 import com.devoid.keysync.ui.touchModeColor
@@ -716,15 +717,21 @@ private fun InlineDialog(
             .clickable(onClick = onDismiss),
         contentAlignment = Alignment.Center
     ) {
+        // 横屏高度有限，射击模式设置项又比较多；限高 + 可滚动，
+        // 否则底部的「空闲重锚 / 瞄准回中预设」会被挤出屏幕，用户根本看不到。
         Surface(
             modifier = Modifier
                 .widthIn(max = 320.dp)
+                .heightIn(max = LocalConfiguration.current.screenHeightDp.dp * 0.92f)
                 .clickable(onClick = {}),
             shape = MaterialTheme.shapes.medium,
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 8.dp
         ) {
-            Column(content = content)
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                content = content,
+            )
         }
     }
 }
