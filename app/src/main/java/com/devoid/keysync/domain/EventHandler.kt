@@ -875,6 +875,9 @@ class EventHandler(
     private var lastAimMoveTime = 0L
     var aimIdleReanchorMs: Long = AIM_IDLE_REANCHOR_MS
 
+    /** 当前瞄准回中预设，参数集中在 [AimRecenterMode]，可在设置里随时切换。 */
+    var aimRecenterMode: AimRecenterMode = AimRecenterMode.INSTANT
+
     // 屏幕尺寸（width, height），由 FloatingWindowStateManager 注入。为 0 时退化为
     // 不回中（保持旧行为），避免在未初始化时误判越界。
     var screenSize: Offset = Offset.Zero
@@ -1466,16 +1469,29 @@ class EventHandler(
             }
             val overflow = requested - clamped
             if (overflow != Offset.Zero) {
-                // 反向移动时清掉上一方向的待补溢出，避免鼠标已经往回走、
-                // 视角还在补之前那一下。
-                if (pendingAimOverflow != Offset.Zero &&
-                    position.x * pendingAimOverflow.x + position.y * pendingAimOverflow.y < 0f
-                ) {
+                if (aimRecenterMode == AimRecenterMode.CLASSIC) {
+                    // 经典：顶边立刻在当前回调里同步回中，溢出直接丢弃，
+                    // 不缓存、不补跳、不走协程——最接近早期版本的手感。
                     pendingAimOverflow = Offset.Zero
+                    if (now - lastRecenterTime >= recenterMinIntervalMs) {
+                        val landing = clampAimToBounds(aimCenter)
+                        eventInjector.releasePointer(pointerId)
+                        eventInjector.injectPointer(pointerId, landing)
+                        aimPosition = landing
+                        lastRecenterTime = now
+                    }
+                } else {
+                    // 反向移动时清掉上一方向的待补溢出，避免鼠标已经往回走、
+                    // 视角还在补之前那一下。
+                    if (pendingAimOverflow != Offset.Zero &&
+                        position.x * pendingAimOverflow.x + position.y * pendingAimOverflow.y < 0f
+                    ) {
+                        pendingAimOverflow = Offset.Zero
+                    }
+                    // 超出边界的部分不丢：累计到当前预设的阈值后再回中补发。
+                    pendingAimOverflow = capAimOverflow(pendingAimOverflow + overflow)
+                    scheduleAimOverflowDrain()
                 }
-                // 超出边界的部分不丢：累计到阈值后再回中补发。
-                pendingAimOverflow = capAimOverflow(pendingAimOverflow + overflow)
-                scheduleAimOverflowDrain()
             }
             return true
         }
@@ -1505,11 +1521,11 @@ class EventHandler(
     }
 
     /**
-     * 溢出量补发：一旦顶到边界就立刻回中，不在边界上等一段距离。
+     * 溢出量补发（INSTANT / BUFFERED 预设共用）。
      *
-     * 之前设 30% 阈值时，持续朝一个方向转会在边界「冻结」到累计够 30% 才回中，
-     * 表现为转一下停一下、然后突然补一大跳。现在只要溢出超过约 2px 就回中，
-     * 视角几乎不会停；单次落点靠向对侧边缘，连续行程最长，抬按频率也不会变高。
+     * 达到当前预设的阈值就回中补发：INSTANT 约 2px，顶边立刻回中；
+     * BUFFERED 约 30% 半宽，抬指次数少但顶边时会短暂停一下。
+     * CLASSIC 不走这里，在移动回调里同步回中并丢弃溢出。
      */
     private fun scheduleAimOverflowDrain() {
         if (overflowDrainJob?.isActive == true) return
@@ -1538,9 +1554,9 @@ class EventHandler(
         }
     }
 
-    /** 溢出是否已经值得回中一次：只要确实顶到边界（约 2px）就立刻回中。 */
+    /** 溢出是否已达到当前预设的回中阈值（具体数值见 [AimRecenterMode]）。 */
     private fun shouldRecenterForOverflow(): Boolean =
-        pendingAimOverflow.getDistance() >= AIM_RECENTER_MIN_OVERFLOW_PX
+        pendingAimOverflow.getDistance() >= aimRecenterMode.overflowThresholdPx(mouseAreaHalfSize)
 
     /**
      * 空闲后重新落指：抬指 → 在小方框内随机重按。
@@ -1694,7 +1710,7 @@ class EventHandler(
             val unit = direction / length
             val areaHalf = mouseAreaHalfSize
             if (areaHalf > 0f) {
-                val bias = areaHalf * (0.78f + Random.nextFloat() * 0.12f)
+                val bias = areaHalf * aimRecenterMode.landingBiasRatio(Random.nextFloat())
                 point -= unit * bias
             }
         }
@@ -2108,8 +2124,6 @@ class EventHandler(
         const val TRANSITION_SEGMENT_PX = 34f
         /** 越界溢出的最大缓存倍数（相对活动范围半宽）。 */
         const val MAX_AIM_OVERFLOW_FACTOR = 4f
-        /** 累计溢出达到该值（px）就立刻回中，不在边界上「干等」一段距离。 */
-        const val AIM_RECENTER_MIN_OVERFLOW_PX = 2f
         /** 一次甩动最多补发多少段，防止异常残差导致无限抬按。 */
         const val MAX_OVERFLOW_SEGMENTS = 12
         /** 射击模式空闲多久后，下次移动前重新落指（模拟真人抬手换位置）。 */

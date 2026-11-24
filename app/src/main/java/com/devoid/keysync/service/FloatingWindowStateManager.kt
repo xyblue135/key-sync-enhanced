@@ -21,6 +21,7 @@ import com.devoid.keysync.data.local.ProfilesLoad
 import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.DraggableItemType
+import com.devoid.keysync.domain.AimRecenterMode
 import com.devoid.keysync.domain.MouseButtonTracker
 import com.devoid.keysync.domain.ScrollTracker
 import com.devoid.keysync.domain.mouseButtonKeyCode
@@ -247,6 +248,8 @@ class FloatingWindowStateManager @Inject constructor(
     val landingAreaCenter = MutableStateFlow(Offset.Zero)
     /** 射击模式空闲重锚阈值（ms）：停手超过该时间后，下次移动前重新落指；0 = 关闭。 */
     val aimIdleReanchorMs = MutableStateFlow(DEFAULT_AIM_IDLE_REANCHOR_MS)
+    /** 瞄准回中预设（经典 / 即回中 / 缓冲补发），随时切换，互不干扰。 */
+    val aimRecenterMode = MutableStateFlow(AimRecenterMode.INSTANT)
     private var mouseAreaCustomized = false
     /** 悬浮窗原点（屏幕坐标），供高级层把双范围从屏幕坐标换算到本地坐标。 */
     private val _overlayOriginFlow = MutableStateFlow(Offset.Zero)
@@ -496,6 +499,10 @@ class FloatingWindowStateManager @Inject constructor(
                 (dataStoreManager.getInt(DataStoreManager.AIM_IDLE_REANCHOR_MS).first()
                     ?: DEFAULT_AIM_IDLE_REANCHOR_MS).coerceIn(MIN_AIM_IDLE_REANCHOR_MS, MAX_AIM_IDLE_REANCHOR_MS)
             eventHandler.aimIdleReanchorMs = aimIdleReanchorMs.value.toLong()
+            aimRecenterMode.value = dataStoreManager.getString(DataStoreManager.AIM_RECENTER_MODE).first()
+                ?.let { name -> runCatching { AimRecenterMode.valueOf(name) }.getOrNull() }
+                ?: AimRecenterMode.INSTANT
+            eventHandler.aimRecenterMode = aimRecenterMode.value
             fScrollUpKeyCode.value =
                 dataStoreManager.getInt(DataStoreManager.F_SCROLL_UP_KEY_CODE).first()
                     ?: KEYCODE_SCROLL_UP
@@ -1543,6 +1550,13 @@ class FloatingWindowStateManager @Inject constructor(
         aimIdleReanchorMs.value = safe
         eventHandler.aimIdleReanchorMs = safe.toLong()
         scope.launch { dataStoreManager.save(DataStoreManager.AIM_IDLE_REANCHOR_MS, safe) }
+    }
+
+    /** 切换瞄准回中预设；旧值或非法值回落到 INSTANT，保证兼容。 */
+    fun setAimRecenterMode(mode: AimRecenterMode) {
+        aimRecenterMode.value = mode
+        eventHandler.aimRecenterMode = mode
+        scope.launch { dataStoreManager.save(DataStoreManager.AIM_RECENTER_MODE, mode.name) }
     }
 
     /** F 交互后左键唤出光标的窗口（100–3000ms）。 */

@@ -171,6 +171,8 @@ class DataStoreManager internal constructor(
         val LANDING_AREA_HALF = floatPreferencesKey("landing_area_half")
         /** 射击模式空闲多久后下次移动重新落指（ms），0 = 关闭，默认 1000。 */
         val AIM_IDLE_REANCHOR_MS = intPreferencesKey("aim_idle_reanchor_ms")
+        /** 瞄准回中预设（[com.devoid.keysync.domain.AimRecenterMode] 的 name）。 */
+        val AIM_RECENTER_MODE = stringPreferencesKey("aim_recenter_mode")
 
         val KEYS_CONFIG = stringPreferencesKey("keys_config")
 

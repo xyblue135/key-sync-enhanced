@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Done
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -97,6 +98,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import com.devoid.keysync.R
 import com.devoid.keysync.ui.MouseInputPicker
 import com.devoid.keysync.ui.touchModeColor
+import com.devoid.keysync.domain.AimRecenterMode
 import com.devoid.keysync.domain.EventHandler
 import com.devoid.keysync.domain.KEYCODE_MMC
 import com.devoid.keysync.model.Profile
@@ -159,6 +161,9 @@ fun ItemsContainer(
     /** 射击模式空闲多久后重新落指（ms），0 = 关闭；在 ` 的齿轮设置里调整。 */
     aimIdleReanchorMs: Int = 1000,
     onAimIdleReanchorMsChange: (Int) -> Unit = {},
+    /** 瞄准回中预设（经典 / 即回中 / 缓冲补发）。 */
+    aimRecenterMode: AimRecenterMode = AimRecenterMode.INSTANT,
+    onAimRecenterModeChange: (AimRecenterMode) -> Unit = {},
     /** 编辑态图层：true = 高级层（丢弃点可拖动，按键层半透明预览）。 */
     advancedLayerActive: Boolean = false,
     /** 运行时是否显示普通按键层（Enter 层级预览用）。 */
@@ -603,6 +608,8 @@ fun ItemsContainer(
                     onLandingAreaChange = onLandingAreaChange,
                     aimIdleReanchorMs = aimIdleReanchorMs,
                     onAimIdleReanchorMsChange = onAimIdleReanchorMsChange,
+                    aimRecenterMode = aimRecenterMode,
+                    onAimRecenterModeChange = onAimRecenterModeChange,
                 )
             } else {
                 KeyCaptureDialog(
@@ -739,6 +746,9 @@ fun ShootingModeKeyDialog(
     /** 射击模式空闲重锚阈值（ms），0 = 关闭。 */
     aimIdleReanchorMs: Int = 1000,
     onAimIdleReanchorMsChange: (Int) -> Unit = {},
+    /** 瞄准回中预设（经典 / 即回中 / 缓冲补发）。 */
+    aimRecenterMode: AimRecenterMode = AimRecenterMode.INSTANT,
+    onAimRecenterModeChange: (AimRecenterMode) -> Unit = {},
 ) {
     var selected by remember { mutableStateOf(currentKeyCode) }
     InlineDialog(onDismiss = onDismiss) {
@@ -837,6 +847,18 @@ fun ShootingModeKeyDialog(
                     onValueChange = { onAimIdleReanchorMsChange(it.roundToInt()) },
                     valueRange = 0f..5000f,
                 )
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                Text("瞄准回中预设", style = MaterialTheme.typography.titleSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    AimRecenterMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = aimRecenterMode == mode,
+                            onClick = { onAimRecenterModeChange(mode) },
+                            label = { Text(mode.displayName) },
+                        )
+                    }
+                }
+                Text(aimRecenterMode.description, style = MaterialTheme.typography.bodySmall)
             }
         }
         Row(
