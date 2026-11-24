@@ -870,6 +870,10 @@ class EventHandler(
     private var aimPosition = Offset.Zero
     private var aimCenter = Offset.Zero
 
+    // 上次射击模式移动的时间戳。空闲超过 [AIM_IDLE_REANCHOR_MS] 后，下一次移动前
+    // 先抬指重按（模拟真人换手指位置），轨迹上会自然出现断点。
+    private var lastAimMoveTime = 0L
+
     // 屏幕尺寸（width, height），由 FloatingWindowStateManager 注入。为 0 时退化为
     // 不回中（保持旧行为），避免在未初始化时误判越界。
     var screenSize: Offset = Offset.Zero
@@ -1056,6 +1060,7 @@ class EventHandler(
         val center = randomLandingPoint(mapping.position)
         aimCenter = center
         aimPosition = center
+        lastAimMoveTime = 0L
         eventInjector.injectPointer(pointerId, center)
     }
 
@@ -1440,6 +1445,15 @@ class EventHandler(
         if (shootingMode) {
             val pointerId = pointerIds[shootingModeKeyCode] ?: return false
             if (!position.x.isFinite() || !position.y.isFinite()) return true
+            val now = SystemClock.uptimeMillis()
+            // 停手超过阈值再动：真人这时通常是抬手换个位置，而不是一直按着同一根
+            // 手指滑。只在第一次移动前重锚一次，产生断点；正在补溢出时不打断。
+            if (lastAimMoveTime > 0L && now - lastAimMoveTime >= AIM_IDLE_REANCHOR_MS &&
+                pendingAimOverflow == Offset.Zero && overflowDrainJob?.isActive != true
+            ) {
+                reanchorAimAfterIdle(pointerId)
+            }
+            lastAimMoveTime = now
             val previous = aimPosition
             val requested = previous + position
             val clamped = clampAimToBounds(requested)
@@ -1532,6 +1546,20 @@ class EventHandler(
             AIM_RECENTER_MIN_OVERFLOW_PX * 2f
         }
         return length >= threshold
+    }
+
+    /**
+     * 空闲后重新落指：抬指 → 在小方框内随机重按。
+     *
+     * 只发 DOWN 不发 MOVE，所以视角不会反甩；随后这次位移从新落点开始计算，
+     * 轨迹上会出现一段自然的断点，而不是一根不停的长线。
+     */
+    private fun reanchorAimAfterIdle(pointerId: Int) {
+        val landing = randomLandingPoint()
+        eventInjector.releasePointer(pointerId)
+        eventInjector.injectPointer(pointerId, landing)
+        aimCenter = landing
+        aimPosition = landing
     }
 
     /**
@@ -1732,6 +1760,7 @@ class EventHandler(
         val center = randomLandingPoint(keyMap[key]?.position ?: aimCenter)
         aimCenter = center
         aimPosition = center
+        lastAimMoveTime = 0L
         eventInjector.releasePointer(pointerId)
         eventInjector.injectPointer(pointerId, center)
     }
@@ -1740,6 +1769,7 @@ class EventHandler(
         stopWheel()
         val newState = !shootingMode
         pendingAimOverflow = Offset.Zero
+        lastAimMoveTime = 0L
         if (!newState) {
             // 退出射击模式时释放所有鼠标键对应的触点。否则「按住左键时切出鼠标」
             // 会让开火触点一直保持按下，表现为切出后仍在持续开火。
@@ -1763,6 +1793,7 @@ class EventHandler(
                     // 配置了回中范围时在小方形内随机落点，更接近真人按下的位置差异。
                     val center = randomLandingPoint(it.position)
                     lastRecenterTime = 0L
+                    lastAimMoveTime = 0L
                     aimCenter = center
                     aimPosition = center
                     eventInjector.injectPointer(pointerId, center)
@@ -2060,6 +2091,7 @@ class EventHandler(
         _shootingModeFlow.value = false
         aimPosition = Offset.Zero
         aimCenter = Offset.Zero
+        lastAimMoveTime = 0L
         pendingAimOverflow = Offset.Zero
     }
 
@@ -2088,6 +2120,8 @@ class EventHandler(
         const val AIM_RECENTER_MIN_OVERFLOW_PX = 24f
         /** 一次甩动最多补发多少段，防止异常残差导致无限抬按。 */
         const val MAX_OVERFLOW_SEGMENTS = 12
+        /** 射击模式空闲多久后，下次移动前重新落指（模拟真人抬手换位置）。 */
+        const val AIM_IDLE_REANCHOR_MS = 1000L
 
         /**
          * 鼠标活动范围的形状：按用户手绘的不规则闭合轮廓采样（归一化到 [-1, 1]），
