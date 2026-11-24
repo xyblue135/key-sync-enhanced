@@ -1450,7 +1450,14 @@ class EventHandler(
             }
             val overflow = requested - clamped
             if (overflow != Offset.Zero) {
-                // 超出边界的部分不丢：缓存下来，等回中后从新落点继续补发。
+                // 反向移动时清掉上一方向的待补溢出，避免鼠标已经往回走、
+                // 视角还在补之前那一下。
+                if (pendingAimOverflow != Offset.Zero &&
+                    position.x * pendingAimOverflow.x + position.y * pendingAimOverflow.y < 0f
+                ) {
+                    pendingAimOverflow = Offset.Zero
+                }
+                // 超出边界的部分不丢：累计到阈值后再回中补发。
                 pendingAimOverflow = capAimOverflow(pendingAimOverflow + overflow)
                 scheduleAimOverflowDrain()
             }
@@ -1481,12 +1488,18 @@ class EventHandler(
         return if (length > max) overflow * (max / length) else overflow
     }
 
-    /** 溢出量补发协程：每次回中最多补一段，用节流间隔把「分片滑动」摊到几帧里。 */
+    /**
+     * 溢出量补发：累计超出活动范围约 30% 才回中一次，小溢出直接忽略。
+     *
+     * 之前是每 50ms 无条件补一段，区域稍小就会形成 20Hz 的「抬手—重按」节拍，
+     * 表现为一顿一顿。现在只有累计溢出达到阈值才回中，正常移动时几乎无感。
+     */
     private fun scheduleAimOverflowDrain() {
         if (overflowDrainJob?.isActive == true) return
+        if (!shouldRecenterForOverflow()) return
         overflowDrainJob = humanizeScope.launch {
             var segments = 0
-            while (isActive && pendingAimOverflow != Offset.Zero && segments < MAX_OVERFLOW_SEGMENTS) {
+            while (isActive && shouldRecenterForOverflow() && segments < MAX_OVERFLOW_SEGMENTS) {
                 val wait = (recenterMinIntervalMs -
                     (SystemClock.uptimeMillis() - lastRecenterTime)).coerceAtLeast(0L)
                 if (wait > 0L) delay(wait)
@@ -1503,9 +1516,22 @@ class EventHandler(
                 drainAimOverflowOnce(id)
                 segments++
             }
-            // 防御：极端形状下投影可能产生永远排不干净的残差，达到上限直接丢弃。
-            if (segments >= MAX_OVERFLOW_SEGMENTS) pendingAimOverflow = Offset.Zero
+            // 低于阈值的残差直接丢掉：为几像素再抬一次指不划算，也更容易顿。
+            if (!shouldRecenterForOverflow()) pendingAimOverflow = Offset.Zero
         }
+    }
+
+    /** 溢出是否已经值得回中一次：默认 30% 半宽，且不低于 24px。 */
+    private fun shouldRecenterForOverflow(): Boolean {
+        val length = pendingAimOverflow.getDistance()
+        if (length <= 0.5f) return false
+        val half = mouseAreaHalfSize
+        val threshold = if (half > 0f) {
+            (half * AIM_RECENTER_OVERFLOW_RATIO).coerceAtLeast(AIM_RECENTER_MIN_OVERFLOW_PX)
+        } else {
+            AIM_RECENTER_MIN_OVERFLOW_PX * 2f
+        }
+        return length >= threshold
     }
 
     /**
@@ -1515,7 +1541,7 @@ class EventHandler(
     private fun drainAimOverflowOnce(pointerId: Int) {
         val overflow = pendingAimOverflow
         if (overflow == Offset.Zero) return
-        val landing = randomLandingPoint()
+        val landing = randomLandingPoint(direction = overflow)
         val target = clampAimToBounds(landing + overflow)
         val applied = target - landing
         eventInjector.releasePointer(pointerId)
@@ -1627,15 +1653,29 @@ class EventHandler(
      * 设置了「小方形」时在范围内均匀随机取点（更接近真人每次落指的位置差异），
      * 否则用 [fallback]；结果仍受大方形活动范围约束。
      */
-    private fun randomLandingPoint(fallback: Offset = aimCenter): Offset {
+    private fun randomLandingPoint(
+        fallback: Offset = aimCenter,
+        direction: Offset = Offset.Zero,
+    ): Offset {
         val half = landingAreaHalfSize
-        val point = if (half > 0.5f) {
+        var point = if (half > 0.5f) {
             val c = landingAreaCenter
             Offset(
                 c.x + (Random.nextFloat() * 2f - 1f) * half,
                 c.y + (Random.nextFloat() * 2f - 1f) * half
             )
         } else fallback
+        // 朝溢出方向的反方向偏移：向左转时落到右侧，可用行程接近整个直径，
+        // 回中次数大约减半。小方框仍负责落点的随机抖动，偏移后仍钳在大范围内。
+        val length = direction.getDistance()
+        if (length > 1f) {
+            val unit = direction / length
+            val areaHalf = mouseAreaHalfSize
+            if (areaHalf > 0f) {
+                val bias = areaHalf * (0.55f + Random.nextFloat() * 0.10f)
+                point -= unit * bias
+            }
+        }
         return clampAimToBounds(point)
     }
 
@@ -2042,6 +2082,10 @@ class EventHandler(
         const val TRANSITION_SEGMENT_PX = 34f
         /** 越界溢出的最大缓存倍数（相对活动范围半宽）。 */
         const val MAX_AIM_OVERFLOW_FACTOR = 4f
+        /** 累计溢出达到活动范围半宽的 30% 才回中一次。 */
+        const val AIM_RECENTER_OVERFLOW_RATIO = 0.30f
+        /** 阈值下限（px），避免范围很小时回中过于频繁。 */
+        const val AIM_RECENTER_MIN_OVERFLOW_PX = 24f
         /** 一次甩动最多补发多少段，防止异常残差导致无限抬按。 */
         const val MAX_OVERFLOW_SEGMENTS = 12
 
