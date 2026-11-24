@@ -245,6 +245,8 @@ class FloatingWindowStateManager @Inject constructor(
     /** 派生的绝对中心，供事件处理器与悬浮层使用。 */
     val mouseAreaCenter = MutableStateFlow(Offset.Zero)
     val landingAreaCenter = MutableStateFlow(Offset.Zero)
+    /** 射击模式空闲重锚阈值（ms）：停手超过该时间后，下次移动前重新落指；0 = 关闭。 */
+    val aimIdleReanchorMs = MutableStateFlow(DEFAULT_AIM_IDLE_REANCHOR_MS)
     private var mouseAreaCustomized = false
     /** 悬浮窗原点（屏幕坐标），供高级层把双范围从屏幕坐标换算到本地坐标。 */
     private val _overlayOriginFlow = MutableStateFlow(Offset.Zero)
@@ -490,6 +492,10 @@ class FloatingWindowStateManager @Inject constructor(
             escAfterTapIntervalMs.value =
                 (dataStoreManager.getInt(DataStoreManager.ESC_AFTER_TAP_INTERVAL_MS).first()
                     ?: DEFAULT_ESC_AFTER_TAP_INTERVAL_MS).coerceIn(0, 500)
+            aimIdleReanchorMs.value =
+                (dataStoreManager.getInt(DataStoreManager.AIM_IDLE_REANCHOR_MS).first()
+                    ?: DEFAULT_AIM_IDLE_REANCHOR_MS).coerceIn(MIN_AIM_IDLE_REANCHOR_MS, MAX_AIM_IDLE_REANCHOR_MS)
+            eventHandler.aimIdleReanchorMs = aimIdleReanchorMs.value.toLong()
             fScrollUpKeyCode.value =
                 dataStoreManager.getInt(DataStoreManager.F_SCROLL_UP_KEY_CODE).first()
                     ?: KEYCODE_SCROLL_UP
@@ -769,6 +775,10 @@ class FloatingWindowStateManager @Inject constructor(
         const val DEFAULT_ESC_AFTER_TAP_DELAY_MS = 100
         /** ESC 后多个落点之间的间隔（ms）默认值。 */
         const val DEFAULT_ESC_AFTER_TAP_INTERVAL_MS = 50
+        /** 射击模式空闲重锚阈值（ms）默认值与范围；0 = 关闭。 */
+        const val DEFAULT_AIM_IDLE_REANCHOR_MS = 1000
+        const val MIN_AIM_IDLE_REANCHOR_MS = 0
+        const val MAX_AIM_IDLE_REANCHOR_MS = 5000
         /** 光标渲染刷新率默认 60Hz，可调 15–144Hz；只影响显示。 */
         const val DEFAULT_CURSOR_RENDER_HZ = 60
         const val MIN_CURSOR_RENDER_HZ = 15
@@ -1525,6 +1535,14 @@ class FloatingWindowStateManager @Inject constructor(
         val safe = ms.coerceIn(0, 500)
         escAfterTapIntervalMs.value = safe
         scope.launch { dataStoreManager.save(DataStoreManager.ESC_AFTER_TAP_INTERVAL_MS, safe) }
+    }
+
+    /** 射击模式空闲重锚阈值（0–5000ms），0 = 关闭。 */
+    fun setAimIdleReanchorMs(ms: Int) {
+        val safe = ms.coerceIn(MIN_AIM_IDLE_REANCHOR_MS, MAX_AIM_IDLE_REANCHOR_MS)
+        aimIdleReanchorMs.value = safe
+        eventHandler.aimIdleReanchorMs = safe.toLong()
+        scope.launch { dataStoreManager.save(DataStoreManager.AIM_IDLE_REANCHOR_MS, safe) }
     }
 
     /** F 交互后左键唤出光标的窗口（100–3000ms）。 */

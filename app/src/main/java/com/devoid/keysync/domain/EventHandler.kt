@@ -870,9 +870,10 @@ class EventHandler(
     private var aimPosition = Offset.Zero
     private var aimCenter = Offset.Zero
 
-    // 上次射击模式移动的时间戳。空闲超过 [AIM_IDLE_REANCHOR_MS] 后，下一次移动前
-    // 先抬指重按（模拟真人换手指位置），轨迹上会自然出现断点。
+    // 上次射击模式移动的时间戳。空闲超过 [aimIdleReanchorMs] 后，下一次移动前
+    // 先抬指重按（模拟真人换手指位置），轨迹上会自然出现断点；0 = 关闭。
     private var lastAimMoveTime = 0L
+    var aimIdleReanchorMs: Long = AIM_IDLE_REANCHOR_MS
 
     // 屏幕尺寸（width, height），由 FloatingWindowStateManager 注入。为 0 时退化为
     // 不回中（保持旧行为），避免在未初始化时误判越界。
@@ -1448,7 +1449,8 @@ class EventHandler(
             val now = SystemClock.uptimeMillis()
             // 停手超过阈值再动：真人这时通常是抬手换个位置，而不是一直按着同一根
             // 手指滑。只在第一次移动前重锚一次，产生断点；正在补溢出时不打断。
-            if (lastAimMoveTime > 0L && now - lastAimMoveTime >= AIM_IDLE_REANCHOR_MS &&
+            if (aimIdleReanchorMs > 0L && lastAimMoveTime > 0L &&
+                now - lastAimMoveTime >= aimIdleReanchorMs &&
                 pendingAimOverflow == Offset.Zero && overflowDrainJob?.isActive != true
             ) {
                 reanchorAimAfterIdle(pointerId)

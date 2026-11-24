@@ -156,6 +156,9 @@ fun ItemsContainer(
     shootingModeAnchor: Offset? = null,
     onMouseAreaChange: (Offset, Float) -> Unit = { _, _ -> },
     onLandingAreaChange: (Offset, Float) -> Unit = { _, _ -> },
+    /** 射击模式空闲多久后重新落指（ms），0 = 关闭；在 ` 的齿轮设置里调整。 */
+    aimIdleReanchorMs: Int = 1000,
+    onAimIdleReanchorMsChange: (Int) -> Unit = {},
     /** 编辑态图层：true = 高级层（丢弃点可拖动，按键层半透明预览）。 */
     advancedLayerActive: Boolean = false,
     /** 运行时是否显示普通按键层（Enter 层级预览用）。 */
@@ -598,6 +601,8 @@ fun ItemsContainer(
                     landingHalf = landingAreaHalf,
                     onMouseAreaChange = onMouseAreaChange,
                     onLandingAreaChange = onLandingAreaChange,
+                    aimIdleReanchorMs = aimIdleReanchorMs,
+                    onAimIdleReanchorMsChange = onAimIdleReanchorMsChange,
                 )
             } else {
                 KeyCaptureDialog(
@@ -731,6 +736,9 @@ fun ShootingModeKeyDialog(
     landingHalf: Float = 0f,
     onMouseAreaChange: ((Offset, Float) -> Unit)? = null,
     onLandingAreaChange: ((Offset, Float) -> Unit)? = null,
+    /** 射击模式空闲重锚阈值（ms），0 = 关闭。 */
+    aimIdleReanchorMs: Int = 1000,
+    onAimIdleReanchorMsChange: (Int) -> Unit = {},
 ) {
     var selected by remember { mutableStateOf(currentKeyCode) }
     InlineDialog(onDismiss = onDismiss) {
@@ -816,6 +824,19 @@ fun ShootingModeKeyDialog(
                     smallHalfValue = it
                     onLandingAreaChange?.invoke(bigAnchor + Offset(smallOx, smallOy), smallHalfValue)
                 }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                Text("空闲重锚", style = MaterialTheme.typography.titleSmall)
+                val idleMs = aimIdleReanchorMs.coerceIn(0, 5000)
+                Text(
+                    text = if (idleMs <= 0) "关闭：一直沿用原位置"
+                    else "停手 ${idleMs}ms 后重新落指（轨迹出现断点）",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Slider(
+                    value = idleMs.toFloat(),
+                    onValueChange = { onAimIdleReanchorMsChange(it.roundToInt()) },
+                    valueRange = 0f..5000f,
+                )
             }
         }
         Row(
