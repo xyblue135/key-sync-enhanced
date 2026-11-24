@@ -772,7 +772,7 @@ class FloatingWindowStateManager @Inject constructor(
         /** 光标渲染刷新率默认 60Hz，可调 15–144Hz；只影响显示。 */
         const val DEFAULT_CURSOR_RENDER_HZ = 60
         const val MIN_CURSOR_RENDER_HZ = 15
-        const val MAX_CURSOR_RENDER_HZ = 144
+        const val MAX_CURSOR_RENDER_HZ = 240
         /** Alt+D 拖拽：单程分几步、每步间隔（ms）；12 步 × 14ms ≈ 170ms。 */
         const val DRAG_STEPS = 12
         const val DRAG_STEP_MS = 14L

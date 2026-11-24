@@ -765,7 +765,7 @@ class FloatingBubbleService : Service() {
                 // 光标显示按自定义刷新率采样，逻辑坐标仍全速更新，避免每个鼠标事件都重绘全屏层。
                 val pointerOffsetFlow = stateManager.get().pointerOffset
                 val pointerOffset by remember(pointerOffsetFlow, cursorRenderHz) {
-                    pointerOffsetFlow.sample(1000L / cursorRenderHz.coerceIn(15, 144))
+                    pointerOffsetFlow.sample(1000L / cursorRenderHz.coerceIn(15, 240))
                 }.collectAsState(initial = stateManager.get().currentPointerOffset())
                 val keysConfig by stateManager.get().keysConfig.collectAsState()
                 val keysVisible by stateManager.get().keysVisible.collectAsState()

@@ -467,13 +467,13 @@ fun SettingsScreen(
                         Text("${cursorRenderHz} Hz")
                     }
                     Slider(
-                        value = cursorRenderHz.toFloat().coerceIn(15f, 144f),
-                        valueRange = 15f..144f,
+                        value = cursorRenderHz.toFloat().coerceIn(15f, 240f),
+                        valueRange = 15f..240f,
                         onValueChange = { onSetCursorRenderHz(it.roundToInt()) }
                     )
                     Text(
-                        "默认 60Hz。只影响光标的显示刷新，鼠标坐标、点击、滚轮和宏仍全速处理；" +
-                            "调低可减少悬浮层重绘、缓解偶发掉帧，调高更跟手。",
+                        "默认 60Hz。只影响光标圆点的显示刷新；鼠标坐标、视角、点击、滚轮和宏始终按事件全速注入，" +
+                            "不受这个值限制。上限 240Hz，实际还受屏幕刷新率限制；调低可减少悬浮层重绘。",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
