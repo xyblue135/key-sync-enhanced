@@ -542,13 +542,18 @@ class EventHandler(
         val startRadius = (start - center).getDistance()
         val endRadius = (end - center).getDistance()
         val hasRadius = startRadius > 1f && endRadius > 1f
+        // A↔D / W↔S 这类接近 180° 的反向切换不能贴外圈走：
+        // 贴圈会经过正上/正下（或正左/正右），表现为「横移时突然往前窜一下」。
+        // 反向切换改为穿过中心附近、只带 5%–9% 半径侧弯的浅弧，既不是直线也不会甩出去。
+        val opposite = turn >= OPPOSITE_TURN_RAD
         // 有半径且不是同向推杆时才贴圈画弧；从中心起按仍是贝塞尔，但弯得更明显。
-        val useArc = hasRadius && turn >= SMALL_TURN_RAD
+        val useArc = hasRadius && turn >= SMALL_TURN_RAD && !opposite
         val bowSign = if (Random.nextBoolean()) 1f else -1f
         // 弧线内切幅度、弯曲方向和时长每次都独立随机，避免所有回路叠成一朵对称的花。
         val arcScale = if (useArc) 0.86f + Random.nextFloat() * 0.10f else 1f
         val bowRatio = when {
             useArc -> 0f
+            opposite -> 0.10f + Random.nextFloat() * 0.08f       // 反向切换：浅弧过中心
             starting -> 0.25f + Random.nextFloat() * 0.15f        // 近处起按，弯一小段
             !hasRadius -> 0.38f + Random.nextFloat() * 0.14f      // 从中心起按
             else -> 0.22f + Random.nextFloat() * 0.20f            // Shift 推杆/同轴换向
@@ -566,7 +571,13 @@ class EventHandler(
             .toInt().coerceIn(6, 18)
         // 大换向略延长过渡，让弧线有足够时间铺开；再叠 ±15% 时长抖动，
         // 避免每段花瓣的节奏完全一致；仍在可调范围内。
-        val duration = (baseDuration * (1f + 0.35f * (turn / PI)) *
+        // 反向切换（A↔D）要跟手，不额外拉长，反而略快一点。
+        val turnScale: Float = if (opposite) {
+            0.85f + Random.nextFloat() * 0.20f
+        } else {
+            (1f + 0.35f * (turn / PI)).toFloat()
+        }
+        val duration = (baseDuration * turnScale *
             (0.85f + Random.nextFloat() * 0.30f)).toInt()
             .coerceIn(MIN_WASD_TRANSITION_MS, MAX_WASD_TRANSITION_MS)
         wasdTransitionJob = humanizeScope.launch {
@@ -2025,6 +2036,8 @@ class EventHandler(
 
         /** 转角超过该值（约 34°）且两端都在摇杆半径上时，换向贴外圈画圆弧。 */
         const val SMALL_TURN_RAD = 0.6f
+        /** 接近反向（A↔D、W↔S）：不能贴外圈扫半圆，否则会先朝垂直方向甩出去。 */
+        const val OPPOSITE_TURN_RAD = 2.09f
         /** 过渡采样目标：每段弧长不超过约 34px，避免回放被拉成折线。 */
         const val TRANSITION_SEGMENT_PX = 34f
         /** 越界溢出的最大缓存倍数（相对活动范围半宽）。 */
