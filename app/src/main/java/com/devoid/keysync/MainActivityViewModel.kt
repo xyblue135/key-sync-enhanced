@@ -110,9 +110,11 @@ class MainActivityViewModel @Inject constructor(
     val wasdTransitTremor: StateFlow<Float> = stateManager.wasdTransitTremor
     val wasdHoldTremor: StateFlow<Float> = stateManager.wasdHoldTremor
     val wasdHoldSettleMs: StateFlow<Int> = stateManager.wasdHoldSettleMs
+    val wasdCenterJitterPx: StateFlow<Int> = stateManager.wasdCenterJitterPx
     /** 鼠标拟人化：回中节流与空闲重锚。 */
     val aimRecenterIntervalMs: StateFlow<Int> = stateManager.aimRecenterIntervalMs
     val aimIdleReanchorMs: StateFlow<Int> = stateManager.aimIdleReanchorMs
+    val fireFreeAim: StateFlow<Boolean> = stateManager.fireFreeAim
     /** 悬浮窗透明度（全局设置），设置页用；改动立即持久化。 */
     val overlayOpacity: StateFlow<Float> = stateManager.overlayOpacity
     /** 光标渲染刷新率（Hz），默认 60。 */
@@ -278,8 +280,10 @@ class MainActivityViewModel @Inject constructor(
     fun setWasdTransitTremor(value: Float) = stateManager.setWasdTransitTremor(value)
     fun setWasdHoldTremor(value: Float) = stateManager.setWasdHoldTremor(value)
     fun setWasdHoldSettleMs(value: Int) = stateManager.setWasdHoldSettleMs(value)
+    fun setWasdCenterJitterPx(value: Int) = stateManager.setWasdCenterJitterPx(value)
     fun setAimRecenterIntervalMs(value: Int) = stateManager.setAimRecenterIntervalMs(value)
     fun setAimIdleReanchorMs(value: Int) = stateManager.setAimIdleReanchorMs(value)
+    fun setFireFreeAim(enabled: Boolean) = stateManager.setFireFreeAim(enabled)
     fun setOverlayOpacity(value: Float) = stateManager.saveOverlayOpacity(value)
     fun setCursorRenderHz(hz: Int) = stateManager.setCursorRenderHz(hz)
     fun setStatusBarVisible(visible: Boolean) = stateManager.setStatusBarVisible(visible)

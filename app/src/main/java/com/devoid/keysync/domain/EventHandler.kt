@@ -430,6 +430,15 @@ class EventHandler(
     /** 到位后先静默多久再开始驻留抖动（ms），避免「还没停稳就抖」。 */
     @Volatile
     var wasdHoldSettleMs = DEFAULT_WASD_HOLD_SETTLE_MS
+
+    /**
+     * 回中落点的随机圆半径（px）。
+     *
+     * 真人每次把手指收回摇杆中心都不会落在同一个像素上，而是一个小圆范围。
+     * 0 表示严格回到几何中心（旧行为）。
+     */
+    @Volatile
+    var wasdCenterJitterPx = DEFAULT_WASD_CENTER_JITTER_PX
     private var wasdJitterJob: Job? = null
     private var wasdTransitionJob: Job? = null
     /** 松开全部方向键后的回中协程；新方向按下时会取消它，直接接弧。 */
@@ -722,7 +731,8 @@ class EventHandler(
             return
         }
         val start = joystickMotion.target
-        val center = lastWasdCenter
+        // 回中落点不固定在几何中心：在用户配置的圆内均匀取一点。
+        val center = jitteredWasdCenter(lastWasdCenter)
         // 回中不再沿半径直线收回：控制点向垂直方向随机偏 15%–30% 半径。
         // 直线回中会在同一根轴上反复描线，几百次按键后叠成明显的十字。
         val chord = center - start
@@ -753,6 +763,15 @@ class EventHandler(
             }
             if (isActive) joystickMotion.update(pointerId, 0, Offset.Zero, Offset.Zero)
         }
+    }
+
+    /** 在摇杆中心周围按面积均匀取一个点（圆内分布，不会挤在圆心）。 */
+    private fun jitteredWasdCenter(center: Offset): Offset {
+        val radius = wasdCenterJitterPx
+        if (radius <= 0.5f) return center
+        val distance = sqrt(Random.nextFloat()) * radius
+        val angle = Random.nextFloat() * 2f * PI.toFloat()
+        return center + Offset(cos(angle) * distance, sin(angle) * distance)
     }
 
     /** 起点/终点方向之间的夹角；从摇杆中心起按时按大角度处理（弯得更明显）。 */
@@ -965,6 +984,21 @@ class EventHandler(
     private var pendingAimOverflow = Offset.Zero
     private var overflowDrainJob: Job? = null
 
+    /**
+     * 开火时是否使用「整屏自由视角」。
+     *
+     * 开火期间视角不再套用鼠标活动范围，而是用整块屏幕当行程：
+     * 只有顶到屏幕边缘才回中一次，落点偏到对侧，所以可以连续 360° 转。
+     * 松火后自动把触点收回原活动范围。
+     */
+    @Volatile
+    var fireFreeAimEnabled = true
+    private var fireFreeAimActive = false
+    /** 当前按下的开火/开镜键（键盘路径与鼠标路径都会登记）。 */
+    private val activeFireKeys = HashSet<Int>(4)
+
+    private fun isFireHeld(): Boolean = activeFireKeys.isNotEmpty()
+
     var onCursorRecenter: ((Offset) -> Unit)? = null
     var mousePointerPosition = Offset.Zero
     var appConfig = AppConfig.Default
@@ -1041,6 +1075,10 @@ class EventHandler(
 
         shootingMode = enabled
         _shootingModeFlow.value = enabled
+        if (!enabled) {
+            fireFreeAimActive = false
+            activeFireKeys.clear()
+        }
     }
 
 
@@ -1363,6 +1401,7 @@ class EventHandler(
 
     private fun handleKeyDown(keyCode: Int, pointerId: Int) {
         if (keyCode == walkKeyCode) { triggerWalk(); return }
+        if (keyCode in mouseHoldKeys) activeFireKeys.add(keyCode)
         Log.d("KeySyncInput", "KEY code=$keyCode pointer=$pointerId mapping=${keyMap[keyCode]}")
         keyMap[keyCode]?.let {
             if (keyCode == shootingModeKeyCode) {
@@ -1417,6 +1456,7 @@ class EventHandler(
     private fun handleKeyUp(keyCode: Int, pointerId: Int) {
         // The toggle owns a persistent aim contact; normal UP handlers must not lift it.
         if (keyCode == walkKeyCode || keyCode == shootingModeKeyCode) return
+        activeFireKeys.remove(keyCode)
         stopKeyJitter(pointerId)
         val id = keyId(keyCode)
         keyMap[keyCode]?.let {
@@ -1486,9 +1526,11 @@ class EventHandler(
         keyMap[keyCode]?.let {
             val m = humanizedMap(it)
             if (pressed) {
+                activeFireKeys.add(keyCode)
                 eventInjector.injectPointer(pointerId, m.position, m.end!!)
                 syncHeldJitter(pointerId, true, TouchMode.HOLD, m)
             } else {
+                activeFireKeys.remove(keyCode)
                 stopKeyJitter(pointerId)
                 eventInjector.releasePointer(pointerId)
             }
@@ -1521,6 +1563,30 @@ class EventHandler(
             val pointerId = pointerIds[shootingModeKeyCode] ?: return false
             if (!position.x.isFinite() || !position.y.isFinite()) return true
             val now = SystemClock.uptimeMillis()
+            // 开火期间：视角与「鼠标活动范围」解耦，改用整屏行程，可持续 360°。
+            if (fireFreeAimEnabled && isFireHeld()) {
+                if (!fireFreeAimActive) {
+                    fireFreeAimActive = true
+                    // 普通瞄准的溢出发补任务不要串进来。
+                    pendingAimOverflow = Offset.Zero
+                    overflowDrainJob?.cancel()
+                }
+                handleFireFreeAimMove(pointerId, position)
+                lastAimMoveTime = now
+                return true
+            }
+            if (fireFreeAimActive) {
+                // 松火：把触点收回到原来的小活动范围里，避免下一次普通瞄准跳变。
+                fireFreeAimActive = false
+                pendingAimOverflow = Offset.Zero
+                val landing = clampAimToBounds(aimPosition)
+                if ((landing - aimPosition).getDistance() > 1f) {
+                    eventInjector.releasePointer(pointerId)
+                    eventInjector.injectPointer(pointerId, landing)
+                    aimCenter = landing
+                }
+                aimPosition = landing
+            }
             // 停手超过阈值再动：真人这时通常是抬手换个位置，而不是一直按着同一根
             // 手指滑。只在第一次移动前重锚一次，产生断点；正在补溢出时不打断。
             if (aimIdleReanchorMs > 0L && lastAimMoveTime > 0L &&
@@ -1578,6 +1644,67 @@ class EventHandler(
             }
         }
         return true
+    }
+
+    /**
+     * 开火自由视角：整块屏幕都是行程，只有顶到屏幕边缘才回中一次。
+     *
+     * 与普通瞄准完全解耦——不套用鼠标活动范围，也不走小方框落点，
+     * 所以按住开火时可以一直朝一个方向转（360°），不会在小范围边界上反复停。
+     */
+    private fun handleFireFreeAimMove(pointerId: Int, delta: Offset) {
+        val previous = aimPosition
+        val requested = previous + delta
+        val clamped = clampFreeAim(requested)
+        aimPosition = clamped
+        val applied = clamped - previous
+        if (applied != Offset.Zero) {
+            eventInjector.updatePointerPosition(pointerId, applied)
+        }
+        val overflow = requested - clamped
+        if (overflow == Offset.Zero) return
+        // 顶到屏幕边缘：抬指落到对侧，立刻把剩余位移补出去，视角不停。
+        val landing = freeAimLanding(overflow)
+        val target = clampFreeAim(landing + overflow)
+        val replay = target - landing
+        eventInjector.releasePointer(pointerId)
+        eventInjector.injectPointer(pointerId, landing)
+        aimCenter = landing
+        aimPosition = target
+        if (replay.getDistance() > 0.5f) {
+            eventInjector.updatePointerPosition(pointerId, replay)
+        }
+        lastRecenterTime = SystemClock.uptimeMillis()
+        InputStats.onRecenter(0L)
+    }
+
+    private fun clampFreeAim(p: Offset): Offset {
+        val size = screenSize
+        if (size.x <= 1f || size.y <= 1f) return p
+        val maxX = (size.x - FREE_AIM_EDGE_MARGIN).coerceAtLeast(FREE_AIM_EDGE_MARGIN)
+        val maxY = (size.y - FREE_AIM_EDGE_MARGIN).coerceAtLeast(FREE_AIM_EDGE_MARGIN)
+        return Offset(
+            p.x.coerceIn(FREE_AIM_EDGE_MARGIN, maxX),
+            p.y.coerceIn(FREE_AIM_EDGE_MARGIN, maxY),
+        )
+    }
+
+    /** 开火回中落点：屏幕中心沿溢出反方向偏到接近对侧边缘。 */
+    private fun freeAimLanding(direction: Offset): Offset {
+        val size = screenSize
+        if (size.x <= 1f || size.y <= 1f) return aimCenter
+        val length = direction.getDistance()
+        val unit = if (length > 1f) direction / length else Offset.Zero
+        val center = Offset(size.x / 2f, size.y / 2f)
+        val bias = Offset(
+            unit.x * size.x * FREE_AIM_LANDING_BIAS,
+            unit.y * size.y * FREE_AIM_LANDING_BIAS,
+        )
+        val jitter = Offset(
+            (Random.nextFloat() * 2f - 1f) * FREE_AIM_LANDING_JITTER_PX,
+            (Random.nextFloat() * 2f - 1f) * FREE_AIM_LANDING_JITTER_PX,
+        )
+        return clampFreeAim(center - bias + jitter)
     }
 
     /**
@@ -2033,6 +2160,9 @@ class EventHandler(
         wasdReturnJob?.cancel()
         wasdReturnJob = null
         joystickMotion.reset()
+        activeFireKeys.clear()
+        fireFreeAimActive = false
+        lastWasdCenter = Offset.Zero
         stopWasdJitter()
         stopWasdTransition()
         stopAllKeyJitter()
@@ -2165,6 +2295,9 @@ class EventHandler(
         wasdReturnJob?.cancel()
         wasdReturnJob = null
         joystickMotion.reset()
+        activeFireKeys.clear()
+        fireFreeAimActive = false
+        lastWasdCenter = Offset.Zero
         stopWasdJitter()
         stopWasdTransition()
         stopAllKeyJitter()
@@ -2178,6 +2311,8 @@ class EventHandler(
         aimCenter = Offset.Zero
         lastAimMoveTime = 0L
         pendingAimOverflow = Offset.Zero
+        fireFreeAimActive = false
+        activeFireKeys.clear()
     }
 
     companion object {
@@ -2203,6 +2338,15 @@ class EventHandler(
         const val DEFAULT_WASD_HOLD_TREMOR_PX = 0.8f
         /** 到位后先静默多久再开始驻留抖动（ms）。 */
         const val DEFAULT_WASD_HOLD_SETTLE_MS = 150
+        /** 回中落点的随机圆半径（px）：真人不会每次都收回同一个像素。 */
+        const val DEFAULT_WASD_CENTER_JITTER_PX = 8f
+
+        /** 开火自由视角：离屏幕边缘的留白（px）。 */
+        const val FREE_AIM_EDGE_MARGIN = 12f
+        /** 回中落点向对侧偏置的比例（相对屏幕尺寸）。 */
+        const val FREE_AIM_LANDING_BIAS = 0.42f
+        /** 回中落点随机抖动（px），避免每次都落在同一点。 */
+        const val FREE_AIM_LANDING_JITTER_PX = 16f
         /** 越界溢出的最大缓存倍数（相对活动范围半宽）。 */
         const val MAX_AIM_OVERFLOW_FACTOR = 4f
         /** 一次甩动最多补发多少段，防止异常残差导致无限抬按。 */

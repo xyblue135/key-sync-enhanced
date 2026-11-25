@@ -165,6 +165,8 @@ fun ItemsContainer(
     /** 瞄准回中预设（经典 / 即回中 / 缓冲补发）。 */
     aimRecenterMode: AimRecenterMode = AimRecenterMode.INSTANT,
     onAimRecenterModeChange: (AimRecenterMode) -> Unit = {},
+    /** WASD 回中落点随机圆半径（px），编辑态在摇杆中心画出来。 */
+    wasdCenterJitterPx: Int = 8,
     /** 编辑态图层：true = 高级层（丢弃点可拖动，按键层半透明预览）。 */
     advancedLayerActive: Boolean = false,
     /** 运行时是否显示普通按键层（Enter 层级预览用）。 */
@@ -219,7 +221,7 @@ fun ItemsContainer(
             val wasdGroup = containerItems.filterIsInstance<DraggableItem.WASDGroup>().firstOrNull()
             val ring = wasdRingGeometry
             if (wasdGroup != null && ring != null) {
-                WasdRadiusRings(wasdGroup, ring, wasdSprintPreview)
+                WasdRadiusRings(wasdGroup, ring, wasdSprintPreview, wasdCenterJitterPx)
             }
         }
         // 鼠标双范围：大方形限制视角触点的活动范围，小方形决定每次回中的随机落点。
@@ -1716,6 +1718,7 @@ private fun WasdRadiusRings(
     item: DraggableItem.WASDGroup,
     geometry: WasdRingGeometry,
     preview: Pair<Float, Float>? = null,
+    centerJitterPx: Int = 8,
 ) {
     val center = geometry.center
     val normalRx = geometry.normalRx.coerceAtLeast(1f)
@@ -1731,6 +1734,21 @@ private fun WasdRadiusRings(
             .fillMaxSize()
             .drawBehind {
                 val dash = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))
+                // 回中随机范围：松手后不会每次都收回同一个像素。
+                val jitter = centerJitterPx.coerceIn(0, 40).toFloat()
+                if (jitter > 0f) {
+                    drawCircle(
+                        color = sprintColor.copy(alpha = 0.12f),
+                        radius = jitter,
+                        center = center,
+                    )
+                    drawCircle(
+                        color = sprintColor.copy(alpha = 0.55f),
+                        radius = jitter,
+                        center = center,
+                        style = Stroke(width = 1.dp.toPx()),
+                    )
+                }
                 drawOval(
                     color = normalColor,
                     topLeft = Offset(center.x - normalRx, center.y - normalRy),

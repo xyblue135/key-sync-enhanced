@@ -128,9 +128,14 @@ class FloatingWindowStateManager @Inject constructor(
     val wasdTransitTremor = MutableStateFlow(EventHandler.DEFAULT_WASD_TRANSIT_TREMOR_PX)
     val wasdHoldTremor = MutableStateFlow(EventHandler.DEFAULT_WASD_HOLD_TREMOR_PX)
     val wasdHoldSettleMs = MutableStateFlow(EventHandler.DEFAULT_WASD_HOLD_SETTLE_MS)
+    /** 回中落点的随机圆半径（px）。 */
+    val wasdCenterJitterPx = MutableStateFlow(EventHandler.DEFAULT_WASD_CENTER_JITTER_PX.toInt())
 
     /** 鼠标回中节流（ms）；没有按 WASD 时内部会自动降到 16ms。 */
     val aimRecenterIntervalMs = MutableStateFlow(50)
+
+    /** 开火时视角与鼠标活动范围解耦，使用整屏行程，可持续 360°。 */
+    val fireFreeAim = MutableStateFlow(true)
 
     /* ----------------- 鼠标高级参数（全局，与预设无关） ----------------- */
 
@@ -448,9 +453,14 @@ class FloatingWindowStateManager @Inject constructor(
             wasdHoldSettleMs.value =
                 (dataStoreManager.getInt(DataStoreManager.WASD_HOLD_SETTLE_MS).first() ?: 150)
                     .coerceIn(0, 800)
+            wasdCenterJitterPx.value =
+                (dataStoreManager.getInt(DataStoreManager.WASD_CENTER_JITTER_PX).first() ?: 8)
+                    .coerceIn(0, 40)
             aimRecenterIntervalMs.value =
                 (dataStoreManager.getInt(DataStoreManager.AIM_RECENTER_INTERVAL_MS).first() ?: 50)
                     .coerceIn(0, 120)
+            fireFreeAim.value =
+                dataStoreManager.getBoolean(DataStoreManager.FIRE_FREE_AIM).first() ?: true
             wasdTransition.value =
                 dataStoreManager.getBoolean(DataStoreManager.WASD_TRANSITION).first() ?: true
             wasdTransitionMs.value =
@@ -2264,7 +2274,15 @@ class FloatingWindowStateManager @Inject constructor(
         eventHandler.wasdTransitTremorPx = wasdTransitTremor.value
         eventHandler.wasdHoldTremorPx = wasdHoldTremor.value
         eventHandler.wasdHoldSettleMs = wasdHoldSettleMs.value
+        eventHandler.wasdCenterJitterPx = wasdCenterJitterPx.value.toFloat()
         eventHandler.recenterMinIntervalMs = aimRecenterIntervalMs.value.toLong()
+        eventHandler.fireFreeAimEnabled = fireFreeAim.value
+    }
+
+    fun setFireFreeAim(enabled: Boolean) {
+        fireFreeAim.value = enabled
+        eventHandler.fireFreeAimEnabled = enabled
+        scope.launch { dataStoreManager.save(DataStoreManager.FIRE_FREE_AIM, enabled) }
     }
 
     fun setWasdTransitTremor(value: Float) {
@@ -2290,6 +2308,13 @@ class FloatingWindowStateManager @Inject constructor(
         wasdHoldSettleMs.value = clamped
         eventHandler.wasdHoldSettleMs = clamped
         scope.launch { dataStoreManager.save(DataStoreManager.WASD_HOLD_SETTLE_MS, clamped) }
+    }
+
+    fun setWasdCenterJitterPx(value: Int) {
+        val clamped = value.coerceIn(0, 40)
+        wasdCenterJitterPx.value = clamped
+        eventHandler.wasdCenterJitterPx = clamped.toFloat()
+        scope.launch { dataStoreManager.save(DataStoreManager.WASD_CENTER_JITTER_PX, clamped) }
     }
 
     fun setAimRecenterIntervalMs(value: Int) {

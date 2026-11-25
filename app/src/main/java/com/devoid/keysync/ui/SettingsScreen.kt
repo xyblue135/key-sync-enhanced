@@ -208,13 +208,17 @@ fun SettingsScreen(
     wasdTransitTremor: Float = 0.4f,
     wasdHoldTremor: Float = 0.8f,
     wasdHoldSettleMs: Int = 150,
+    wasdCenterJitterPx: Int = 8,
     aimRecenterIntervalMs: Int = 50,
     aimIdleReanchorMs: Int = 1000,
+    fireFreeAim: Boolean = true,
     onSetWasdTransitTremor: (Float) -> Unit = {},
     onSetWasdHoldTremor: (Float) -> Unit = {},
     onSetWasdHoldSettleMs: (Int) -> Unit = {},
+    onSetWasdCenterJitterPx: (Int) -> Unit = {},
     onSetAimRecenterIntervalMs: (Int) -> Unit = {},
     onSetAimIdleReanchorMs: (Int) -> Unit = {},
+    onSetFireFreeAim: (Boolean) -> Unit = {},
     onNavigateBack: () -> Unit = {},
     onNavigateAbout: () -> Unit = {}
 ) {
@@ -1090,6 +1094,29 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "回中落点半径",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    if (wasdCenterJitterPx <= 0) "关闭"
+                                    else "$wasdCenterJitterPx px"
+                                )
+                            }
+                            Slider(
+                                value = wasdCenterJitterPx.toFloat().coerceIn(0f, 40f),
+                                valueRange = 0f..40f,
+                                steps = 39,
+                                onValueChange = { onSetWasdCenterJitterPx(it.roundToInt()) }
+                            )
+                            Text(
+                                "默认 8px。松手回中不会每次都落在同一个像素，而是在这个圆内随机取点；" +
+                                    "编辑映射时会在摇杆中心画出对应的圆圈，0 表示严格回到中心。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text("随机偏移间隔", style = MaterialTheme.typography.titleMedium)
                                     Text(
@@ -1208,6 +1235,21 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("开火时整屏自由视角", style = MaterialTheme.typography.titleMedium)
+                                    Text(
+                                        "按住开火键时不再套用鼠标活动范围，改用整块屏幕当行程，" +
+                                            "顶到屏幕边缘才回中一次，可一直 360° 转；松火自动收回原范围。",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = fireFreeAim,
+                                    onCheckedChange = onSetFireFreeAim
+                                )
+                            }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
                                     "回中最小间隔",

@@ -786,6 +786,7 @@ class FloatingBubbleService : Service() {
                 val landingAreaHalf by stateManager.get().landingAreaHalf.collectAsState()
                 val aimIdleReanchorMs by stateManager.get().aimIdleReanchorMs.collectAsState()
                 val aimRecenterMode by stateManager.get().aimRecenterMode.collectAsState()
+                val wasdCenterJitterPx by stateManager.get().wasdCenterJitterPx.collectAsState()
                 val overlayOrigin by stateManager.get().overlayOriginFlow.collectAsState()
                 val shootingAnchor by stateManager.get().shootingAnchorFlow.collectAsState()
                 Box {
@@ -873,6 +874,7 @@ class FloatingBubbleService : Service() {
                             onAimRecenterModeChange = { mode ->
                                 stateManager.get().setAimRecenterMode(mode)
                             },
+                            wasdCenterJitterPx = wasdCenterJitterPx,
                             advancedLayerActive = advancedLayerActive,
                             // 滚轮操控已改为「光标位置全屏生效」，不再使用左右锚点。
                             showKeys = keysLayerVisible,

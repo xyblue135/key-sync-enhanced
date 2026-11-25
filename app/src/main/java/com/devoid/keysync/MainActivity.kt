@@ -220,8 +220,10 @@ class MainActivity : ComponentActivity() {
                         val wasdTransitTremor by viewModel.wasdTransitTremor.collectAsStateWithLifecycle()
                         val wasdHoldTremor by viewModel.wasdHoldTremor.collectAsStateWithLifecycle()
                         val wasdHoldSettleMs by viewModel.wasdHoldSettleMs.collectAsStateWithLifecycle()
+                        val wasdCenterJitterPx by viewModel.wasdCenterJitterPx.collectAsStateWithLifecycle()
                         val aimRecenterIntervalMs by viewModel.aimRecenterIntervalMs.collectAsStateWithLifecycle()
                         val aimIdleReanchorMs by viewModel.aimIdleReanchorMs.collectAsStateWithLifecycle()
+                        val fireFreeAim by viewModel.fireFreeAim.collectAsStateWithLifecycle()
                         val overlayOpacity by viewModel.overlayOpacity.collectAsStateWithLifecycle()
                         val cursorRenderHz by viewModel.cursorRenderHz.collectAsStateWithLifecycle()
                         val statusBarVisible by viewModel.statusBarVisible.collectAsStateWithLifecycle()
@@ -288,13 +290,17 @@ class MainActivity : ComponentActivity() {
                             wasdTransitTremor = wasdTransitTremor,
                             wasdHoldTremor = wasdHoldTremor,
                             wasdHoldSettleMs = wasdHoldSettleMs,
+                            wasdCenterJitterPx = wasdCenterJitterPx,
                             aimRecenterIntervalMs = aimRecenterIntervalMs,
                             aimIdleReanchorMs = aimIdleReanchorMs,
+                            fireFreeAim = fireFreeAim,
                             onSetWasdTransitTremor = viewModel::setWasdTransitTremor,
                             onSetWasdHoldTremor = viewModel::setWasdHoldTremor,
                             onSetWasdHoldSettleMs = viewModel::setWasdHoldSettleMs,
+                            onSetWasdCenterJitterPx = viewModel::setWasdCenterJitterPx,
                             onSetAimRecenterIntervalMs = viewModel::setAimRecenterIntervalMs,
                             onSetAimIdleReanchorMs = viewModel::setAimIdleReanchorMs,
+                            onSetFireFreeAim = viewModel::setFireFreeAim,
                             overlayOpacity = overlayOpacity,
                             onSetOverlayOpacity = viewModel::setOverlayOpacity,
                             cursorRenderHz = cursorRenderHz,

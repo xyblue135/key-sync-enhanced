@@ -101,8 +101,12 @@ class DataStoreManager internal constructor(
         val WASD_HOLD_TREMOR = intPreferencesKey("wasd_hold_tremor_tenth_px")
         /** 到位后静默多久再开始驻留抖动（ms）。 */
         val WASD_HOLD_SETTLE_MS = intPreferencesKey("wasd_hold_settle_ms")
+        /** WASD 回中落点的随机圆半径（px）。 */
+        val WASD_CENTER_JITTER_PX = intPreferencesKey("wasd_center_jitter_px")
         /** 鼠标回中节流（ms，0–120）。 */
         val AIM_RECENTER_INTERVAL_MS = intPreferencesKey("aim_recenter_interval_ms")
+        /** 开火时视角使用整屏自由行程（不套用鼠标活动范围）。 */
+        val FIRE_FREE_AIM = booleanPreferencesKey("fire_free_aim")
         /** 随机偏移间隔（ms），默认 1000；全局键，与拟人化开关一起生效。 */
         val HUMANIZATION_INTERVAL_MS = intPreferencesKey("humanization_interval_ms")
         /** WASD 换向时是否沿圆弧过渡，默认开启。 */
