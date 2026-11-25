@@ -15,15 +15,18 @@ internal class JoystickMotion(
     private var lastTarget = Offset.Zero
 
     /** 当前按下的方向位；0 表示没有触点。 */
+    @get:Synchronized
     val activeMask: Int get() = lastMask
 
     /** 最后一次实际注入的落点。 */
+    @get:Synchronized
     val target: Offset get() = lastTarget
 
     /**
      * 返回 true 表示已经把触点移到 [target]；false 表示调用方接管了这次换向，
      * 需要通过 [jitter] 沿弧线补中间点，最后再补 [target]。
      */
+    @Synchronized
     fun update(
         pointer: Int,
         mask: Int,
@@ -77,6 +80,7 @@ internal class JoystickMotion(
      * the game see the stick let go and restart from neutral on each tick — that
      * is the "跑步时向后顿一下" stutter. Jitter must only drag the live contact.
      */
+    @Synchronized
     fun jitter(pointer: Int, mask: Int, target: Offset) {
         if (lastMask == 0 || lastMask != mask || lastPointer != pointer) return
         if (lastTarget == target) return
@@ -90,6 +94,7 @@ internal class JoystickMotion(
      * [update] 在 `sendTarget = false` 时已经把 lastTarget 记成终点，
      * 所以 [jitter] 会跳过终点；但曲线必须精确收尾在落点上。
      */
+    @Synchronized
     fun finishMove(pointer: Int, mask: Int, target: Offset) {
         if (lastMask == 0 || lastMask != mask || lastPointer != pointer) return
         move(pointer, target)
@@ -97,5 +102,6 @@ internal class JoystickMotion(
     }
 
     // The caller already cancelled contacts when replacing mappings or entering the editor.
+    @Synchronized
     fun reset() { lastMask = 0; lastPointer = -1 }
 }

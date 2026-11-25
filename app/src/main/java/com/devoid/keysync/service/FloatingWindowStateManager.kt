@@ -36,6 +36,7 @@ import com.devoid.keysync.model.withAssist
 import com.devoid.keysync.model.SeqAction
 import com.devoid.keysync.util.keyCodeToString
 import com.devoid.keysync.domain.EventHandler
+import com.devoid.keysync.domain.InputStats
 import com.devoid.keysync.domain.TrajectoryRecorder
 import com.devoid.keysync.domain.KEYCODE_LMC
 import com.devoid.keysync.domain.KEYCODE_MMC
@@ -123,6 +124,14 @@ class FloatingWindowStateManager @Inject constructor(
     val wasdTransition = MutableStateFlow(true)
     val wasdTransitionMs = MutableStateFlow(EventHandler.DEFAULT_WASD_TRANSITION_MS)
 
+    // 拟人化拆分：过渡段只留极小毛刺，明显抖动放到到位驻留阶段。
+    val wasdTransitTremor = MutableStateFlow(EventHandler.DEFAULT_WASD_TRANSIT_TREMOR_PX)
+    val wasdHoldTremor = MutableStateFlow(EventHandler.DEFAULT_WASD_HOLD_TREMOR_PX)
+    val wasdHoldSettleMs = MutableStateFlow(EventHandler.DEFAULT_WASD_HOLD_SETTLE_MS)
+
+    /** 鼠标回中节流（ms）；没有按 WASD 时内部会自动降到 16ms。 */
+    val aimRecenterIntervalMs = MutableStateFlow(50)
+
     /* ----------------- 鼠标高级参数（全局，与预设无关） ----------------- */
 
     /** 单帧位移超过该值就视为光标跳变并丢弃；默认 240px。 */
@@ -157,6 +166,13 @@ class FloatingWindowStateManager @Inject constructor(
     // true 时悬浮窗可触摸/可聚焦，允许拖动与绑定按键。
     private val _isEditMode = MutableStateFlow(false)
     val isEditMode = _isEditMode.asStateFlow()
+
+    /** 进入编辑态时的布局快照：点「完成」确认后才提交，取消则回滚到这里。 */
+    private data class EditSnapshot(
+        val profiles: List<Profile>,
+        val containerItems: List<DraggableItem>,
+    )
+    private var editSnapshot: EditSnapshot? = null
 
     // 暂停映射：不拦截触控、不注入任何事件，用于临时打字/操作其他界面。
     // 只存在于本次服务生命周期内，不持久化——重启服务后默认恢复映射。
@@ -423,6 +439,18 @@ class FloatingWindowStateManager @Inject constructor(
             wasdSway.value =
                 (dataStoreManager.getInt(DataStoreManager.WASD_SWAY).first() ?: 50)
                     .coerceIn(1, 100).toFloat()
+            wasdTransitTremor.value =
+                (dataStoreManager.getInt(DataStoreManager.WASD_TRANSIT_TREMOR).first() ?: 4)
+                    .coerceIn(0, 20) / 10f
+            wasdHoldTremor.value =
+                (dataStoreManager.getInt(DataStoreManager.WASD_HOLD_TREMOR).first() ?: 8)
+                    .coerceIn(0, 40) / 10f
+            wasdHoldSettleMs.value =
+                (dataStoreManager.getInt(DataStoreManager.WASD_HOLD_SETTLE_MS).first() ?: 150)
+                    .coerceIn(0, 800)
+            aimRecenterIntervalMs.value =
+                (dataStoreManager.getInt(DataStoreManager.AIM_RECENTER_INTERVAL_MS).first() ?: 50)
+                    .coerceIn(0, 120)
             wasdTransition.value =
                 dataStoreManager.getBoolean(DataStoreManager.WASD_TRANSITION).first() ?: true
             wasdTransitionMs.value =
@@ -2233,6 +2261,42 @@ class FloatingWindowStateManager @Inject constructor(
             wasdJitterMaxMs.value,
         )
         eventHandler.setWasdTransition(wasdTransition.value, wasdTransitionMs.value)
+        eventHandler.wasdTransitTremorPx = wasdTransitTremor.value
+        eventHandler.wasdHoldTremorPx = wasdHoldTremor.value
+        eventHandler.wasdHoldSettleMs = wasdHoldSettleMs.value
+        eventHandler.recenterMinIntervalMs = aimRecenterIntervalMs.value.toLong()
+    }
+
+    fun setWasdTransitTremor(value: Float) {
+        val clamped = value.coerceIn(0f, 2f)
+        wasdTransitTremor.value = clamped
+        eventHandler.wasdTransitTremorPx = clamped
+        scope.launch {
+            dataStoreManager.save(DataStoreManager.WASD_TRANSIT_TREMOR, (clamped * 10).roundToInt())
+        }
+    }
+
+    fun setWasdHoldTremor(value: Float) {
+        val clamped = value.coerceIn(0f, 4f)
+        wasdHoldTremor.value = clamped
+        eventHandler.wasdHoldTremorPx = clamped
+        scope.launch {
+            dataStoreManager.save(DataStoreManager.WASD_HOLD_TREMOR, (clamped * 10).roundToInt())
+        }
+    }
+
+    fun setWasdHoldSettleMs(value: Int) {
+        val clamped = value.coerceIn(0, 800)
+        wasdHoldSettleMs.value = clamped
+        eventHandler.wasdHoldSettleMs = clamped
+        scope.launch { dataStoreManager.save(DataStoreManager.WASD_HOLD_SETTLE_MS, clamped) }
+    }
+
+    fun setAimRecenterIntervalMs(value: Int) {
+        val clamped = value.coerceIn(0, 120)
+        aimRecenterIntervalMs.value = clamped
+        eventHandler.recenterMinIntervalMs = clamped.toLong()
+        scope.launch { dataStoreManager.save(DataStoreManager.AIM_RECENTER_INTERVAL_MS, clamped) }
     }
 
     fun setWasdHumanization(enabled: Boolean) {
@@ -2472,6 +2536,14 @@ class FloatingWindowStateManager @Inject constructor(
     fun toggleEditMode() {
         clearActivePointers()
         eventHandler.screenSize = currentScreenSize()
+        if (!_isEditMode.value) {
+            // 进入编辑：先拍快照。编辑过程中拖动会直接改 item 的坐标，
+            // 且部分操作会立即落盘，所以快照必须深拷贝。
+            editSnapshot = EditSnapshot(
+                profiles = _profiles.value.map { it.deepCopied() },
+                containerItems = _containerItems.value.map { it.copy() },
+            )
+        }
         _isEditMode.value = !_isEditMode.value
         // 进/出编辑态都清空按下状态：编辑态下不维护 pressedKeys，避免切换回来时
         // 残留上一个状态的「按下」高亮。
@@ -2485,8 +2557,56 @@ class FloatingWindowStateManager @Inject constructor(
             // Position/size edits currently mutate DraggableItem in place, so
             // closing edit mode is the natural commit point for persistence.
             persistActiveProfile()
+            editSnapshot = null
         }
     }
+
+    /**
+     * 取消本次编辑：回滚到进入编辑前的布局，再退出编辑态。
+     *
+     * 编辑期间的部分操作会立即落盘，所以回滚后还要再持久化一次，
+     * 否则重启后会看到被误触改过的布局。
+     */
+    fun cancelEditMode() {
+        if (!_isEditMode.value) return
+        val snapshot = editSnapshot
+        if (snapshot == null) {
+            toggleEditMode()
+            return
+        }
+        clearActivePointers()
+        _profiles.value = snapshot.profiles
+        val restored = snapshot.containerItems.map { it.copy() }
+        _containerItems.value = restored
+        // copy() 不带 transient 的 touchCenter，这里按当前悬浮窗原点补算，
+        // 否则 updateKeyMapping 会退回本地坐标、触点整体偏移。
+        overlayOrigin?.let { origin ->
+            restored.forEach { item ->
+                val size = when (item) {
+                    is DraggableItem.FixedKey -> item.size
+                    is DraggableItem.VariableKey -> item.size
+                    else -> 0
+                }
+                if (size > 0) {
+                    item.touchCenter = origin + item.position + Offset(size / 2f, size / 2f)
+                }
+            }
+        }
+        _isEditMode.value = false
+        _pressedKeys.value = emptySet()
+        fScrollControlActive = false
+        editAdvancedLayer.value = false
+        eventHandler.updateKeyMapping(restored)
+        syncMacros()
+        persistActiveProfile()
+        editSnapshot = null
+    }
+
+    /** 深拷贝预设，隔离 items / 宏步骤里可变的坐标字段。 */
+    private fun Profile.deepCopied(): Profile = copy(
+        items = items.map { it.copy() },
+        macros = macros.map { macro -> macro.copy(steps = macro.steps.map { it.copy() }) },
+    )
 
     /** 一键切换悬浮窗按键的显示/隐藏。 */
     fun toggleKeysVisible() {
@@ -2704,10 +2824,22 @@ class FloatingWindowStateManager @Inject constructor(
                 // 有的设备只在部分事件里填相对轴。逐事件判断会让同一段移动在
                 // 「相对位移」和「绝对坐标差」之间来回切换，表现为速度忽快忽慢。
                 // 锁存后整段手势固定一种解析方式，直到新手势/换设备。
+                // 例外：如果开局锁成了绝对差值，但之后设备开始提供非零相对轴，
+                // 允许中途升级为相对轴——相对轴永远比绝对差值更可信。
+                if (latchedRelativeAxisMode == false && rawRelativeAxes) {
+                    latchedRelativeAxisMode = true
+                }
                 val relativeAxes = if (mouseModeLatch.value && mouseGuardEnabled.value) {
                     latchedRelativeAxisMode
                         ?: rawRelativeAxes.also { latchedRelativeAxisMode = it }
                 } else rawRelativeAxes
+                InputStats.setMouseAxisMode(
+                    when {
+                        relativeMouse -> "relative"
+                        relativeAxes -> "axis"
+                        else -> "raw"
+                    }
+                )
                 // 总开关关闭时不限幅，也不丢弃跳变，完全按原始位移处理。
                 val maxDelta = if (mouseGuardEnabled.value) {
                     mouseJumpThresholdPx.value.toFloat()

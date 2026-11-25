@@ -1251,11 +1251,14 @@ fun EditToolbar(
     onToggleStatusBarVisible: () -> Unit = {},
     onToggleAdvancedLayer: () -> Unit = {},
     onToggleEditMode: () -> Unit,
+    onCancelEdits: () -> Unit = {},
     onAddItem: (DraggableItemType) -> Unit,
     onAddDiscardPoint: () -> Unit = {},
     onAddEscTapPoint: () -> Unit = {},
 ) {
     var itemsMenuVisible by remember { mutableStateOf(false) }
+    // 点「完成」先弹确认：误触拖动后可以直接回退到进入编辑前的布局。
+    var exitConfirmVisible by remember { mutableStateOf(false) }
     // 编辑条会挡住想摆放的位置，因此允许直接拖动（按 ⠿ 手柄拖动，避免和按钮点击冲突）。
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
     // 默认只显示一个居中的圆球：右上角经常放自定义按键，工具栏展开会挡住它。
@@ -1336,7 +1339,7 @@ fun EditToolbar(
             TextButton(onClick = onToggleAdvancedLayer) {
                 Text(if (advancedLayerActive) "高级层" else "按键层")
             }
-            TextButton(onClick = onToggleEditMode) {
+            TextButton(onClick = { exitConfirmVisible = true }) {
                 Text(stringResource(R.string.overlay_done))
             }
             TextButton(onClick = { collapsed = true }) {
@@ -1355,6 +1358,41 @@ fun EditToolbar(
                     onAddEscTapPoint()
                     itemsMenuVisible = false
                 })
+            }
+        }
+        // 完成前的确认：误触拖动后不必再手动拖回去，直接回退到进入编辑前的布局。
+        if (exitConfirmVisible) {
+            InlineDialog(onDismiss = { exitConfirmVisible = false }) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "保存本次布局修改？",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        modifier = Modifier.padding(top = 6.dp),
+                        text = "如果刚才有误触拖动，可以选「回退」，恢复到进入编辑前的位置。",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = {
+                            exitConfirmVisible = false
+                            onCancelEdits()
+                        }) {
+                            Text("回退")
+                        }
+                        TextButton(onClick = {
+                            exitConfirmVisible = false
+                            onToggleEditMode()
+                        }) {
+                            Text("确认")
+                        }
+                    }
+                }
             }
         }
         }

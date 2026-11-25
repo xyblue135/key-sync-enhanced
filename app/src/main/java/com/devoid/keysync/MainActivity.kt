@@ -217,6 +217,11 @@ class MainActivity : ComponentActivity() {
                         val wasdSway by viewModel.wasdSway.collectAsStateWithLifecycle()
                         val wasdTransition by viewModel.wasdTransition.collectAsStateWithLifecycle()
                         val wasdTransitionMs by viewModel.wasdTransitionMs.collectAsStateWithLifecycle()
+                        val wasdTransitTremor by viewModel.wasdTransitTremor.collectAsStateWithLifecycle()
+                        val wasdHoldTremor by viewModel.wasdHoldTremor.collectAsStateWithLifecycle()
+                        val wasdHoldSettleMs by viewModel.wasdHoldSettleMs.collectAsStateWithLifecycle()
+                        val aimRecenterIntervalMs by viewModel.aimRecenterIntervalMs.collectAsStateWithLifecycle()
+                        val aimIdleReanchorMs by viewModel.aimIdleReanchorMs.collectAsStateWithLifecycle()
                         val overlayOpacity by viewModel.overlayOpacity.collectAsStateWithLifecycle()
                         val cursorRenderHz by viewModel.cursorRenderHz.collectAsStateWithLifecycle()
                         val statusBarVisible by viewModel.statusBarVisible.collectAsStateWithLifecycle()
@@ -280,6 +285,16 @@ class MainActivity : ComponentActivity() {
                             wasdTransitionMs = wasdTransitionMs,
                             onSetWasdTransition = viewModel::setWasdTransition,
                             onSetWasdTransitionMs = viewModel::setWasdTransitionMs,
+                            wasdTransitTremor = wasdTransitTremor,
+                            wasdHoldTremor = wasdHoldTremor,
+                            wasdHoldSettleMs = wasdHoldSettleMs,
+                            aimRecenterIntervalMs = aimRecenterIntervalMs,
+                            aimIdleReanchorMs = aimIdleReanchorMs,
+                            onSetWasdTransitTremor = viewModel::setWasdTransitTremor,
+                            onSetWasdHoldTremor = viewModel::setWasdHoldTremor,
+                            onSetWasdHoldSettleMs = viewModel::setWasdHoldSettleMs,
+                            onSetAimRecenterIntervalMs = viewModel::setAimRecenterIntervalMs,
+                            onSetAimIdleReanchorMs = viewModel::setAimIdleReanchorMs,
                             overlayOpacity = overlayOpacity,
                             onSetOverlayOpacity = viewModel::setOverlayOpacity,
                             cursorRenderHz = cursorRenderHz,

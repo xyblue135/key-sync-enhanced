@@ -41,6 +41,12 @@ abstract class EventInjectorImpl(private val eventManager: EventManager = EventM
     // 更卡」。这里把同一触点两次 flush 之间产生的所有位移累加成一条，每批只注入一次。
     private val pendingMoves = PendingMoves()
 
+    /**
+     * 每个触点当前最新的移动代次。摇杆换向时 EventHandler 会推进代次，
+     * 已入队但尚未执行的旧代 MOVE 在执行前发现代次落后就直接丢弃。
+     */
+    private val latestMoveGeneration = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+
     abstract fun inject(event: InputEvent)
 
     init {
@@ -67,8 +73,15 @@ abstract class EventInjectorImpl(private val eventManager: EventManager = EventM
 
     private fun enqueue(coalesce: Boolean = false, task: suspend () -> Unit) {
         if (!coalesce) pendingMoves.seal()
-        if (taskQueue.trySend(task).isFailure)
-            Log.w(TAG, "input task queue rejected an event")
+        val enqueuedAt = InputStats.onEnqueued()
+        if (taskQueue.trySend {
+                try {
+                    task.invoke()
+                } finally {
+                    InputStats.onDequeued(enqueuedAt)
+                }
+            }.isFailure
+        ) Log.w(TAG, "input task queue rejected an event")
     }
 
     override fun injectGesture(pointerID: Int, o1: Offset, o2: Offset) {
@@ -108,9 +121,15 @@ abstract class EventInjectorImpl(private val eventManager: EventManager = EventM
     }
 
     override fun transFormGesture(pointerID: Int, position: Offset) {
+        transFormGesture(pointerID, position, 0L)
+    }
+
+    override fun transFormGesture(pointerID: Int, position: Offset, generation: Long) {
+        if (isStaleGeneration(pointerID, generation)) return
         // 摇杆已在 down 状态，直接重定位到新方向点（W→W+Shift 疾跑档、方向切换等）。
         TrajectoryRecorder.recordMoveTo(pointerID, position.x, position.y)
         enqueue {
+            if (isStaleGeneration(pointerID, generation)) return@enqueue
             if (eventManager.updatePointer(pointerID, position.x, position.y)) {
                 dispatch(MotionEvent.ACTION_MOVE)
             }
@@ -134,13 +153,30 @@ abstract class EventInjectorImpl(private val eventManager: EventManager = EventM
     }
 
     override fun updatePointerPosition(pointerID: Int, position: Offset) {
+        updatePointerPosition(pointerID, position, 0L)
+    }
+
+    override fun updatePointerPosition(pointerID: Int, position: Offset, generation: Long) {
+        if (isStaleGeneration(pointerID, generation)) return
         TrajectoryRecorder.recordMoveBy(pointerID, position.x, position.y)
-        val batch = pendingMoves.add(pointerID, position) ?: return
+        val batch = pendingMoves.add(pointerID, position, generation) ?: return
         enqueue(coalesce = true) {
             val delta = pendingMoves.take(batch) ?: return@enqueue
+            // 合并后批次可能包含多代位移，按最新代次判断是否过期。
+            if (isStaleGeneration(pointerID, batch.generation)) return@enqueue
             if (eventManager.offsetPointer(pointerID, delta)) dispatch(MotionEvent.ACTION_MOVE)
         }
     }
+
+    override fun setMoveGeneration(pointerID: Int, generation: Long) {
+        latestMoveGeneration[pointerID] = generation
+        // 摇杆换向时旧代尚未 flush 的增量已经没有意义，直接丢弃；
+        // 新方向的过渡会从落点重新铺开。
+        pendingMoves.cancel(pointerID)
+    }
+
+    private fun isStaleGeneration(pointerID: Int, generation: Long): Boolean =
+        generation > 0L && generation < (latestMoveGeneration[pointerID] ?: 0L)
 
     override fun cancelPendingMove(pointerID: Int) {
         pendingMoves.cancel(pointerID)

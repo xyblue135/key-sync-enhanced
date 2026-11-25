@@ -4,13 +4,22 @@ import androidx.compose.ui.geometry.Offset
 
 /** Batches may coalesce only within one uninterrupted segment of the input queue. */
 internal class PendingMoves {
-    class Batch(val pointerId: Int, var delta: Offset)
+    /**
+     * [generation] 用于摇杆类绝对目标：同一触点出现更新的一代时，旧代尚未执行的
+     * MOVE 必须被丢弃，否则快速换向会先走完上一段旧轨迹，表现为拖尾。
+     */
+    class Batch(val pointerId: Int, var delta: Offset, var generation: Long = 0L)
+
     private val open = mutableMapOf<Int, Batch>()
     private val pending = mutableSetOf<Batch>()
 
-    @Synchronized fun add(pointerId: Int, delta: Offset): Batch? {
-        open[pointerId]?.let { it.delta += delta; return null }
-        return Batch(pointerId, delta).also { open[pointerId] = it; pending.add(it) }
+    @Synchronized fun add(pointerId: Int, delta: Offset, generation: Long = 0L): Batch? {
+        open[pointerId]?.let {
+            it.delta += delta
+            if (generation > it.generation) it.generation = generation
+            return null
+        }
+        return Batch(pointerId, delta, generation).also { open[pointerId] = it; pending.add(it) }
     }
 
     @Synchronized fun take(batch: Batch): Offset? {

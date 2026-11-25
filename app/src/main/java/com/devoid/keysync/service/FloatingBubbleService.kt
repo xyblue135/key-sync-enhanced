@@ -912,6 +912,7 @@ class FloatingBubbleService : Service() {
                             onToggleKeysVisible = { stateManager.get().toggleKeysVisible() },
                             onToggleStatusBarVisible = { stateManager.get().toggleStatusBarVisible() },
                             onToggleEditMode = { stateManager.get().toggleEditMode() },
+                            onCancelEdits = { stateManager.get().cancelEditMode() },
                             onAddItem = { stateManager.get().addNewItem(it) },
                             onAddDiscardPoint = { stateManager.get().addDiscardPoint() },
                             onAddEscTapPoint = {

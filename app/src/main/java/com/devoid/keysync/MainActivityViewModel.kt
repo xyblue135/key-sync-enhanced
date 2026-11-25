@@ -106,6 +106,13 @@ class MainActivityViewModel @Inject constructor(
     /** WASD 换向弧线过渡（全局）。 */
     val wasdTransition: StateFlow<Boolean> = stateManager.wasdTransition
     val wasdTransitionMs: StateFlow<Int> = stateManager.wasdTransitionMs
+    /** 过渡段极小毛刺 / 到位驻留抖动 / 到位静默（WASD 拟人化）。 */
+    val wasdTransitTremor: StateFlow<Float> = stateManager.wasdTransitTremor
+    val wasdHoldTremor: StateFlow<Float> = stateManager.wasdHoldTremor
+    val wasdHoldSettleMs: StateFlow<Int> = stateManager.wasdHoldSettleMs
+    /** 鼠标拟人化：回中节流与空闲重锚。 */
+    val aimRecenterIntervalMs: StateFlow<Int> = stateManager.aimRecenterIntervalMs
+    val aimIdleReanchorMs: StateFlow<Int> = stateManager.aimIdleReanchorMs
     /** 悬浮窗透明度（全局设置），设置页用；改动立即持久化。 */
     val overlayOpacity: StateFlow<Float> = stateManager.overlayOpacity
     /** 光标渲染刷新率（Hz），默认 60。 */
@@ -268,6 +275,11 @@ class MainActivityViewModel @Inject constructor(
     fun setWasdSway(value: Float) = stateManager.setWasdSway(value)
     fun setWasdTransition(enabled: Boolean) = stateManager.setWasdTransition(enabled)
     fun setWasdTransitionMs(ms: Int) = stateManager.setWasdTransitionMs(ms)
+    fun setWasdTransitTremor(value: Float) = stateManager.setWasdTransitTremor(value)
+    fun setWasdHoldTremor(value: Float) = stateManager.setWasdHoldTremor(value)
+    fun setWasdHoldSettleMs(value: Int) = stateManager.setWasdHoldSettleMs(value)
+    fun setAimRecenterIntervalMs(value: Int) = stateManager.setAimRecenterIntervalMs(value)
+    fun setAimIdleReanchorMs(value: Int) = stateManager.setAimIdleReanchorMs(value)
     fun setOverlayOpacity(value: Float) = stateManager.saveOverlayOpacity(value)
     fun setCursorRenderHz(hz: Int) = stateManager.setCursorRenderHz(hz)
     fun setStatusBarVisible(visible: Boolean) = stateManager.setStatusBarVisible(visible)

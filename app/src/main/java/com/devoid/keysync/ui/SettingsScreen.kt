@@ -88,6 +88,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.devoid.keysync.R
+import com.devoid.keysync.domain.InputStats
 import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.Profile
@@ -110,6 +111,7 @@ import com.devoid.keysync.model.withAssist
 import com.devoid.keysync.model.TouchMode
 import com.devoid.keysync.util.keyCodeToString
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -203,6 +205,16 @@ fun SettingsScreen(
     onSetWasdSway: (Float) -> Unit = {},
     onSetWasdTransition: (Boolean) -> Unit = {},
     onSetWasdTransitionMs: (Int) -> Unit = {},
+    wasdTransitTremor: Float = 0.4f,
+    wasdHoldTremor: Float = 0.8f,
+    wasdHoldSettleMs: Int = 150,
+    aimRecenterIntervalMs: Int = 50,
+    aimIdleReanchorMs: Int = 1000,
+    onSetWasdTransitTremor: (Float) -> Unit = {},
+    onSetWasdHoldTremor: (Float) -> Unit = {},
+    onSetWasdHoldSettleMs: (Int) -> Unit = {},
+    onSetAimRecenterIntervalMs: (Int) -> Unit = {},
+    onSetAimIdleReanchorMs: (Int) -> Unit = {},
     onNavigateBack: () -> Unit = {},
     onNavigateAbout: () -> Unit = {}
 ) {
@@ -948,174 +960,346 @@ fun SettingsScreen(
                 }
                     }
                     if (page == 3 && detail == SettingsDetail.HUMANIZATION) {
+                        // ── WASD 拟人化 ────────────────────────────────────────
                         SettingsSectionCard(
-                            title = "按键拟人化",
-                    scope = SettingsScope.GLOBAL,
-                    hint = "全局 · 立即生效并保存",
-                    initiallyExpanded = true,
-                ) {
-                        Text(
-                            "给注入的触控位置加随机抖动，避免被识别成机械死板的操作。全局生效，强度最低 1，最高 100。",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("WASD 拟人化", style = MaterialTheme.typography.titleMedium)
-                            }
-                            Switch(checked = wasdHumanization, onCheckedChange = onSetWasdHumanization)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("其他按键拟人化（开火 / 自定义等）", style = MaterialTheme.typography.titleMedium)
-                            }
-                            Switch(checked = keyHumanization, onCheckedChange = onSetKeyHumanization)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            title = "WASD 拟人化",
+                            scope = SettingsScope.GLOBAL,
+                            hint = "全局 · 立即生效并保存",
+                            initiallyExpanded = true,
+                        ) {
                             Text(
-                                "偏移强度（1–100）",
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.titleMedium
+                                "只影响 WASD 摇杆。换向的「跟手」由时间基准负责，" +
+                                    "「像人手」由极小的轨迹毛刺和到位后的驻留抖动负责，两者互不拖累。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Text("${humanizationStrength.roundToInt()} / 100")
-                        }
-                        Slider(
-                            enabled = wasdHumanization || keyHumanization,
-                            value = humanizationStrength.coerceIn(1f, 100f),
-                            valueRange = 1f..100f,
-                            steps = 98,
-                            onValueChange = { onSetHumanizationStrength(it.roundToInt().toFloat()) }
-                        )
-                        Text(
-                            "默认 50。普通按键落点最大 8px；WASD 摆头由下方独立滑杆控制。两个开关都关着时，下面三项不生效。",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "WASD 方向晃动（1–100）",
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text("${wasdSway.roundToInt()} / 100")
-                        }
-                        Slider(
-                            enabled = wasdHumanization,
-                            value = wasdSway.coerceIn(1f, 100f),
-                            valueRange = 1f..100f,
-                            steps = 98,
-                            onValueChange = { onSetWasdSway(it.roundToInt().toFloat()) }
-                        )
-                        Text(
-                            "只影响 WASD 摇杆按住时的轻微摆头，与整体偏移强度独立。" +
-                                "满值约 ±1.5°，默认 50；跑动时觉得方向飘就把它调小。",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("WASD 换向 / 疾跑推杆", style = MaterialTheme.typography.titleMedium)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("启用 WASD 拟人化", style = MaterialTheme.typography.titleMedium)
+                                }
+                                Switch(checked = wasdHumanization, onCheckedChange = onSetWasdHumanization)
                             }
-                            Switch(
-                                checked = wasdTransition,
-                                onCheckedChange = onSetWasdTransition
-                            )
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "过渡时长",
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text("$wasdTransitionMs ms")
-                        }
-                        Slider(
-                            enabled = wasdTransition,
-                            value = wasdTransitionMs.toFloat().coerceIn(40f, 200f),
-                            valueRange = 40f..200f,
-                            steps = 15,
-                            onValueChange = { onSetWasdTransitionMs(it.roundToInt()) }
-                        )
-                    Text(
-                        "换向时补 2–8 个中间点：角度 ≥ 90°（如 A↔D、W↔S）走直线穿过中心，中段推动量保留 18%；" +
-                            "小角度仍沿圆弧。按下/松开 Shift 时沿同一方向缓慢拉到疾跑半径，而不是瞬移；松手立即停止。" +
-                            "默认 60ms；调小更跟手，调大更像拇指推杆。关闭后换向与疾跑切换都恢复瞬移。",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("WASD 随机偏移间隔", style = MaterialTheme.typography.titleMedium)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "打开后，WASD 抖动间隔在下面的区间内随机，默认 200–300ms；" +
-                                        "关闭时回落到下面的通用间隔。",
-                                    style = MaterialTheme.typography.labelSmall,
+                                    "方向晃动（1–100）",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text("${wasdSway.roundToInt()} / 100")
+                            }
+                            Slider(
+                                enabled = wasdHumanization,
+                                value = wasdSway.coerceIn(1f, 100f),
+                                valueRange = 1f..100f,
+                                steps = 98,
+                                onValueChange = { onSetWasdSway(it.roundToInt().toFloat()) }
+                            )
+                            Text(
+                                "按住期间的轻微摆头，满值约 ±1.5°，默认 50；跑动觉得方向飘就调小。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("换向 / 疾跑推杆过渡", style = MaterialTheme.typography.titleMedium)
+                                }
+                                Switch(
+                                    checked = wasdTransition,
+                                    onCheckedChange = onSetWasdTransition
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "过渡时长",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text("$wasdTransitionMs ms")
+                            }
+                            Slider(
+                                enabled = wasdTransition,
+                                value = wasdTransitionMs.toFloat().coerceIn(40f, 200f),
+                                valueRange = 40f..200f,
+                                steps = 15,
+                                onValueChange = { onSetWasdTransitionMs(it.roundToInt()) }
+                            )
+                            Text(
+                                "这个值现在就是真实总时长：不会再因为「最少 6ms 一步」被偷偷拉长。" +
+                                    "默认 60ms；调小更跟手，调大更像拇指推杆。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "过渡段毛刺",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text("${(wasdTransitTremor * 10).roundToInt() / 10f} px")
+                            }
+                            Slider(
+                                enabled = wasdHumanization && wasdTransition,
+                                value = wasdTransitTremor.coerceIn(0f, 2f),
+                                valueRange = 0f..2f,
+                                steps = 19,
+                                onValueChange = { onSetWasdTransitTremor(it) }
+                            )
+                            Text(
+                                "默认 0.4px。只让轨迹不是完美曲线，不参与时长和落点计算，调到 0 就是完全光滑。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "到位驻留抖动",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text("${(wasdHoldTremor * 10).roundToInt() / 10f} px")
+                            }
+                            Slider(
+                                enabled = wasdHumanization,
+                                value = wasdHoldTremor.coerceIn(0f, 4f),
+                                valueRange = 0f..4f,
+                                steps = 39,
+                                onValueChange = { onSetWasdHoldTremor(it) }
+                            )
+                            Text(
+                                "默认 0.8px。触点停稳后围绕落点的小幅呼吸，不会把方向拽偏。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "到位后静默",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text("$wasdHoldSettleMs ms")
+                            }
+                            Slider(
+                                enabled = wasdHumanization,
+                                value = wasdHoldSettleMs.toFloat().coerceIn(0f, 800f),
+                                valueRange = 0f..800f,
+                                steps = 15,
+                                onValueChange = { onSetWasdHoldSettleMs(it.roundToInt()) }
+                            )
+                            Text(
+                                "默认 150ms。先停稳再抖，避免「还没到位就开始晃」影响手感。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("随机偏移间隔", style = MaterialTheme.typography.titleMedium)
+                                    Text(
+                                        "打开后在下方区间内随机，默认 200–300ms；关闭时回落到通用间隔。",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = wasdJitterRandomEnabled,
+                                    onCheckedChange = onSetWasdJitterRandomEnabled
+                                )
+                            }
+                            if (wasdJitterRandomEnabled) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "间隔下限",
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text("${wasdJitterMinMs} ms")
+                                }
+                                Slider(
+                                    value = wasdJitterMinMs.toFloat().coerceIn(50f, 1000f),
+                                    valueRange = 50f..1000f,
+                                    onValueChange = {
+                                        onSetWasdJitterRange(it.roundToInt(), wasdJitterMaxMs)
+                                    }
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "间隔上限",
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text("${wasdJitterMaxMs} ms")
+                                }
+                                Slider(
+                                    value = wasdJitterMaxMs.toFloat().coerceIn(50f, 1000f),
+                                    valueRange = 50f..1000f,
+                                    onValueChange = {
+                                        onSetWasdJitterRange(wasdJitterMinMs, it.roundToInt())
+                                    }
+                                )
+                            }
+                        }
+
+                        // ── 其他按键拟人化 ─────────────────────────────────────
+                        SettingsSectionCard(
+                            title = "其他按键拟人化",
+                            scope = SettingsScope.GLOBAL,
+                            hint = "开火 / 自定义等 · 与 WASD 独立",
+                            initiallyExpanded = false,
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("启用其他按键拟人化", style = MaterialTheme.typography.titleMedium)
+                                }
+                                Switch(checked = keyHumanization, onCheckedChange = onSetKeyHumanization)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "落点偏移强度（1–100）",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text("${humanizationStrength.roundToInt()} / 100")
+                            }
+                            Slider(
+                                enabled = keyHumanization,
+                                value = humanizationStrength.coerceIn(1f, 100f),
+                                valueRange = 1f..100f,
+                                steps = 98,
+                                onValueChange = { onSetHumanizationStrength(it.roundToInt().toFloat()) }
+                            )
+                            Text(
+                                "普通按键落点最大 8px，默认 50。WASD 的摆头与毛刺在上面单独控制。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "抖动间隔",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    if (humanizationInterval >= 1000L)
+                                        "${humanizationInterval / 1000f} 秒"
+                                    else "${humanizationInterval} ms"
+                                )
+                            }
+                            Slider(
+                                enabled = keyHumanization,
+                                value = humanizationInterval.toFloat().coerceIn(200f, 3000f),
+                                valueRange = 200f..3000f,
+                                steps = 27,
+                                onValueChange = { onSetHumanizationInterval(it.roundToInt().toLong()) }
+                            )
+                            Text(
+                                "默认 1000ms（约每秒一次）。关闭 WASD 随机间隔时，WASD 也复用它。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        // ── 鼠标拟人化（与 WASD 完全独立） ─────────────────────
+                        SettingsSectionCard(
+                            title = "鼠标拟人化",
+                            scope = SettingsScope.GLOBAL,
+                            hint = "瞄准回中 / 空闲重锚 · 与 WASD 互不影响",
+                            initiallyExpanded = false,
+                        ) {
+                            Text(
+                                "鼠标走「累加位移 + 顶边回中」：不会插入过渡动画，也不会被 WASD 的毛刺影响。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "回中最小间隔",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text("$aimRecenterIntervalMs ms")
+                            }
+                            Slider(
+                                value = aimRecenterIntervalMs.toFloat().coerceIn(0f, 120f),
+                                valueRange = 0f..120f,
+                                steps = 23,
+                                onValueChange = { onSetAimRecenterIntervalMs(it.roundToInt()) }
+                            )
+                            Text(
+                                "默认 50ms。调小跟手更紧，但抬按更频繁；" +
+                                    "没有按 WASD 时会自动降到 16ms，纯转视角不会等这么久。" +
+                                    "回中策略（经典 / 即回中 / 缓冲补发）仍在射击键的齿轮里。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "空闲重锚",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    if (aimIdleReanchorMs <= 0) "关闭"
+                                    else "停手 $aimIdleReanchorMs ms 后重新落指"
+                                )
+                            }
+                            Slider(
+                                value = aimIdleReanchorMs.toFloat().coerceIn(0f, 5000f),
+                                valueRange = 0f..5000f,
+                                steps = 49,
+                                onValueChange = { onSetAimIdleReanchorMs(it.roundToInt()) }
+                            )
+                            Text(
+                                "停手超过这个时间，下次移动前会抬指重按，轨迹出现自然断点；" +
+                                    "拖到 0 表示一直沿用原位置。",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        // ── 输入监控（仅 debug 构建） ─────────────────────────
+                        val debugContext = LocalContext.current
+                        val debuggable =
+                            (debugContext.applicationInfo.flags and
+                                android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                        if (debuggable) {
+                            var stats by remember { mutableStateOf(InputStats.snapshot()) }
+                            LaunchedEffect(Unit) {
+                                while (true) {
+                                    stats = InputStats.snapshot()
+                                    delay(1000L)
+                                }
+                            }
+                            SettingsSectionCard(
+                                title = "输入监控（调试）",
+                                scope = SettingsScope.GLOBAL,
+                                hint = "仅 debug 构建 · 每秒刷新",
+                                initiallyExpanded = false,
+                            ) {
+                                Text(
+                                    "入队 ${stats.enqueued} · 出队 ${stats.dequeued} · 注入 ${stats.injectPerSec}/s",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    "队列等待 P50 ${stats.waitP50}ms · P95 ${stats.waitP95}ms · " +
+                                        "P99 ${stats.waitP99}ms · 最大 ${stats.waitMax}ms",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    "WASD 过渡：配置 ${stats.transitionConfiguredMs}ms · " +
+                                        "实际 ${stats.transitionActualMs}ms",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    "回中 ${stats.recenterCount} 次 · 上次间隔 ${stats.recenterIntervalMs}ms · " +
+                                        "鼠标解析 ${stats.mouseAxisMode}",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    "P95 长期大于一帧（约 16ms）说明注入队列在积压；" +
+                                        "过渡实际值远大于配置值说明调度被拖慢。",
+                                    style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Switch(
-                                checked = wasdJitterRandomEnabled,
-                                onCheckedChange = onSetWasdJitterRandomEnabled
-                            )
                         }
-                        if (wasdJitterRandomEnabled) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    "间隔下限",
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Text("${wasdJitterMinMs} ms")
-                            }
-                            Slider(
-                                value = wasdJitterMinMs.toFloat().coerceIn(50f, 1000f),
-                                valueRange = 50f..1000f,
-                                onValueChange = {
-                                    onSetWasdJitterRange(it.roundToInt(), wasdJitterMaxMs)
-                                }
-                            )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    "间隔上限",
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Text("${wasdJitterMaxMs} ms")
-                            }
-                            Slider(
-                                value = wasdJitterMaxMs.toFloat().coerceIn(50f, 1000f),
-                                valueRange = 50f..1000f,
-                                onValueChange = {
-                                    onSetWasdJitterRange(wasdJitterMinMs, it.roundToInt())
-                                }
-                            )
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "通用随机偏移间隔（其他按键）",
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                if (humanizationInterval >= 1000L)
-                                    "${humanizationInterval / 1000f} 秒"
-                                else "${humanizationInterval} ms"
-                            )
-                        }
-                        Slider(
-                            enabled = keyHumanization,
-                            value = humanizationInterval.toFloat().coerceIn(200f, 3000f),
-                            valueRange = 200f..3000f,
-                            steps = 27,
-                            onValueChange = { onSetHumanizationInterval(it.roundToInt().toLong()) }
-                        )
-                        Text(
-                            "用于「其他按键拟人化」：按住普通按键期间按这个间隔轻微抖动；" +
-                                "关闭 WASD 随机间隔时，WASD 也使用它。默认 1000ms（约每秒一次）。",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                }
                     }
                     if (page == 2) {
                 SettingsSectionCard(

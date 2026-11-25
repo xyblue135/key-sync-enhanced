@@ -23,6 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,6 +38,14 @@ import kotlin.math.ln
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
+import java.util.concurrent.Executors
+
+/** WASD 过渡/抖动专用单线程，避免和历史 Main 调度抢帧。 */
+private val motionDispatcher = Executors
+    .newSingleThreadExecutor { runnable ->
+        Thread(runnable, "KeySyncMotion").apply { isDaemon = true }
+    }
+    .asCoroutineDispatcher()
 
 
 private const val MASK_W = 1 shl 0
@@ -302,7 +311,7 @@ class EventHandler(
         MASK_SPRINT,
         release = { eventInjector.releaseGesture(it) },
         start = { id, center, target -> eventInjector.injectGesture(id, center, target) },
-        move = { id, target -> eventInjector.transFormGesture(id, target) },
+        move = { id, target -> eventInjector.transFormGesture(id, target, wasdGeneration) },
     )
 
     private val keyIdMap = HashMap<Int, Int>(64)
@@ -393,6 +402,34 @@ class EventHandler(
     // 持键期间低频率重掷抖动。间隔可配置（默认 1s），并带 ±20% 随机，
     // 避免固定周期本身成为可提取的规律。
     private val humanizeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    /**
+     * 轨迹/抖动计时专用线程。
+     *
+     * 放在 Main 上会和 Compose 抢帧：6ms 的步进经常被拖到 16ms 以后，
+     * 表现为换向时快时慢。这里用独立单线程跑 WASD 过渡与驻留抖动，
+     * 只做时间调度和「计算落点 → 入注入队列」，不碰 UI。
+     */
+    private val motionScope = CoroutineScope(SupervisorJob() + motionDispatcher)
+
+    /** 每次摇杆换向递增；用于让旧代已入队的 MOVE 失效。 */
+    @Volatile
+    private var wasdGeneration = 0L
+    private var transitionPointerId = -1
+    private var wasdJitterMask = 0
+    private var wasdJitterPointerId = -1
+
+    /** 过渡段叠加的极小毛刺（px），只影响外观，不改变时长与落点。 */
+    @Volatile
+    var wasdTransitTremorPx = DEFAULT_WASD_TRANSIT_TREMOR_PX
+
+    /** 到位驻留后的抖动幅度（px）。 */
+    @Volatile
+    var wasdHoldTremorPx = DEFAULT_WASD_HOLD_TREMOR_PX
+
+    /** 到位后先静默多久再开始驻留抖动（ms），避免「还没停稳就抖」。 */
+    @Volatile
+    var wasdHoldSettleMs = DEFAULT_WASD_HOLD_SETTLE_MS
     private var wasdJitterJob: Job? = null
     private var wasdTransitionJob: Job? = null
     /** 松开全部方向键后的回中协程；新方向按下时会取消它，直接接弧。 */
@@ -505,6 +542,8 @@ class EventHandler(
     private fun stopWasdJitter() {
         wasdJitterJob?.cancel()
         wasdJitterJob = null
+        wasdJitterMask = 0
+        wasdJitterPointerId = -1
     }
 
     private fun stopWasdTransition() {
@@ -567,8 +606,6 @@ class EventHandler(
         } else {
             chordLength * 1.35f
         }
-        val steps = kotlin.math.ceil(pathLength / TRANSITION_SEGMENT_PX)
-            .toInt().coerceIn(6, 18)
         // 大换向略延长过渡，让弧线有足够时间铺开；再叠 ±15% 时长抖动，
         // 避免每段花瓣的节奏完全一致；仍在可调范围内。
         // 反向切换（A↔D）要跟手，不额外拉长，反而略快一点。
@@ -580,11 +617,17 @@ class EventHandler(
         val duration = (baseDuration * turnScale *
             (0.85f + Random.nextFloat() * 0.30f)).toInt()
             .coerceIn(MIN_WASD_TRANSITION_MS, MAX_WASD_TRANSITION_MS)
-        wasdTransitionJob = humanizeScope.launch {
-            val stepDelay = (duration / steps).coerceAtLeast(6).toLong()
+        // 步数只服务采样密度，不再反向决定总时长（旧的 6ms 下限会把 60ms 拖成 108ms）。
+        val steps = WasdTransitionPlan.steps(duration, pathLength)
+        val generation = wasdGeneration
+        wasdTransitionJob = motionScope.launch {
+            val startedAt = SystemClock.uptimeMillis()
             for (i in 1..steps) {
-                delay(stepDelay)
-                if (!isActive) return@launch
+                // 按绝对时间点对齐，避免 delay 漂移把总时长越拖越长。
+                val wait = WasdTransitionPlan.dueTimeMs(startedAt, duration, steps, i) -
+                    SystemClock.uptimeMillis()
+                if (wait > 0L) delay(wait)
+                if (!isActive || generation != wasdGeneration) return@launch
                 if (i == steps) {
                     // 最后一帧必须精确落到目标点；jitter 会因为目标相同而跳过。
                     joystickMotion.finishMove(pointerId, mask, end)
@@ -597,11 +640,16 @@ class EventHandler(
                     } else {
                         bezierPoint(start, control, end, t)
                     }
-                    // 中间点叠加高频毛刺，避免 WA/WD 疾跑这类长弧变成完美的圆。
-                    // 最后一帧不抖，保证落点精确。
-                    joystickMotion.jitter(pointerId, mask, point + tremorOffset(center, point, 0.8f))
+                    // 过渡段只叠极小毛刺（默认 0.4px）：外观不再是完美曲线，
+                    // 但不参与时长和落点计算。明显的抖动留到到位驻留阶段。
+                    joystickMotion.jitter(
+                        pointerId,
+                        mask,
+                        point + tremorOffset(center, point, wasdTransitTremorPx),
+                    )
                 }
             }
+            InputStats.onTransition(duration, SystemClock.uptimeMillis() - startedAt)
         }
     }
 
@@ -768,8 +816,18 @@ class EventHandler(
         map: KeyMap,
         baseTarget: Offset,
     ) {
+        // 同一方向的长按 repeat 会反复进来；已经在跑就别重启，
+        // 否则「到位后先静一段」的等待会被无限重置，驻留抖动永远不开始。
+        if (wasdJitterJob?.isActive == true &&
+            wasdJitterMask == mask &&
+            wasdJitterPointerId == pointerId
+        ) return
         wasdJitterJob?.cancel()
-        wasdJitterJob = humanizeScope.launch {
+        wasdJitterMask = mask
+        wasdJitterPointerId = pointerId
+        wasdJitterJob = motionScope.launch {
+            // 过渡期间不抖；再额外静默一小段，等触点真正落定后再开始驻留抖动。
+            delay(wasdHoldSettleMs.coerceIn(0, 800).toLong())
             // 高频毛刺固定 55–80ms 一次；慢速摆头仍按用户设定的「抖动间隔」推进。
             // 轨迹图里这样才能看到密集的小锯齿，而不是每 200ms 一个折角。
             var nextSwayAt = 0L
@@ -785,7 +843,8 @@ class EventHandler(
                     advanceSway()
                     nextSwayAt = now + nextWasdJitterDelay()
                 }
-                val target = jitterTarget(center, baseTarget) + tremorOffset(center, baseTarget)
+                val target = jitterTarget(center, baseTarget) +
+                    tremorOffset(center, baseTarget, wasdHoldTremorPx)
                 joystickMotion.jitter(pointerId, mask, target)
             }
         }
@@ -885,11 +944,16 @@ class EventHandler(
     // 回中边界留白（px）：触点在距屏幕边缘此距离内即回中，避免触点压到物理边缘像素。
     private var aimEdgeMargin = 8f
 
-    // 回中节流：两次回中之间的最小间隔（ms）。快速甩鼠标（高灵敏度）时触点连续越界，
-    // 若不限流就会高频「抬按回中」，aim 触点反复 POINTER_UP/DOWN，多指↔单指切换会触发
-    // 游戏重置摇杆触点（WASD 断触）。正常滑动回中频率远低于此间隔，不受影响。
-    private val recenterMinIntervalMs = 50L
+    // 回中节流：两次回中之间的最小间隔（ms，可在设置里调）。快速甩鼠标（高灵敏度）时
+    // 触点连续越界，若不限流就会高频「抬按回中」，aim 触点反复 POINTER_UP/DOWN，
+    // 多指↔单指切换会触发游戏重置摇杆触点（WASD 断触）。
+    // 纯转向（没有按 WASD）时自动降到 [AIM_RECENTER_IDLE_MS]，让边界跟手更紧。
+    @Volatile
+    var recenterMinIntervalMs = 50L
     private var lastRecenterTime = 0L
+
+    private fun effectiveRecenterIntervalMs(): Long =
+        AimRecenterMode.recenterIntervalMs(recenterMinIntervalMs, wasdMask != 0)
 
     /**
      * 越界后没发出去的位移。
@@ -1251,6 +1315,13 @@ class EventHandler(
         // 否则 80ms 的弧线只走了第一帧就被截断。
         if (!directionChanged && wasdTransitionJob?.isActive == true) return
         val starting = joystickMotion.activeMask == 0
+        // 方向真的变化时才换代：让上一段已经入队的 MOVE 立即失效，
+        // 避免「按 A 时先把 W 的旧轨迹走完」的拖尾。DOWN/UP 不受代次过滤。
+        if (directionChanged || starting) {
+            wasdGeneration++
+            transitionPointerId = pointerId
+            eventInjector.setMoveGeneration(pointerId, wasdGeneration)
+        }
         val actualStart = joystickMotion.target
         val center = entry.center!!
         lastWasdCenter = center
@@ -1473,11 +1544,13 @@ class EventHandler(
                     // 经典：顶边立刻在当前回调里同步回中，溢出直接丢弃，
                     // 不缓存、不补跳、不走协程——最接近早期版本的手感。
                     pendingAimOverflow = Offset.Zero
-                    if (now - lastRecenterTime >= recenterMinIntervalMs) {
+                    val interval = effectiveRecenterIntervalMs()
+                    if (now - lastRecenterTime >= interval) {
                         val landing = clampAimToBounds(aimCenter)
                         eventInjector.releasePointer(pointerId)
                         eventInjector.injectPointer(pointerId, landing)
                         aimPosition = landing
+                        InputStats.onRecenter(if (lastRecenterTime == 0L) 0L else now - lastRecenterTime)
                         lastRecenterTime = now
                     }
                 } else {
@@ -1533,7 +1606,7 @@ class EventHandler(
         overflowDrainJob = humanizeScope.launch {
             var segments = 0
             while (isActive && shouldRecenterForOverflow() && segments < MAX_OVERFLOW_SEGMENTS) {
-                val wait = (recenterMinIntervalMs -
+                val wait = (effectiveRecenterIntervalMs() -
                     (SystemClock.uptimeMillis() - lastRecenterTime)).coerceAtLeast(0L)
                 if (wait > 0L) delay(wait)
                 if (!shootingMode) {
@@ -1597,7 +1670,9 @@ class EventHandler(
             // 落点已贴着该方向的边界，无法再走；清掉避免死循环。
             pendingAimOverflow = Offset.Zero
         }
-        lastRecenterTime = SystemClock.uptimeMillis()
+        val now = SystemClock.uptimeMillis()
+        InputStats.onRecenter(if (lastRecenterTime == 0L) 0L else now - lastRecenterTime)
+        lastRecenterTime = now
     }
 
     /**
@@ -2122,6 +2197,12 @@ class EventHandler(
         const val OPPOSITE_TURN_RAD = 2.09f
         /** 过渡采样目标：每段弧长不超过约 34px，避免回放被拉成折线。 */
         const val TRANSITION_SEGMENT_PX = 34f
+        /** 过渡段叠加的极小毛刺（px）：保留人手锯齿感，但不影响时长与落点。 */
+        const val DEFAULT_WASD_TRANSIT_TREMOR_PX = 0.4f
+        /** 到位驻留后的抖动幅度（px）。 */
+        const val DEFAULT_WASD_HOLD_TREMOR_PX = 0.8f
+        /** 到位后先静默多久再开始驻留抖动（ms）。 */
+        const val DEFAULT_WASD_HOLD_SETTLE_MS = 150
         /** 越界溢出的最大缓存倍数（相对活动范围半宽）。 */
         const val MAX_AIM_OVERFLOW_FACTOR = 4f
         /** 一次甩动最多补发多少段，防止异常残差导致无限抬按。 */

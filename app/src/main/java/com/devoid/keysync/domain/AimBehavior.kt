@@ -56,5 +56,19 @@ enum class AimRecenterMode {
         const val INSTANT_MIN_OVERFLOW_PX = 2f
         const val BUFFERED_OVERFLOW_RATIO = 0.30f
         const val BUFFERED_MIN_OVERFLOW_PX = 24f
+
+        /** 纯转视角（没有按 WASD）时回中节流的上限：边界跟手优先。 */
+        const val IDLE_RECENTER_INTERVAL_MS = 16L
+
+        /**
+         * 实际生效的回中间隔。
+         *
+         * 按住 WASD 时保持用户配置（默认 50ms），因为高频抬按会打断摇杆触点；
+         * 只转视角时自动降到 16ms，避免顶边时多等一帧以上。
+         */
+        fun recenterIntervalMs(configuredMs: Long, wasdActive: Boolean): Long {
+            val configured = configuredMs.coerceIn(0L, 120L)
+            return if (wasdActive) configured else minOf(configured, IDLE_RECENTER_INTERVAL_MS)
+        }
     }
 }

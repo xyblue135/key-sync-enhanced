@@ -95,6 +95,14 @@ class DataStoreManager internal constructor(
         val HUMANIZATION_STRENGTH_SCALE = intPreferencesKey("humanization_strength_scale")
         /** WASD 方向晃动幅度 1–100（独立于整体强度）。 */
         val WASD_SWAY = intPreferencesKey("wasd_sway")
+        /** 过渡段极小毛刺幅度，按 0.1px 存整数（默认 4 = 0.4px）。 */
+        val WASD_TRANSIT_TREMOR = intPreferencesKey("wasd_transit_tremor_tenth_px")
+        /** 到位驻留抖动幅度，按 0.1px 存整数（默认 8 = 0.8px）。 */
+        val WASD_HOLD_TREMOR = intPreferencesKey("wasd_hold_tremor_tenth_px")
+        /** 到位后静默多久再开始驻留抖动（ms）。 */
+        val WASD_HOLD_SETTLE_MS = intPreferencesKey("wasd_hold_settle_ms")
+        /** 鼠标回中节流（ms，0–120）。 */
+        val AIM_RECENTER_INTERVAL_MS = intPreferencesKey("aim_recenter_interval_ms")
         /** 随机偏移间隔（ms），默认 1000；全局键，与拟人化开关一起生效。 */
         val HUMANIZATION_INTERVAL_MS = intPreferencesKey("humanization_interval_ms")
         /** WASD 换向时是否沿圆弧过渡，默认开启。 */

@@ -44,4 +44,12 @@ class PendingMovesTest {
         assertNull(moves.take(second))
         assertEquals(Offset(1f, 1f), moves.take(fresh))
     }
+
+    @Test fun mergedBatchKeepsNewestGeneration() {
+        val moves = PendingMoves()
+        val batch = moves.add(1, Offset(2f, 0f), generation = 3L)!!
+        assertNull(moves.add(1, Offset(5f, 0f), generation = 7L))
+        assertEquals(7L, batch.generation)
+        assertEquals(Offset(7f, 0f), moves.take(batch))
+    }
 }
