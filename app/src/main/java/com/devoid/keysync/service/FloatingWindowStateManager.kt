@@ -318,8 +318,6 @@ class FloatingWindowStateManager @Inject constructor(
     private var fScrollControlActive = false
     /** 连续滚轮逐格排队执行，避免多根手指同时滑动。 */
     private val scrollSwipeMutex = Mutex()
-    /** 编辑态图层：false = 按键层，true = 高级层（丢弃点）。 */
-    val editAdvancedLayer = MutableStateFlow(false)
 
     /** 玩法模式：0 = 简易，1 = 高级 A，2 = 高级 B。 */
     val playModes = MutableStateFlow(DefaultPlayModes)
@@ -1050,8 +1048,9 @@ class FloatingWindowStateManager @Inject constructor(
      */
     private fun handleExtraTap(keyCode: Int) {
         val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return
-        // ESC 专属模式：每次按下 ESC 后延迟依次点击全部落点，本体映射仍照常触发。
-        if (keyCode == KeyEvent.KEYCODE_ESCAPE && escAfterTapEnabled.value) {
+        // 批量落点模式：任何配置了落点的键（ESC、F 等），每次按下后延迟依次点击
+        // 该键的全部落点，本体映射仍照常触发。未开启时退回「快速连按才补点」。
+        if (escAfterTapEnabled.value) {
             val points = profile.extraTapPoints.filter { it.keyCode == keyCode }
             if (points.isEmpty()) return
             eventHandler.tapExtraPointsSequential(
@@ -1518,6 +1517,21 @@ class FloatingWindowStateManager @Inject constructor(
         updateExtraTapPoints(profile.extraTapPoints.filterNot { it.keyCode == keyCode })
     }
 
+    /** 删除某个按键的第 [index] 个连按落点（index 按该键自己的顺序，从 0 起）。 */
+    fun removeExtraTapPoint(keyCode: Int, index: Int) {
+        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return
+        var seen = -1
+        val updated = profile.extraTapPoints.filter { point ->
+            if (point.keyCode != keyCode) {
+                true
+            } else {
+                seen++
+                seen != index
+            }
+        }
+        if (updated.size != profile.extraTapPoints.size) updateExtraTapPoints(updated)
+    }
+
     private fun updateExtraTapPoints(points: List<ExtraTapPoint>) {
         val id = _activeProfileId.value
         _profiles.value = _profiles.value.map {
@@ -1952,11 +1966,6 @@ class FloatingWindowStateManager @Inject constructor(
         if (!mode.fCursor) fScrollControlActive = false
     }
 
-    /** 编辑态图层切换（高级层显示丢弃点）。 */
-    fun setEditAdvancedLayer(advanced: Boolean) {
-        editAdvancedLayer.value = advanced
-    }
-
     /**
      * F 唤出光标后接管滚轮：在光标当前位置注入一次短滑。
      * 返回 false 时由调用方继续走原有滚轮映射。
@@ -2085,49 +2094,53 @@ class FloatingWindowStateManager @Inject constructor(
             refreshMouseAreaAnchor()
         }
         eventHandler.updateMeasuredPosition(item)
-        pullItemIntoViewport(item)
+        // 只测量，不改布局、不落盘。
+        // 这里以前会 pullItemIntoViewport() 并 persistActiveProfile()，而
+        // onGloballyPositioned 在启动首帧、insets 变化、旋转后都会触发。
+        // 一旦首帧视口比真实视口小，顶部按钮就被夹进来并永久保存，
+        // 重启后继续沿用错误位置——这就是「右上角按钮每次重启下移」的持久化路径。
+        // 真正的越界修复改为用户进入编辑态时集中处理（见 toggleEditMode）。
     }
 
     /**
-     * Pull an item back inside the visible overlay once its real size is known.
+     * 进入编辑态时集中修复真正越界的按钮。
      *
-     * A layout saved on another device, restored into a differently sized window,
-     * or dragged past the edge before the drag clamp existed can sit outside the
-     * overlay, where it is drawn clipped and can no longer be grabbed. Compose
-     * reports a button's size only after it has been measured, which is why this
-     * runs from [updateMeasuredPosition] rather than from the drag handler.
+     * 只有用户主动进入编辑才允许改坐标并保存；启动测量过程绝不能改预设。
+     * 判据是「按钮中心是否还在屏幕内」：顶部按钮允许保留少量负坐标，
+     * 完全跑到屏幕外的旧布局才会被拉回。这正是 1.81「重启后顶部按钮下移」
+     * 没修干净的那条持久化路径。
      */
-    private fun pullItemIntoViewport(item: DraggableItem) {
+    private fun repairItemsIntoViewport() {
         val viewport = overlayViewport ?: return
-        val size = when (item) {
-            is DraggableItem.FixedKey -> item.size
-            is DraggableItem.VariableKey -> item.size
-            is DraggableItem.CancelableKey -> item.size
-            // A WASD group has no cached measurement; the drag clamp covers it.
-            is DraggableItem.WASDGroup -> return
-        }
-        if (size <= 0) return
-        val target = clampToViewport(
-            item.position,
-            Size(size.toFloat(), size.toFloat()),
-            _appConfig.value.buttonScale,
-            Size(viewport.x, viewport.y),
-        )
-        if (target == item.position) return
         val origin = overlayOrigin ?: Offset.Zero
-        _containerItems.value = _containerItems.value.map { current ->
-            if (current.id != item.id) {
-                current
-            } else {
-                current.copy(position = target).also {
-                    it.anchorPosition = target
-                    it.touchCenter = origin + target + Offset(size / 2f, size / 2f)
-                }
+        val limit = Size(viewport.x, viewport.y)
+        var changed = false
+        val repaired = _containerItems.value.map { item ->
+            val size = when (item) {
+                is DraggableItem.FixedKey -> item.size
+                is DraggableItem.VariableKey -> item.size
+                is DraggableItem.CancelableKey -> item.size
+                is DraggableItem.WASDGroup -> 0
+            }
+            if (size <= 0) return@map item
+            val target = clampToViewport(
+                item.position,
+                Size(size.toFloat(), size.toFloat()),
+                _appConfig.value.buttonScale,
+                limit,
+            )
+            if (target == item.position) return@map item
+            changed = true
+            Log.i(TAG, "repair item ${item.id} into viewport: ${item.position} -> $target")
+            item.copy(position = target).also {
+                it.anchorPosition = target
+                it.touchCenter = origin + target + Offset(size / 2f, size / 2f)
             }
         }
-        eventHandler.updateKeyMapping(_containerItems.value)
+        if (!changed) return
+        _containerItems.value = repaired
+        eventHandler.updateKeyMapping(repaired)
         persistActiveProfile()
-        Log.i(TAG, "pulled item ${item.id} back into the viewport: ${item.position} -> $target")
     }
 
     fun consumePendingVariableKeyBind() {
@@ -2562,8 +2575,9 @@ class FloatingWindowStateManager @Inject constructor(
         clearActivePointers()
         eventHandler.screenSize = currentScreenSize()
         if (!_isEditMode.value) {
-            // 进入编辑：先拍快照。编辑过程中拖动会直接改 item 的坐标，
-            // 且部分操作会立即落盘，所以快照必须深拷贝。
+            // 进入编辑：先把真正跑到屏幕外的按钮拉回来（用户主动操作，允许保存），
+            // 再拍快照。顺序不能反，否则取消编辑会把这次修复一起回滚。
+            repairItemsIntoViewport()
             editSnapshot = EditSnapshot(
                 profiles = _profiles.value.map { it.deepCopied() },
                 containerItems = _containerItems.value.map { it.copy() },
@@ -2576,7 +2590,6 @@ class FloatingWindowStateManager @Inject constructor(
         // 编辑态不接管滚轮；退出编辑时回到按键层，避免下次进入还停在高级层。
         fScrollControlActive = false
         if (!_isEditMode.value) {
-            editAdvancedLayer.value = false
             eventHandler.updateKeyMapping(containerItems.value)
             syncMacros()
             // Position/size edits currently mutate DraggableItem in place, so
@@ -2620,7 +2633,6 @@ class FloatingWindowStateManager @Inject constructor(
         _isEditMode.value = false
         _pressedKeys.value = emptySet()
         fScrollControlActive = false
-        editAdvancedLayer.value = false
         eventHandler.updateKeyMapping(restored)
         syncMacros()
         persistActiveProfile()
@@ -2731,10 +2743,11 @@ class FloatingWindowStateManager @Inject constructor(
         ) {
             if (handleMapMouseToggle()) return true
         }
-        // F 交互后左键唤出光标：只记时间戳，不注册监听；左键命中后立即清空。
+        // F 交互后左键/中键唤出光标：只记时间戳，不注册监听；命中后立即清空。
+        // 按住 Shift 时按 F 视为组合键（如 Shift+F），不进入唤出光标的窗口。
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
             keyEvent.keyCode == KeyEvent.KEYCODE_F && fCursorClickEnabled.value &&
-            activePlayMode.fCursor && isShootingMode.value
+            activePlayMode.fCursor && isShootingMode.value && !keyEvent.isShiftPressed
         ) {
             fInteractArmedAt = SystemClock.uptimeMillis()
         }
@@ -2939,9 +2952,11 @@ class FloatingWindowStateManager @Inject constructor(
             _pressedKeys.value = if (pressed) _pressedKeys.value + key else _pressedKeys.value - key
             _lastInputLabel.value = key.keyCodeToString() + if (pressed) " 按下" else " 松开"
         }
-        // F 交互后窗口时间内首次左键：先切出光标，再转发这一下左键，
+        // F 交互后窗口时间内首次左键或中键：先切出光标，再转发这一下按键，
         // 让它按「光标模式」在光标位置点击；触发后立刻清空时间戳，一轮只生效一次。
-        if (pressed && button == MotionEvent.BUTTON_PRIMARY && fCursorClickEnabled.value &&
+        if (pressed &&
+            (button == MotionEvent.BUTTON_PRIMARY || button == MotionEvent.BUTTON_TERTIARY) &&
+            fCursorClickEnabled.value &&
             activePlayMode.fCursor &&
             isShootingMode.value && fInteractArmedAt > 0L &&
             SystemClock.uptimeMillis() - fInteractArmedAt <= fCursorClickWindowMs.value

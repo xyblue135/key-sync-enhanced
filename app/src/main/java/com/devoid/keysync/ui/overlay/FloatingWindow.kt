@@ -142,6 +142,7 @@ fun ItemsContainer(
     extraTapPoints: List<ExtraTapPoint> = emptyList(),
     onAddExtraTapPoint: (Int) -> Unit = {},
     onMoveExtraTapPoint: (Int, Int, Offset) -> Unit = { _, _, _ -> },
+    onRemoveExtraTapPoint: (Int, Int) -> Unit = { _, _ -> },
     onClearExtraTapPoints: (Int) -> Unit = {},
     /** Alt+D 拖拽丢弃的落点（竖条中心）；只在编辑态渲染。 */
     discardPoint: Offset? = null,
@@ -167,8 +168,6 @@ fun ItemsContainer(
     onAimRecenterModeChange: (AimRecenterMode) -> Unit = {},
     /** WASD 回中落点随机圆半径（px），编辑态在摇杆中心画出来。 */
     wasdCenterJitterPx: Int = 8,
-    /** 编辑态图层：true = 高级层（丢弃点可拖动，按键层半透明预览）。 */
-    advancedLayerActive: Boolean = false,
     /** 运行时是否显示普通按键层（Enter 层级预览用）。 */
     showKeys: Boolean = true,
     /** 运行时是否显示高级层标记（丢弃点），非编辑态只读。 */
@@ -185,11 +184,12 @@ fun ItemsContainer(
     var configuringVariableKey by remember { mutableStateOf<DraggableItem.VariableKey?>(null) }
     var configuringCancelableKey by remember { mutableStateOf<DraggableItem.CancelableKey?>(null) }
 
-    // 编辑态分层：高级层激活时，普通按键半透明预览且不接收拖动，避免互相抢触摸。
-    val keysLayerInteractive = !advancedLayerActive
-    val keysLayerAlpha = if (advancedLayerActive) 0.25f else 1f
+    // 只保留一个编辑层：按键、鼠标范围、丢弃点、连按落点同时可见可拖。
+    // 之前分「按键层 / 高级层」，切换状态容易丢、也容易误触，已合并。
+    val keysLayerInteractive = true
+    val keysLayerAlpha = 1f
     // 任何配置弹框打开时都禁用底层按钮的拖动，避免弹框里的手势把按钮挪走。
-    val draggingEnabled = keysLayerInteractive && configuringWasd == null &&
+    val draggingEnabled = configuringWasd == null &&
         configuringFixedKey == null && configuringVariableKey == null &&
         configuringCancelableKey == null
 
@@ -227,7 +227,7 @@ fun ItemsContainer(
         // 鼠标双范围：大方形限制视角触点的活动范围，小方形决定每次回中的随机落点。
         // 放在最底层绘制，避免挡住按键、丢弃点、光标落点等其他可拖动元素。
         if (editing || showAdvancedMarkers) {
-            val areaAlpha = if (!editing) 0.6f else if (advancedLayerActive) 1f else 0.22f
+            val areaAlpha = if (!editing) 0.6f else 1f
             mouseMoveAreaCenter?.let { c ->
                 MouseAreaBlob(
                     center = c,
@@ -235,7 +235,7 @@ fun ItemsContainer(
                     label = "鼠标范围",
                     color = MaterialTheme.colorScheme.tertiary,
                     alpha = areaAlpha,
-                    enabled = editing && advancedLayerActive,
+                    enabled = editing,
                     onCommit = onMouseAreaChange,
                 )
             }
@@ -246,7 +246,7 @@ fun ItemsContainer(
                     label = "回中范围",
                     color = MaterialTheme.colorScheme.secondary,
                     alpha = areaAlpha,
-                    enabled = editing && advancedLayerActive,
+                    enabled = editing,
                     onCommit = onLandingAreaChange,
                 )
             }
@@ -424,13 +424,17 @@ fun ItemsContainer(
                 key("extra-${point.keyCode}-$index") {
                     var pos by remember(point.x, point.y) { mutableStateOf(Offset(point.x, point.y)) }
                     val density = LocalDensity.current
-                    val radiusPx = with(density) { 14.dp.toPx() }
+                    val radiusPx = with(density) { 18.dp.toPx() }
                     Box(
                         modifier = Modifier
                             .offset { IntOffset((pos.x - radiusPx).toInt(), (pos.y - radiusPx).toInt()) }
-                            .size(28.dp)
-                            .alpha(0.75f * keysLayerAlpha)
-                            .border(1.5.dp, MaterialTheme.colorScheme.tertiary, CircleShape)
+                            .size(36.dp)
+                            .alpha(0.95f * keysLayerAlpha)
+                            .background(
+                                MaterialTheme.colorScheme.tertiary.copy(alpha = 0.18f),
+                                CircleShape,
+                            )
+                            .border(2.dp, MaterialTheme.colorScheme.tertiary, CircleShape)
                             .pointerInput(point.keyCode, point.x, point.y, keysLayerInteractive) {
                                 if (!keysLayerInteractive) return@pointerInput
                                 detectDragGestures(
@@ -447,8 +451,9 @@ fun ItemsContainer(
                     ) {
                         Text(
                             text = "${point.keyCode.keyCodeToString().removePrefix("KEYCODE_")}·${index + 2}",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontSize = 8.sp,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                     }
@@ -471,10 +476,10 @@ fun ItemsContainer(
                                 (pos.y - discardBarHeightPx / 2).toInt())
                         }
                         .size(DISCARD_BAR_WIDTH_DP.dp, DISCARD_BAR_HEIGHT_DP.dp)
-                        .alpha(if (!editing) 1f else if (advancedLayerActive) 0.8f else 0.25f)
+                        .alpha(if (!editing) 1f else 0.8f)
                         .border(1.5.dp, MaterialTheme.colorScheme.error, RoundedCornerShape(6.dp))
-                        .pointerInput(point.x, point.y, advancedLayerActive, editing) {
-                            if (!editing || !advancedLayerActive) return@pointerInput
+                        .pointerInput(point.x, point.y, editing) {
+                            if (!editing) return@pointerInput
                             detectDragGestures(
                                 onDrag = { change, dragAmount ->
                                     change.consume()
@@ -507,10 +512,10 @@ fun ItemsContainer(
                             IntOffset((pos.x - markerPx / 2).toInt(), (pos.y - markerPx / 2).toInt())
                         }
                         .size(CURSOR_SPAWN_MARKER_DP.dp)
-                        .alpha(if (!editing) 1f else if (advancedLayerActive) 0.8f else 0.25f)
+                        .alpha(if (!editing) 1f else 0.8f)
                         .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
-                        .pointerInput(point.x, point.y, advancedLayerActive, editing, viewport) {
-                            if (!editing || !advancedLayerActive) return@pointerInput
+                        .pointerInput(point.x, point.y, editing, viewport) {
+                            if (!editing) return@pointerInput
                             detectDragGestures(
                                 onDrag = { change, dragAmount ->
                                     change.consume()
@@ -545,7 +550,7 @@ fun ItemsContainer(
                 configuringWasd = null
                 wasdSprintPreview = null
             }) {
-                Column(Modifier.padding(24.dp).widthIn(min = 240.dp).verticalScroll(rememberScrollState())) {
+                Column(Modifier.padding(24.dp).widthIn(min = 240.dp)) {
                     Text("Shift 疾跑距离", style = MaterialTheme.typography.titleMedium)
                     Text("W 前向：${forward.roundToInt()} px")
                     Slider(value = forward.coerceIn(10f, 1000f), onValueChange = {
@@ -661,6 +666,7 @@ fun ItemsContainer(
                 extraTapPoints = extraTapPoints,
                 onAddExtraTap = { onAddExtraTapPoint(it) },
                 onClearExtraTaps = { onClearExtraTapPoints(it) },
+                onRemoveExtraTap = { code, index -> onRemoveExtraTapPoint(code, index) },
                 conflictKeys = otherOccupiedKeys(containerItems, target.id),
                 onDelete = {
                     onRemove(target.id)
@@ -689,6 +695,7 @@ fun ItemsContainer(
                 extraTapPoints = extraTapPoints,
                 onAddExtraTap = { onAddExtraTapPoint(it) },
                 onClearExtraTaps = { onClearExtraTapPoints(it) },
+                onRemoveExtraTap = { code, index -> onRemoveExtraTapPoint(code, index) },
                 conflictKeys = otherOccupiedKeys(containerItems, target.id),
                 onDelete = {
                     onRemove(target.id)
@@ -936,6 +943,8 @@ fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
     extraTapPoints: List<ExtraTapPoint> = emptyList(),
     onAddExtraTap: ((Int) -> Unit)? = null,
     onClearExtraTaps: ((Int) -> Unit)? = null,
+    /** 删除单个落点：(keyCode, 该键内的序号)。 */
+    onRemoveExtraTap: ((Int, Int) -> Unit)? = null,
     /** 已被其他按钮占用的按键：命中时禁止确认，避免重复键互相覆盖。 */
     conflictKeys: Set<Int> = emptySet()
 ) {
@@ -972,9 +981,7 @@ fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
     InlineDialog(onDismiss = onDismiss) {
         Column(
             modifier = Modifier
-                .padding(24.dp)
-                .heightIn(max = 560.dp)
-                .verticalScroll(rememberScrollState()),
+                .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
@@ -1052,6 +1059,33 @@ fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
                         enabled = nextExtraCount > 0 && nextCode != KeyEvent.KEYCODE_UNKNOWN,
                         onClick = { onClearExtraTaps(nextCode) }
                     ) { Text("清空落点") }
+                }
+                // 逐个删除：只清空全部的话，误点一次就得重新摆所有落点。
+                val pointsOfKey = extraTapPoints
+                    .filter { it.keyCode == nextCode }
+                if (pointsOfKey.isNotEmpty()) {
+                    Text(
+                        "开启「按下后批量点击落点」后，每次按下该键都会依次点击以下位置；" +
+                            "未开启时只有快速连按才会补点。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                pointsOfKey.forEachIndexed { index, point ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "落点 ${index + 1}：${point.x.roundToInt()}, ${point.y.roundToInt()}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        TextButton(
+                            enabled = onRemoveExtraTap != null,
+                            onClick = { onRemoveExtraTap?.invoke(nextCode, index) }
+                        ) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                    }
                 }
             }
 
@@ -1248,10 +1282,8 @@ fun EditToolbar(
     modifier: Modifier = Modifier,
     keysVisible: Boolean,
     statusBarVisible: Boolean = true,
-    advancedLayerActive: Boolean = false,
     onToggleKeysVisible: () -> Unit,
     onToggleStatusBarVisible: () -> Unit = {},
-    onToggleAdvancedLayer: () -> Unit = {},
     onToggleEditMode: () -> Unit,
     onCancelEdits: () -> Unit = {},
     onAddItem: (DraggableItemType) -> Unit,
@@ -1337,10 +1369,7 @@ fun EditToolbar(
                     else stringResource(R.string.overlay_show_status)
                 )
             }
-            // 编辑态图层：按键层与高级层（丢弃点/滚动锚点）分开，避免互相挡住拖动。
-            TextButton(onClick = onToggleAdvancedLayer) {
-                Text(if (advancedLayerActive) "高级层" else "按键层")
-            }
+            // 已合并为单一编辑层：按键和各种标记同时可拖，不再做层级切换。
             TextButton(onClick = { exitConfirmVisible = true }) {
                 Text(stringResource(R.string.overlay_done))
             }

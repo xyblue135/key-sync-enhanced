@@ -89,12 +89,21 @@ class LayoutProjectionTest {
     }
 
     @Test fun keyCannotBeProjectedPastTheLeftOrTopEdge() {
-        // A button saved off the left edge -- the classic landscape symptom --
-        // must come back inside the viewport instead of staying cut off.
+        // 完全跑到屏幕外的旧坐标（-500）仍要拉回来，但允许保留半个按钮的
+        // 越界量——顶部按钮位置常常就是 y<0，不能一律压到 0 造成永久下移。
         val button = DraggableItem.VariableKey(1, Offset(-500f, -500f), 35, 100)
         val projected = projectLayout(listOf(button), Offset(2608f, 1200f), Offset(2400f, 1080f)).single()
-        assertTrue(projected.position.x >= 0f)
-        assertTrue(projected.position.y >= 0f)
+        assertTrue(projected.position.x >= -50f)
+        assertTrue(projected.position.y >= -50f)
+    }
+
+    @Test fun slightlyNegativeTopEdgeSurvivesResolutionChange() {
+        // 重启时视口从 2400 变成 2330（状态栏/insets）也不该把顶部按钮压进屏幕。
+        val topEdge = DraggableItem.FixedKey(1, Offset(900f, -12f), DraggableItemType.KEY, 35, 100)
+        val projected = projectLayout(
+            listOf(topEdge), Offset(1080f, 2400f), Offset(1080f, 2330f)
+        ).single()
+        assertTrue("y 应保持在边缘外，而不是被压到 0", projected.position.y < 0f)
     }
     @Test fun wasdGroupIsKeptInsideTheProjectedViewport() {
         // The WASD group has no cached size, so its extent comes from the

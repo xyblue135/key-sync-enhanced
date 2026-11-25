@@ -710,12 +710,13 @@ fun SettingsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                "ESC 按下后批量点击落点",
+                                "按下后批量点击落点（ESC / F 等）",
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "物理 ESC 本体映射照常触发；按下后等待设定时间，再依次点击为 ESC 配置的全部「连按落点」，" +
-                                    "落点之间间隔可调。适合关背包后补点两个位置。落点在 ESC 的齿轮里或工具菜单的「ESC 落点」添加。",
+                                "任何配了「连按落点」的键都适用：本体映射照常触发，按下后等待设定时间，" +
+                                    "再依次点击该键的全部落点，落点之间间隔可调。例如 ESC 关背包后补点，" +
+                                    "或 F 交互后补点另一个位置。落点在按键的齿轮里或工具菜单添加。",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -787,12 +788,13 @@ fun SettingsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                "F 交互后左键唤出光标",
+                                "F 交互后左键/中键唤出光标",
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "射击模式下按 F 后的设定时间内，第一次点鼠标左键会直接切出光标，并把这一下变成" +
-                                    "光标位置点击（适合开箱子/拾取）；默认 1000ms；每轮只触发一次，狂按 F 不会叠加。" +
+                                "射击模式下按 F 后的设定时间内，第一次点鼠标左键或中键会直接切出光标，" +
+                                    "并把这一下变成光标位置点击（适合开箱子/拾取）；默认 1000ms；" +
+                                    "每轮只触发一次，狂按 F 不会叠加。按住 Shift 再按 F 不触发。" +
                                     "按 Tab/ESC 回射击模式后立即失效。",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -806,7 +808,7 @@ fun SettingsScreen(
                     if (fCursorClickEnabled) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                "左键触发间隔",
+                                "左键/中键触发间隔",
                                 modifier = Modifier.weight(1f),
                                 style = MaterialTheme.typography.bodyMedium
                             )

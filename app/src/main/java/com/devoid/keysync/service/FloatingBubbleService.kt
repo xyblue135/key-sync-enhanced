@@ -725,30 +725,53 @@ class FloatingBubbleService : Service() {
         // Measure the actual overlay viewport, including changes from rotation/insets.
         composeView.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
             view.post {
-                if (view.isAttachedToWindow) {
+                if (!view.isAttachedToWindow) return@post
+                val wm = getSystemService(WindowManager::class.java)
+                val target = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    wm.maximumWindowMetrics.bounds
+                } else {
+                    @Suppress("DEPRECATION")
+                    val m = resources.displayMetrics
+                    android.graphics.Rect(0, 0, m.widthPixels, m.heightPixels)
+                }
+
+                // 只在「宽高和原点都已经稳定」之后才把视口交给 StateManager。
+                // updateViewLayout 只是请求系统重排，同一帧读到的仍是旧值；
+                // 旧值会让上边缘按钮按缩小后的视口被投影压平，进而写进预设。
+                fun publishWhenStable(attempt: Int) {
+                    if (!view.isAttachedToWindow) return
                     val origin = IntArray(2)
                     view.getLocationOnScreen(origin)
-                    // 自愈：旋转或 OEM inset 导致窗口被下移/缩小时，重新按物理屏幕铺满。
-                    val wm = getSystemService(WindowManager::class.java)
-                    val target = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        wm.maximumWindowMetrics.bounds
+                    val stable = view.width == target.width() &&
+                        view.height == target.height() &&
+                        origin[0] == target.left && origin[1] == target.top
+                    // 6 次 × 50ms 还没稳定就按实际值兜底，避免完全不更新。
+                    if (stable || attempt >= 6) {
+                        stateManager.get().onOverlayFrame(
+                            view.width,
+                            view.height,
+                            androidx.compose.ui.geometry.Offset(
+                                origin[0].toFloat(), origin[1].toFloat()
+                            ),
+                        )
                     } else {
-                        @Suppress("DEPRECATION")
-                        val m = resources.displayMetrics
-                        android.graphics.Rect(0, 0, m.widthPixels, m.heightPixels)
+                        view.postDelayed({ publishWhenStable(attempt + 1) }, 50L)
                     }
-                    if (view.width != target.width() || view.height != target.height() ||
-                        origin[0] != target.left || origin[1] != target.top
-                    ) {
-                        val lp = containerView?.layoutParams as? WindowManager.LayoutParams
-                        if (lp != null) {
-                            fillPhysicalDisplay(lp)
-                            wm.updateViewLayout(containerView, lp)
-                        }
-                    }
-                    stateManager.get().onOverlayFrame(view.width, view.height,
-                        androidx.compose.ui.geometry.Offset(origin[0].toFloat(), origin[1].toFloat()))
                 }
+
+                val origin = IntArray(2)
+                view.getLocationOnScreen(origin)
+                val needsHeal = view.width != target.width() || view.height != target.height() ||
+                    origin[0] != target.left || origin[1] != target.top
+                if (needsHeal) {
+                    // 自愈：旋转或 OEM inset 导致窗口被下移/缩小时，重新按物理屏幕铺满。
+                    val lp = containerView?.layoutParams as? WindowManager.LayoutParams
+                    if (lp != null) {
+                        fillPhysicalDisplay(lp)
+                        wm.updateViewLayout(containerView, lp)
+                    }
+                }
+                publishWhenStable(0)
             }
         }
         composeView.layoutParams = FrameLayout.LayoutParams(
@@ -779,7 +802,6 @@ class FloatingBubbleService : Service() {
                 val lastInput by stateManager.get().lastInputLabel.collectAsState()
                 val profiles by stateManager.get().profiles.collectAsState()
                 val activeId by stateManager.get().activeProfileId.collectAsState()
-                val advancedLayerActive by stateManager.get().editAdvancedLayer.collectAsState()
                 val mouseAreaCenter by stateManager.get().mouseAreaCenter.collectAsState()
                 val mouseAreaHalf by stateManager.get().mouseAreaHalf.collectAsState()
                 val landingAreaCenter by stateManager.get().landingAreaCenter.collectAsState()
@@ -809,9 +831,6 @@ class FloatingBubbleService : Service() {
                     }
                     if (!isEditMode && itemsContainerOpacity == 0f)
                         return@Box//do not compose if user set overlay opacity to 0
-                    // 一键隐藏按键：keysVisible 为 false 时不渲染按键容器。
-                    // 暂停映射时同样不渲染——此时窗口不可触摸，留着按钮只会误导。
-                    // Enter 层级预览时只渲染普通按键层或高级层标记。
                     val keysLayerVisible = isEditMode || keysVisible
                     val advancedLayerVisible = isEditMode || advancedVisible
                     if ((keysLayerVisible || advancedLayerVisible) && !mappingPaused) {
@@ -842,6 +861,9 @@ class FloatingBubbleService : Service() {
                             onAddExtraTapPoint = { stateManager.get().addExtraTapPoint(it) },
                             onMoveExtraTapPoint = { keyCode, index, point ->
                                 stateManager.get().moveExtraTapPoint(keyCode, index, point)
+                            },
+                            onRemoveExtraTapPoint = { keyCode, index ->
+                                stateManager.get().removeExtraTapPoint(keyCode, index)
                             },
                             onClearExtraTapPoints = { stateManager.get().clearExtraTapPoints(it) },
                             discardPoint = profiles.firstOrNull { it.id == activeId }?.let { p ->
@@ -875,7 +897,6 @@ class FloatingBubbleService : Service() {
                                 stateManager.get().setAimRecenterMode(mode)
                             },
                             wasdCenterJitterPx = wasdCenterJitterPx,
-                            advancedLayerActive = advancedLayerActive,
                             // 滚轮操控已改为「光标位置全屏生效」，不再使用左右锚点。
                             showKeys = keysLayerVisible,
                             showAdvancedMarkers = advancedLayerVisible,
@@ -907,10 +928,6 @@ class FloatingBubbleService : Service() {
                                 .padding(8.dp),
                             keysVisible = keysVisible,
                             statusBarVisible = statusBarVisible,
-                            advancedLayerActive = advancedLayerActive,
-                            onToggleAdvancedLayer = {
-                                stateManager.get().setEditAdvancedLayer(!advancedLayerActive)
-                            },
                             onToggleKeysVisible = { stateManager.get().toggleKeysVisible() },
                             onToggleStatusBarVisible = { stateManager.get().toggleStatusBarVisible() },
                             onToggleEditMode = { stateManager.get().toggleEditMode() },
