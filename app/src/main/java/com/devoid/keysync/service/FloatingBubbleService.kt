@@ -783,6 +783,9 @@ class FloatingBubbleService : Service() {
                 val draggableItems by stateManager.get().containerItems.collectAsState()
                 val itemsContainerOpacity by stateManager.get().overlayOpacity.collectAsState()
                 val isEditMode by stateManager.get().isEditMode.collectAsState()
+                val pendingPlaceItemId by stateManager.get().pendingPlaceItemId.collectAsState()
+                val normalTouchMode by stateManager.get().normalTouchMode.collectAsState()
+                val cancelableTouchMode by stateManager.get().cancelableTouchMode.collectAsState()
                 val isShootingMode by stateManager.get().isShootingMode.collectAsState()
                 val cursorRenderHz by stateManager.get().cursorRenderHz.collectAsState()
                 // 光标显示按自定义刷新率采样，逻辑坐标仍全速更新，避免每个鼠标事件都重绘全屏层。
@@ -912,10 +915,14 @@ class FloatingBubbleService : Service() {
                             onFinishShootingArea = { stateManager.get().finishShootingAreaDrawing() },
                             onCancelShootingArea = { stateManager.get().cancelShootingAreaDrawing() },
                             onClearShootingArea = { stateManager.get().clearShootingArea() },
-                            onStickyDragStart = { id, cancel ->
-                                stateManager.get().beginStickyDrag(id, cancel)
+                            pendingPlaceItemId = pendingPlaceItemId,
+                            onSelectForPlacement = {
+                                stateManager.get().toggleSelectForPlacement(it)
                             },
-                            onStickyDragRelease = { stateManager.get().releaseStickyDrag() },
+                            onPlaceSelected = { stateManager.get().placeSelectedItemAt(it) },
+                            onCancelPlacement = { stateManager.get().clearPendingPlacement() },
+                            normalTouchMode = normalTouchMode,
+                            cancelableTouchMode = cancelableTouchMode,
                             // 滚轮操控已改为「光标位置全屏生效」，不再使用左右锚点。
                             showKeys = keysLayerVisible,
                             showAdvancedMarkers = advancedLayerVisible,

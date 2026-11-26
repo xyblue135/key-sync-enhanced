@@ -167,29 +167,12 @@ class MainActivityViewModel @Inject constructor(
 
     private val apkInstaller = ApkInstaller(context)
 
-    /**
-     * Device/layout numbers for the home screen.
-     *
-     * [overlayViewport] is the overlay window's own pixel size and is null until
-     * the service reports its first frame. [activeLayoutBaseline] is the pixel
-     * size the active profile's coordinates were saved against. When the two
-     * disagree, [projectLayout] rescales every saved position on load, which is
-     * the usual explanation for "my buttons moved after rotating / changing
-     * device" -- so the home screen shows both instead of just the display size.
-     */
+    /** Device/layout numbers for the home screen. */
     val overlayViewport: StateFlow<Offset?> = stateManager.reportedViewport
 
-    val activeLayoutBaseline: StateFlow<Offset?> = combine(
-        stateManager.profiles,
-        stateManager.activeProfileId,
-    ) { profiles, activeId ->
-        val active = profiles.firstOrNull { it.id == activeId } ?: profiles.firstOrNull()
-        if (active == null || active.layoutScreenWidth <= 0 || active.layoutScreenHeight <= 0) {
-            null
-        } else {
-            Offset(active.layoutScreenWidth.toFloat(), active.layoutScreenHeight.toFloat())
-        }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    /** 已不再做跨分辨率投影，基准始终为当前视口。 */
+    val activeLayoutBaseline: StateFlow<Offset?> =
+        MutableStateFlow<Offset?>(null).asStateFlow()
 
     /** Resolve an app label once per package; the sheet re-renders on every
      *  keystroke of its search field and PackageManager lookups are not free. */

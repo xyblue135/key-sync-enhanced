@@ -38,9 +38,6 @@ data class Profile(
     val shiftCancelWalkEnabled: Boolean = true,
     /** Ordered independent click points, separate from ordinary key bindings. */
     val macros: List<ClickMacro> = emptyList(),
-    /** Layout 保存时的屏幕分辨率（px）。加载时若与当前屏幕不同则把坐标/尺寸等比还原；0 = 未记录。 */
-    val layoutScreenWidth: Int = 0,
-    val layoutScreenHeight: Int = 0,
     /**
      * 连按落点：同一按键快速连按时，第 2/3/4 次按下额外点击的坐标（屏幕 px）。
      * 每个按键最多 [MAX_EXTRA_TAP_POINTS] 个；本体始终照常触发。

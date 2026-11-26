@@ -9,8 +9,6 @@ class ProfileAssistTest {
     private fun sampleProfile() = Profile(
         id = "p1",
         name = "测试",
-        layoutScreenWidth = 2400,
-        layoutScreenHeight = 1080,
         quickSwapEnabled = true,
         tapSequence234Enabled = true,
         tapSequence234GapMinMs = 20,
@@ -30,8 +28,6 @@ class ProfileAssistTest {
 
         assertEquals(profile.id, saved.id)
         assertEquals(profile.name, saved.name)
-        assertEquals(profile.layoutScreenWidth, saved.layoutScreenWidth)
-        assertEquals(profile.layoutScreenHeight, saved.layoutScreenHeight)
         assertTrue(!saved.quickSwapEnabled)
         assertEquals(40, saved.tapSequence234GapMinMs)
         assertEquals(60, saved.tapSequence234GapMaxMs)

@@ -61,8 +61,6 @@ class ProfileSerializationTest {
             ),
         ),
         appConfig = AppConfig.Default.copy(buttonScale = 1.25f),
-        layoutScreenWidth = 2400,
-        layoutScreenHeight = 1080,
     )
 
     @Test
@@ -100,17 +98,6 @@ class ProfileSerializationTest {
         assertNull(json.decodeFromString<Profile>(text).items.first().touchCenter)
     }
 
-    /**
-     * The layout baseline is what lets a layout survive a resolution or
-     * orientation change; losing it silently rescales every button.
-     */
-    @Test
-    fun layoutBaselineSurvivesRoundTrip() {
-        val decoded = json.decodeFromString<Profile>(json.encodeToString(sampleProfile()))
-        assertEquals(2400, decoded.layoutScreenWidth)
-        assertEquals(1080, decoded.layoutScreenHeight)
-    }
-
     /** Profiles written before layout baselines existed must still load. */
     @Test
     fun legacyJsonWithoutLayoutBaselineDecodes() {
@@ -132,7 +119,6 @@ class ProfileSerializationTest {
         """.trimIndent()
         val decoded = json.decodeFromString<Profile>(legacy)
         assertEquals(1, decoded.items.size)
-        assertEquals(0, decoded.layoutScreenWidth)
         assertEquals(AppConfig.Default.buttonScale, decoded.appConfig.buttonScale, 0f)
     }
 

@@ -186,10 +186,11 @@ fun GenericFixedKey(
     iconRes: Int? = null,
     pressed: Boolean = false,
     sizeDp: androidx.compose.ui.unit.Dp = 50.dp,
+    borderColor: Color = MaterialTheme.colorScheme.primary,
 ) {
     IconKey(
         modifier = modifier,
-        borderColor = if (pressed) Color.Cyan else MaterialTheme.colorScheme.primary,
+        borderColor = if (pressed) Color.Cyan else borderColor,
         background = if (pressed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
         sizeDp = sizeDp,
         onClick = null

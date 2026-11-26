@@ -9,6 +9,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -186,10 +188,16 @@ fun ItemsContainer(
     onFinishShootingArea: () -> Unit = {},
     onCancelShootingArea: () -> Unit = {},
     onClearShootingArea: () -> Unit = {},
-    /** 编辑态粘性拖动：(按键 id, 是否为取消键位置)。松手后锁定，鼠标移动继续带动。 */
-    onStickyDragStart: (Int, Boolean) -> Unit = { _, _ -> },
-    /** 任意一次按下时释放粘性锁定。 */
-    onStickyDragRelease: () -> Unit = {},
+    /** 编辑态「点哪放哪」：当前选中的按键 id。 */
+    pendingPlaceItemId: Int? = null,
+    /** 点一下按钮：选中 / 取消选中。 */
+    onSelectForPlacement: (Int) -> Unit = {},
+    /** 选中后点击屏幕任意位置：把按钮放到该处（点击点作为中心）。 */
+    onPlaceSelected: (Offset) -> Unit = {},
+    onCancelPlacement: () -> Unit = {},
+    /** 全局触摸模式：编辑态给按钮上色，便于一眼看清布局。 */
+    normalTouchMode: TouchMode = TouchMode.TAP,
+    cancelableTouchMode: TouchMode = TouchMode.TAP,
     /** 运行时是否显示普通按键层（Enter 层级预览用）。 */
     showKeys: Boolean = true,
     /** 运行时是否显示高级层标记（丢弃点），非编辑态只读。 */
@@ -205,6 +213,20 @@ fun ItemsContainer(
     var configuringFixedKey by remember { mutableStateOf<DraggableItem.FixedKey?>(null) }
     var configuringVariableKey by remember { mutableStateOf<DraggableItem.VariableKey?>(null) }
     var configuringCancelableKey by remember { mutableStateOf<DraggableItem.CancelableKey?>(null) }
+
+    // 打开任何按键配置框时，取消「点哪放哪」的选中，避免关掉弹框后误放置。
+    LaunchedEffect(
+        configuringFixedKey,
+        configuringVariableKey,
+        configuringCancelableKey,
+        configuringWasd,
+    ) {
+        if (configuringFixedKey != null || configuringVariableKey != null ||
+            configuringCancelableKey != null || configuringWasd != null
+        ) {
+            onCancelPlacement()
+        }
+    }
 
     // 只保留一个编辑层：按键、鼠标范围、丢弃点、连按落点同时可见可拖。
     // 之前分「按键层 / 高级层」，切换状态容易丢、也容易误触，已合并。
@@ -236,11 +258,29 @@ fun ItemsContainer(
     Box(
         modifier
             .fillMaxSize()
-            // 任意位置按下都先结束「粘性拖动」；子节点收到事件后再开始新的拖动。
-            .pointerInput(Unit) {
+            // 「点哪放哪」：选中按钮后，在任意位置点击一次即放置到该点。
+            .pointerInput(editing, pendingPlaceItemId) {
+                if (!editing || pendingPlaceItemId == null) return@pointerInput
                 awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    onStickyDragRelease()
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    // 放置点击独占本次手势：不触发按钮拖动、双击设置或齿轮按钮。
+                    down.consume()
+                    val start = down.position
+                    var moved = false
+                    var released = false
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Final)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if ((change.position - start).getDistance() > viewConfiguration.touchSlop) {
+                            moved = true
+                        }
+                        if (change.changedToUpIgnoreConsumed()) {
+                            released = true
+                            break
+                        }
+                        if (!change.pressed) break
+                    }
+                    if (released && !moved) onPlaceSelected(start)
                 }
             }
             .onSizeChanged { viewport = Size(it.width.toFloat(), it.height.toFloat()) }
@@ -262,7 +302,7 @@ fun ItemsContainer(
                     center = c,
                     half = mouseMoveAreaHalf,
                     label = "鼠标范围",
-                    color = MaterialTheme.colorScheme.tertiary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     alpha = areaAlpha,
                     enabled = editing,
                     onCommit = onMouseAreaChange,
@@ -273,7 +313,7 @@ fun ItemsContainer(
                     center = c,
                     half = landingAreaHalf,
                     label = "回中范围",
-                    color = MaterialTheme.colorScheme.secondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     alpha = areaAlpha,
                     enabled = editing,
                     onCommit = onLandingAreaChange,
@@ -300,8 +340,11 @@ fun ItemsContainer(
                             alpha = keysLayerAlpha,
                             onDoubleTap = if (editing && keysLayerInteractive) ({ configuringCancelableKey = item }) else null,
                             onScreenCenter = { item.touchCenter = it; onItemMeasured(item) },
-                            onDragEnded = { onStickyDragStart(item.id, false) },
-                            onPressed = onStickyDragRelease,
+                            selected = pendingPlaceItemId == item.id,
+                            onTap = {
+                                // 放置点击期间不再选中其他按钮。
+                                if (pendingPlaceItemId == null) onSelectForPlacement(item.id)
+                            },
                             onOffsetChange = {
                                 val target = clampToViewport(
                                     position + it,
@@ -327,8 +370,6 @@ fun ItemsContainer(
                             enabled = draggingEnabled,
                             alpha = keysLayerAlpha,
                             onScreenCenter = { item.cancelTouchCenter = it; onItemMeasured(item) },
-                            onDragEnded = { onStickyDragStart(item.id, true) },
-                            onPressed = onStickyDragRelease,
                             onOffsetChange = {
                                 val target = clampToViewport(
                                     cancelableKeyPosition + it,
@@ -341,7 +382,7 @@ fun ItemsContainer(
                             }
                         ) {
                             CancelKey(
-                                borderColor = MaterialTheme.colorScheme.primary,
+                                borderColor = touchModeColor(item.touchMode ?: cancelableTouchMode),
                                 onClick = {}
                             )
                         }
@@ -362,8 +403,11 @@ fun ItemsContainer(
                         }
                     }) else null,
                     onScreenCenter = { item.touchCenter = it; onItemMeasured(item) },
-                    onDragEnded = { onStickyDragStart(item.id, false) },
-                    onPressed = onStickyDragRelease,
+                    selected = pendingPlaceItemId == item.id,
+                    onTap = {
+                        // 放置点击期间不再选中其他按钮。
+                        if (pendingPlaceItemId == null) onSelectForPlacement(item.id)
+                    },
                     onOffsetChange = {
                         val target = clampToViewport(
                             position + it,
@@ -385,6 +429,7 @@ fun ItemsContainer(
                                 sizeDp = item.customSizeDp.dp,
                                 label = item.keyCode?.keyCodeToString()?.removePrefix("KEYCODE_") ?: "+",
                                 pressed = item.keyCode?.let { pressedKeys.contains(it) } ?: false,
+                                borderColor = touchModeColor(item.touchMode ?: normalTouchMode),
                             )
                         }
 
@@ -440,6 +485,7 @@ fun ItemsContainer(
                                 },
                                 pressed = pressedKeys.contains(item.keyCode) ||
                                     (item.type == DraggableItemType.WALK_TOGGLE && walkEnabled),
+                                borderColor = touchModeColor(item.touchMode ?: normalTouchMode),
                             )
                         }
 
@@ -466,10 +512,10 @@ fun ItemsContainer(
                             .size(36.dp)
                             .alpha(0.95f * keysLayerAlpha)
                             .background(
-                                MaterialTheme.colorScheme.tertiary.copy(alpha = 0.18f),
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.18f),
                                 CircleShape,
                             )
-                            .border(2.dp, MaterialTheme.colorScheme.tertiary, CircleShape)
+                            .border(2.dp, MaterialTheme.colorScheme.onSurfaceVariant, CircleShape)
                             .pointerInput(point.keyCode, point.x, point.y, keysLayerInteractive) {
                                 if (!keysLayerInteractive) return@pointerInput
                                 detectDragGestures(
@@ -783,7 +829,7 @@ private fun ShootingAreaEditor(
     onDone: () -> Unit,
     onCancel: () -> Unit,
 ) {
-    val color = MaterialTheme.colorScheme.secondary
+    val color = MaterialTheme.colorScheme.onSurfaceVariant
     // 顶点存的是相对 ` 键左上角的偏移；绘制时换算成悬浮层绝对坐标。
     val absolute = points.map { Offset(key.position.x + it.x, key.position.y + it.y) }
 
@@ -1374,7 +1420,6 @@ fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
 private fun touchModeLabel(mode: TouchMode): String = when (mode) {
     TouchMode.TAP -> stringResource(R.string.key_touch_mode_tap)
     TouchMode.HOLD -> stringResource(R.string.key_touch_mode_hold)
-    TouchMode.MIXED -> stringResource(R.string.key_touch_mode_mixed)
     TouchMode.WHEEL -> stringResource(R.string.key_touch_mode_wheel)
 }
 
@@ -1389,18 +1434,17 @@ fun DraggableItem(
     onDoubleTap: (() -> Unit)? = null,
     onOffsetChange: (Offset) -> Unit,
     onScreenCenter: (Offset) -> Unit = {},
-    /** 拖拽松手后通知：进入「粘性拖动」，鼠标继续移动也能带动该按钮。 */
-    onDragEnded: (() -> Unit)? = null,
-    /** 任意一次按下都先释放粘性锁定，再开始新的拖动/点击。 */
-    onPressed: (() -> Unit)? = null,
+    /** 单击（无拖动）：编辑态「点哪放哪」用它选中按钮。 */
+    onTap: (() -> Unit)? = null,
+    /** 选中高亮：等待用户点击目标位置。 */
+    selected: Boolean = false,
     content: @Composable () -> Unit
 ) {
     // pointerInput survives recomposition. Always invoke the latest callback:
     // callers may have replaced their position state after an earlier drag event.
     val currentOnOffsetChange by rememberUpdatedState(onOffsetChange)
     val currentOnDoubleTap by rememberUpdatedState(onDoubleTap)
-    val currentOnDragEnded by rememberUpdatedState(onDragEnded)
-    val currentOnPressed by rememberUpdatedState(onPressed)
+    val currentOnTap by rememberUpdatedState(onTap)
     Box(modifier
         .alpha(alpha)
         .offset {
@@ -1410,6 +1454,15 @@ fun DraggableItem(
             )
         }
         .scale(scale)
+        .then(
+            if (selected) {
+                Modifier.border(
+                    2.dp,
+                    MaterialTheme.colorScheme.primary,
+                    RoundedCornerShape(14.dp),
+                )
+            } else Modifier
+        )
         .onGloballyPositioned { coordinates ->
             onScreenCenter(coordinates.localToScreen(
                 Offset(coordinates.size.width / 2f, coordinates.size.height / 2f)))
@@ -1422,20 +1475,33 @@ fun DraggableItem(
             detectTapGestures(onDoubleTap = { callback() })
         }
         .pointerInput(id, enabled) {
-            // 每次按下先释放上一次的粘性锁定：再按一下就结束继续跟随。
+            // 单击（没有拖动）选中按钮，进入「点哪放哪」；拖动超过阈值则不算点击。
             if (!enabled) return@pointerInput
             awaitEachGesture {
-                awaitFirstDown(requireUnconsumed = false)
-                currentOnPressed?.invoke()
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val start = down.position
+                var moved = false
+                var released = false
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Final)
+                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    if ((change.position - start).getDistance() > viewConfiguration.touchSlop) {
+                        moved = true
+                    }
+                    if (change.changedToUpIgnoreConsumed()) {
+                        released = true
+                        break
+                    }
+                    if (!change.pressed) break
+                }
+                if (released && !moved) currentOnTap?.invoke()
             }
         }
         .pointerInput(id, scale, enabled) {
             // 配置对话框打开时禁用拖动：此时屏幕上的手势属于对话框，
             // 绝不能让底层按钮跟着位移。
             if (!enabled) return@pointerInput
-            detectDragGestures(onDragEnd = {
-                currentOnDragEnded?.invoke()
-            }) { change, dragAmount ->
+            detectDragGestures { change, dragAmount ->
                 change.consume()
                 val newOffset = Offset(dragAmount.x, dragAmount.y) * scale
                 currentOnOffsetChange(newOffset)

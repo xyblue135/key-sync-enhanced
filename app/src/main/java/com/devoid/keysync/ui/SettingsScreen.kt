@@ -2514,13 +2514,6 @@ private fun ProfileRow(
                 text = profile.name,
                 style = MaterialTheme.typography.titleMedium
             )
-            if (profile.layoutScreenWidth > 0 && profile.layoutScreenHeight > 0) {
-                Text(
-                    text = "布局基准 ${profile.layoutScreenWidth} x ${profile.layoutScreenHeight}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
         }
         if (isActive) {
             Text(

@@ -42,11 +42,10 @@ import kotlin.math.sqrt
 /**
  * The device numbers that decide where a button ends up.
  *
- * [viewportPx] and [baselinePx] are here because they are the two values behind
- * almost every "my buttons are in the wrong place" report: when they disagree,
- * `projectLayout` rescales the saved layout on load, so what is drawn is not
- * what was saved. A card that only showed the display size would hide exactly
- * the mismatch the user is trying to see.
+ * [viewportPx] is the overlay window's measured pixel size; [baselinePx] is
+ * kept for display compatibility only. Layout coordinates are no longer
+ * rescaled when the viewport changes, so the overlay size is the only number
+ * that matters for matching what is drawn.
  */
 internal data class DeviceInfo(
     val widthPx: Int,

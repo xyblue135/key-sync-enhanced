@@ -1079,7 +1079,6 @@ class EventHandler(
             when (mode) {
                 TouchMode.TAP -> TapModeTouchHandler(eventInjector, ::tapWiggle)
                 TouchMode.HOLD -> HoldModeTouchHandler(eventInjector)
-                TouchMode.MIXED -> MixedModeTouchHandler(eventInjector)
                 TouchMode.WHEEL -> throw IllegalArgumentException("WHEEL is handled by the wheel state machine")
             }
         }
@@ -1089,7 +1088,6 @@ class EventHandler(
             when (mode) {
                 TouchMode.TAP -> CancelableTapModeTouchHandler(eventInjector)
                 TouchMode.HOLD -> CancelableHoldModeTouchHandler(eventInjector)
-                TouchMode.MIXED -> CancelableMixedModeTouchHandler(eventInjector)
                 TouchMode.WHEEL -> throw IllegalArgumentException("WHEEL is handled by the wheel state machine")
             }
         }
@@ -2169,11 +2167,9 @@ class EventHandler(
         // the next finger would be announced with ACTION_POINTER_DOWN instead of
         // ACTION_DOWN, which invalidates the gesture. Lift everything first.
         eventInjector.clear()
-        // A MIXED-mode tap may have a delayed release queued on the main
-        // thread. Invalidate it before pointer ids are re-used by this mapping.
+        // A tap may have a delayed release queued on the main thread.
+        // Invalidate it before pointer ids are re-used by this mapping.
         normalHandlers.values.filterIsInstance<TapModeTouchHandler>()
-            .forEach { it.resetPendingActions() }
-        normalHandlers.values.filterIsInstance<MixedModeTouchHandler>()
             .forEach { it.resetPendingActions() }
         wasdMap.clear()
         keyMap.clear()
@@ -2315,8 +2311,6 @@ class EventHandler(
         walkToggle.interrupt()
         heldMouseButtons.clear()
         normalHandlers.values.filterIsInstance<TapModeTouchHandler>()
-            .forEach { it.resetPendingActions() }
-        normalHandlers.values.filterIsInstance<MixedModeTouchHandler>()
             .forEach { it.resetPendingActions() }
         eventInjector.clear()
         pressedKeyCodes.clear()

@@ -50,9 +50,9 @@ import com.devoid.keysync.model.ExtraTapPoint
 import com.devoid.keysync.model.EXTRA_TAP_WINDOW_MS
 import com.devoid.keysync.model.MAX_EXTRA_TAP_POINTS
 import com.devoid.keysync.model.MAX_SHOOTING_AREA_POINTS
-import com.devoid.keysync.model.projectLayout
 import com.devoid.keysync.model.clampToViewport
 import com.devoid.keysync.model.layoutSizeForClamp
+import com.devoid.keysync.model.clampToViewport
 import com.devoid.keysync.model.ProfileBundle
 import com.devoid.keysync.model.independentCopy
 import com.devoid.keysync.model.importProfileCopies
@@ -162,6 +162,9 @@ class FloatingWindowStateManager @Inject constructor(
     val statusBarVisible = _statusBarVisible.asStateFlow()
 
     private val _appConfig = MutableStateFlow(AppConfig.Default)
+    /** 当前预设的全局触摸模式：编辑态据此给按钮上色，便于看整体布局。 */
+    val normalTouchMode = MutableStateFlow(TouchMode.TAP)
+    val cancelableTouchMode = MutableStateFlow(TouchMode.TAP)
     val keysConfig = _appConfig.asStateFlow()
 
     // 鼠标（瞄准）灵敏度：只作用于射击模式下的转视角（见 onMouseEvent），
@@ -648,9 +651,7 @@ class FloatingWindowStateManager @Inject constructor(
             _profilesLoadError.value = if (backedUp)
                 "预设解析失败，原始数据已保留并备份。本次预设修改不会保存，请重启后重试。"
             else "预设读取失败，未覆盖原始数据。本次预设修改不会保存，请重启后重试。"
-            val viewport = currentScreenSize()
-            val temporary = Profile(id = UUID.randomUUID().toString(), name = "临时预设（不会保存）",
-                layoutScreenWidth = viewport.x.toInt(), layoutScreenHeight = viewport.y.toInt())
+            val temporary = Profile(id = UUID.randomUUID().toString(), name = "临时预设（不会保存）")
             _profiles.value = listOf(temporary)
             _activeProfileId.value = temporary.id
             // 等悬浮层首帧尺寸到达后再投影；此前用整屏 bounds 会污染坐标。
@@ -682,15 +683,6 @@ class FloatingWindowStateManager @Inject constructor(
         // now uses a negative private namespace. Migrate only the semantic
         // fixed buttons that historically owned those values.
         migrateLegacyVirtualMouseCodes(stored).let { migrated ->
-            if (migrated != null) {
-                stored = migrated
-                dataStoreManager.saveProfiles(stored)
-            }
-        }
-
-        // 分辨率基准迁移：旧数据未记录分辨率，统一假定 legacy 基准，
-        // 实际换算会在 applyActiveProfile 时按当前屏幕滚动完成。
-        migrateLegacyLayoutScreen(stored).let { migrated ->
             if (migrated != null) {
                 stored = migrated
                 dataStoreManager.saveProfiles(stored)
@@ -814,11 +806,7 @@ class FloatingWindowStateManager @Inject constructor(
         }
     }
 
-    // 现存的历史布局是基于 legacyLayoutScreenWidth x legacyLayoutScreenHeight 的屏幕配置的。
-    // 这些值也作为「未记录分辨率」旧数据的默认基准；实际换算在 applyActiveProfile 中按当前屏幕完成。
     private companion object {
-        const val legacyLayoutScreenWidth = 2608
-        const val legacyLayoutScreenHeight = 1200
         /** 鼠标断点阈值默认值；用户可在设置页的高级项里调整（全局）。 */
         const val DEFAULT_MOUSE_JUMP_THRESHOLD_PX = 240
         /** F 交互后允许左键唤出光标的窗口（ms）默认值。 */
@@ -867,22 +855,6 @@ class FloatingWindowStateManager @Inject constructor(
         )
         /** 固定还原键：X（不对用户开放配置）。 */
         val SWAP_RESTORE_KEY = KeyEvent.KEYCODE_X
-    }
-
-    /** 旧数据未记录分辨率时，统一假定为 legacy 基准，便于 applyActiveProfile 迁移。 */
-    private fun migrateLegacyLayoutScreen(stored: List<Profile>): List<Profile>? {
-        var changed = false
-        val migrated = stored.map { p ->
-            if (p.layoutScreenWidth > 0 && p.layoutScreenHeight > 0) p
-            else {
-                changed = true
-                p.copy(
-                    layoutScreenWidth = legacyLayoutScreenWidth,
-                    layoutScreenHeight = legacyLayoutScreenHeight,
-                )
-            }
-        }
-        return migrated.takeIf { changed }
     }
 
     private suspend fun migrateLegacy(): Profile {
@@ -947,19 +919,18 @@ class FloatingWindowStateManager @Inject constructor(
         val viewport = overlayViewport ?: currentScreenSize()
         val currentW = viewport.x.toInt()
         val currentH = viewport.y.toInt()
-        val baseW = active.layoutScreenWidth.takeIf { it > 0 } ?: legacyLayoutScreenWidth
-        val baseH = active.layoutScreenHeight.takeIf { it > 0 } ?: legacyLayoutScreenHeight
-        val needsScale = currentW != baseW || currentH != baseH
-        val items = projectLayout(active.items, Offset(baseW.toFloat(), baseH.toFloat()), viewport, active.appConfig.buttonScale)
+        val items = active.items
         layoutViewport = viewport
         _containerItems.value = items
         _appConfig.value = active.appConfig
         eventHandler.appConfig = active.appConfig
         eventHandler.setCancelableTouchMode(active.appConfig.cancellableTouchMode)
         eventHandler.setNormalBtnTouchMode(active.appConfig.normalBtnTouchMode)
+        cancelableTouchMode.value = active.appConfig.cancellableTouchMode
+        normalTouchMode.value = active.appConfig.normalBtnTouchMode
         // 灵敏度随预设切换。
         pointerSensitivity.value = active.appConfig.pointerSensitivity
-        android.util.Log.i("KeySyncLayout", "apply id=${id} origin=${overlayOrigin?.let { it.x to it.y }} screen=${currentW}x$currentH base=${baseW}x$baseH scaled=$needsScale items=${items.size}")
+        android.util.Log.i("KeySyncLayout", "apply id=${id} origin=${overlayOrigin?.let { it.x to it.y }} screen=${currentW}x$currentH items=${items.size}")
         overlayOrigin?.let { origin ->
             items.forEach { item ->
                 val size = when (item) {
@@ -1013,13 +984,10 @@ class FloatingWindowStateManager @Inject constructor(
         val applied = layoutViewport != null
         val updated = _profiles.value.map { profile ->
             if (profile.id == id) {
-                val layout = layoutViewport ?: overlayViewport
                 profile.copy(
-                    // 尚未完成首次投影时容器是空的，直接沿用预设里的 items，避免把布局清空。
+                    // 尚未完成首次布局时容器是空的，直接沿用预设里的 items，避免把布局清空。
                     items = if (applied) _containerItems.value.map { it.copy() } else profile.items,
                     appConfig = _appConfig.value,
-                    layoutScreenWidth = layout?.x?.toInt() ?: profile.layoutScreenWidth,
-                    layoutScreenHeight = layout?.y?.toInt() ?: profile.layoutScreenHeight,
                 )
             } else profile
         }
@@ -2197,78 +2165,47 @@ class FloatingWindowStateManager @Inject constructor(
     private fun lerpOffset(from: Offset, to: Offset, t: Float): Offset =
         Offset(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)
 
-    /** 编辑态「粘性拖动」：拖拽松手后仍锁定该按键，鼠标移动继续带动它。 */
-    private data class StickyDragTarget(val itemId: Int, val cancelPosition: Boolean)
-    private var stickyDragTarget: StickyDragTarget? = null
-    private var stickyDragLastRaw: Offset? = null
-    private var stickyPersistJob: Job? = null
+    /** 编辑态「点哪放哪」：点一下按钮选中，再点屏幕任意位置即可把它移过去。 */
+    val pendingPlaceItemId = MutableStateFlow<Int?>(null)
+    /** 放置后短暂抑制选中，避免落点位置上的其他按钮被顺带选中。 */
+    private var lastPlacementAt = 0L
 
-    /** 拖动松手：锁定该按键，之后鼠标悬停移动也会带着它走。 */
-    fun beginStickyDrag(itemId: Int, cancelPosition: Boolean) {
+    /** 编辑态点一下按钮：选中 / 再点一次取消；不影响拖动与双击设置。 */
+    fun toggleSelectForPlacement(itemId: Int) {
         if (!_isEditMode.value) return
-        stickyDragTarget = StickyDragTarget(itemId, cancelPosition)
-        stickyDragLastRaw = null
+        if (SystemClock.uptimeMillis() - lastPlacementAt < 500L) return
+        pendingPlaceItemId.value = if (pendingPlaceItemId.value == itemId) null else itemId
     }
 
-    /** 再次按下（或退出编辑）：结束粘性锁定并落盘。 */
-    fun releaseStickyDrag() {
-        if (stickyDragTarget == null) return
-        clearStickyDrag()
-        persistActiveProfile()
-    }
-
-    private fun clearStickyDrag() {
-        stickyDragTarget = null
-        stickyDragLastRaw = null
-        stickyPersistJob?.cancel()
-        stickyPersistJob = null
+    fun clearPendingPlacement() {
+        pendingPlaceItemId.value = null
     }
 
     /**
-     * 编辑态鼠标悬停：锁定中的按键跟着鼠标走。
-     *
-     * 用 rawX/rawY 的屏幕绝对坐标做差，避免按键自身移动后局部坐标反向污染位移。
+     * 把选中的按钮放到点击位置：点击点作为按钮中心，并限制在屏幕内。
+     * 放置后立即持久化。
      */
-    private fun handleStickyDragMotion(event: MotionEvent): Boolean {
-        val target = stickyDragTarget ?: return false
-        if (event.actionMasked != MotionEvent.ACTION_HOVER_MOVE) return false
-        val raw = Offset(event.rawX, event.rawY)
-        val last = stickyDragLastRaw
-        stickyDragLastRaw = raw
-        if (last == null) return true
-        val delta = raw - last
-        if (delta == Offset.Zero) return true
+    fun placeSelectedItemAt(click: Offset) {
+        val id = pendingPlaceItemId.value ?: return
+        pendingPlaceItemId.value = null
+        if (!_isEditMode.value) return
         val items = _containerItems.value
-        val item = items.firstOrNull { it.id == target.itemId } ?: run {
-            clearStickyDrag()
-            return false
-        }
+        val item = items.firstOrNull { it.id == id } ?: return
         val viewport = overlayViewport ?: currentScreenSize()
         val scale = if (item is DraggableItem.WASDGroup) item.scale else _appConfig.value.buttonScale
-        val current = if (target.cancelPosition && item is DraggableItem.CancelableKey)
-            item.cancelPosition else item.position
-        val moved = clampToViewport(
-            current + delta,
-            item.layoutSizeForClamp(scale),
+        val size = item.layoutSizeForClamp(scale)
+        if (size.width <= 0f || size.height <= 0f) return
+        val target = clampToViewport(
+            click - Offset(size.width / 2f, size.height / 2f),
+            size,
             scale,
             Size(viewport.x, viewport.y),
         )
-        when {
-            target.cancelPosition && item is DraggableItem.CancelableKey -> item.cancelPosition = moved
-            else -> {
-                item.position = moved
-                item.anchorPosition = moved
-            }
-        }
-        // 触发重组，让 Compose 里 remember(item.position) 的位置状态跟着更新。
+        item.position = target
+        item.anchorPosition = target
         _containerItems.value = items.toList()
-        // 连续移动时不频繁写 DataStore：停手 400ms 后再落盘。
-        stickyPersistJob?.cancel()
-        stickyPersistJob = scope.launch {
-            delay(400)
-            persistActiveProfile()
-        }
-        return true
+        lastPlacementAt = SystemClock.uptimeMillis()
+        persistActiveProfile()
     }
 
     /** UI 弹出绑定框后调用，清除待绑定信号，避免下次重组又弹一次。 */
@@ -2435,6 +2372,8 @@ class FloatingWindowStateManager @Inject constructor(
         eventHandler.appConfig = newConfig
         eventHandler.setCancelableTouchMode(newConfig.cancellableTouchMode)
         eventHandler.setNormalBtnTouchMode(newConfig.normalBtnTouchMode)
+        cancelableTouchMode.value = newConfig.cancellableTouchMode
+        normalTouchMode.value = newConfig.normalBtnTouchMode
         pointerSensitivity.value = newConfig.pointerSensitivity
         persistActiveProfile()
     }
@@ -2666,7 +2605,7 @@ class FloatingWindowStateManager @Inject constructor(
         _activeProfileId.value = id
         shootingAreaDraft.value = null
         clearPendingExtraTap()
-        clearStickyDrag()
+        clearPendingPlacement()
         scope.launch { dataStoreManager.saveActiveProfileId(id) }
         applyActiveProfile()
         eventHandler.replayHeldKeys(held)
@@ -2678,16 +2617,11 @@ class FloatingWindowStateManager @Inject constructor(
 
     fun createProfile(name: String): String {
         val id = UUID.randomUUID().toString()
-        // 新建时就记录当前悬浮层的实测尺寸，预设行可以直接显示坐标基准，
-        // 不用等到用户第一次编辑保存后才补上。
-        val viewport = overlayViewport
         val newProfile = Profile(
             id = id,
             name = name.ifBlank { "预设 ${_profiles.value.size + 1}" },
             items = emptyList(),
             appConfig = AppConfig.Default,
-            layoutScreenWidth = viewport?.x?.toInt() ?: 0,
-            layoutScreenHeight = viewport?.y?.toInt() ?: 0,
         )
         _profiles.value = _profiles.value + newProfile
         scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
@@ -2785,8 +2719,8 @@ class FloatingWindowStateManager @Inject constructor(
             )
         }
         _isEditMode.value = !_isEditMode.value
-        // 进/出编辑态都结束粘性拖动，避免锁定状态跨层级残留。
-        clearStickyDrag()
+        // 进/出编辑态都清掉“点哪放哪”的选中状态，避免跨层级残留。
+        clearPendingPlacement()
         // 进/出编辑态都清空按下状态：编辑态下不维护 pressedKeys，避免切换回来时
         // 残留上一个状态的「按下」高亮。
         _pressedKeys.value = emptySet()
@@ -2822,7 +2756,7 @@ class FloatingWindowStateManager @Inject constructor(
         clearActivePointers()
         shootingAreaDraft.value = null
         clearPendingExtraTap()
-        clearStickyDrag()
+        clearPendingPlacement()
         _profiles.value = snapshot.profiles
         val restored = snapshot.containerItems.map { it.copy() }
         _containerItems.value = restored
@@ -2883,7 +2817,7 @@ class FloatingWindowStateManager @Inject constructor(
             // 松开所有已按下的虚拟手指/鼠标键，避免恢复后游戏里还卡着按住状态。
             clearActivePointers()
             clearPendingExtraTap()
-            clearStickyDrag()
+            clearPendingPlacement()
         } else {
             // 暂停期间可能改过配置（例如通过设置页），恢复时重新同步键位。
             eventHandler.updateKeyMapping(containerItems.value)
@@ -3033,8 +2967,6 @@ class FloatingWindowStateManager @Inject constructor(
         // 看到任何鼠标事件就认为光标模式可用；Alt+D 不允许在从未出现光标时盲拖。
         mouseCursorSeen = true
         if (isEditMode.value) {
-            // 粘性拖动：锁定中的按键跟着鼠标悬停移动，按下时由 UI 解除锁定。
-            if (handleStickyDragMotion(motionEvent)) return true
             val listener = keyCaptureListener ?: return false
             if (motionEvent.actionMasked == MotionEvent.ACTION_SCROLL) {
                 scrollTracker.update(motionEvent.getAxisValue(MotionEvent.AXIS_VSCROLL),
