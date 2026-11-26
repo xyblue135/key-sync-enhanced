@@ -800,7 +800,6 @@ class FloatingBubbleService : Service() {
                 val pendingBindId by stateManager.get().pendingVariableKeyBind.collectAsState()
                 val pressedKeys by stateManager.get().pressedKeys.collectAsState()
                 val wheelCursor by stateManager.get().wheelCursor.collectAsState()
-                val walkEnabled by stateManager.get().walkEnabled.collectAsState()
                 val lastInput by stateManager.get().lastInputLabel.collectAsState()
                 val profiles by stateManager.get().profiles.collectAsState()
                 val activeId by stateManager.get().activeProfileId.collectAsState()
@@ -812,8 +811,9 @@ class FloatingBubbleService : Service() {
                 val aimRecenterMode by stateManager.get().aimRecenterMode.collectAsState()
                 val wasdCenterJitterPx by stateManager.get().wasdCenterJitterPx.collectAsState()
                 val overlayOrigin by stateManager.get().overlayOriginFlow.collectAsState()
-                val shootingAnchor by stateManager.get().shootingAnchorFlow.collectAsState()
                 val shootingAreaDraft by stateManager.get().shootingAreaDraft.collectAsState()
+                val areaDraft by stateManager.get().areaDraft.collectAsState()
+                val areaDraftTarget by stateManager.get().areaDraftTarget.collectAsState()
                 Box {
                     // 光标：用半透明触摸指示圈代替箭头，视觉上更接近"手指触点"。
                     if (!isEditMode && !mappingPaused && !isShootingMode && wheelCursor == null) {
@@ -837,12 +837,14 @@ class FloatingBubbleService : Service() {
                     val keysLayerVisible = isEditMode || keysVisible
                     val advancedLayerVisible = isEditMode || advancedVisible
                     if ((keysLayerVisible || advancedLayerVisible) && !mappingPaused) {
+                        val activeProfile = profiles.firstOrNull { it.id == activeId }
+                        val hasShootingToggle = draggableItems.any {
+                            it is DraggableItem.FixedKey && it.type == DraggableItemType.SHOOTING_MODE
+                        }
                         ItemsContainer(
                             Modifier.alpha(if (isEditMode) 1f else itemsContainerOpacity),
                             appConfig = keysConfig,
                             editing = isEditMode,
-                            walkEnabled = walkEnabled,
-                            onCalibrateWalkOff = { stateManager.get().calibrateWalkOff() },
                             onItemMeasured = { stateManager.get().updateMeasuredPosition(it) },
                             containerItems = draggableItems,
                             onRemove = onRemove,
@@ -875,22 +877,35 @@ class FloatingBubbleService : Service() {
                                 if (x != null && y != null) androidx.compose.ui.geometry.Offset(x, y) else null
                             },
                             onMoveDiscardPoint = { stateManager.get().moveDiscardPoint(it) },
-                            cursorSpawn = stateManager.get().cursorSpawnPoint(),
+                            // 没有 ` 按钮时不再显示「光标落点」圆圈：空预设里这只是一个
+                            // 无法对应任何功能的悬浮标记。
+                            cursorSpawn = if (hasShootingToggle || activeProfile?.cursorSpawnX != null)
+                                stateManager.get().cursorSpawnPoint() else null,
                             onMoveCursorSpawn = { stateManager.get().moveCursorSpawn(it) },
                             onResetCursorSpawn = { stateManager.get().resetCursorSpawn() },
-                            mouseMoveAreaCenter = if (mouseAreaHalf > 0f)
+                            mouseMoveAreaCenter = if (hasShootingToggle && mouseAreaHalf > 0f)
                                 mouseAreaCenter - overlayOrigin else null,
                             mouseMoveAreaHalf = mouseAreaHalf,
-                            landingAreaCenter = if (landingAreaHalf > 0f)
+                            landingAreaCenter = if (hasShootingToggle && landingAreaHalf > 0f)
                                 landingAreaCenter - overlayOrigin else null,
                             landingAreaHalf = landingAreaHalf,
-                            shootingModeAnchor = shootingAnchor?.minus(overlayOrigin),
+                            mouseAreaPolygon = activeProfile?.mouseAreaPoints.orEmpty(),
+                            landingAreaPolygon = activeProfile?.landingAreaPoints.orEmpty(),
                             onMouseAreaChange = { center, half ->
                                 stateManager.get().setMouseArea(center + overlayOrigin, half)
                             },
                             onLandingAreaChange = { center, half ->
                                 stateManager.get().setLandingArea(center + overlayOrigin, half)
                             },
+                            areaDraft = areaDraft,
+                            areaDraftTarget = areaDraftTarget,
+                            onAreaDraftTap = { stateManager.get().addAreaDraftPoint(it) },
+                            onUndoAreaPoint = { stateManager.get().undoAreaDraftPoint() },
+                            onClearAreaDraft = { stateManager.get().clearAreaDraft() },
+                            onFinishAreaDrawing = { stateManager.get().finishAreaDrawing() },
+                            onCancelAreaDrawing = { stateManager.get().cancelAreaDrawing() },
+                            onStartAreaDrawing = { stateManager.get().beginAreaDrawing(it) },
+                            onClearArea = { stateManager.get().clearArea(it) },
                             aimIdleReanchorMs = aimIdleReanchorMs,
                             onAimIdleReanchorMsChange = { ms ->
                                 stateManager.get().setAimIdleReanchorMs(ms)

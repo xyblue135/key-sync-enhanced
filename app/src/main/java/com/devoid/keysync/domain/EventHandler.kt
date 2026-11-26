@@ -283,19 +283,6 @@ class EventHandler(
         now = { SystemClock.uptimeMillis() },
         schedule = { delay, action -> mainHandler.postDelayed({ action() }, delay) },
     )
-    private val _walkEnabled = MutableStateFlow(false)
-    val walkEnabled = _walkEnabled.asStateFlow()
-    private var walkKeyCode: Int? = null
-    private var lastWalkPosition: Offset? = null
-    private val walkToggle = WalkToggle(
-        schedule = { delay, action -> mainHandler.postDelayed({ action() }, delay) },
-        changed = { _walkEnabled.value = it },
-    )
-    fun calibrateWalkOff() { walkToggle.calibrateOff(); eventInjector.clear() }
-
-    /** Shift 是否取消我们自己开启的静步；由当前预设的按键辅助开关控制。 */
-    @Volatile
-    var shiftCancelWalkEnabled: Boolean = true
 
     /** 鼠标活动范围（大方形，屏幕坐标）：中心 + 半边长；half <= 0 表示沿用整屏。 */
     @Volatile
@@ -309,19 +296,20 @@ class EventHandler(
     @Volatile
     var landingAreaHalfSize: Float = 0f
 
+    /**
+     * 手绘鼠标活动范围（屏幕坐标多边形）。至少 3 个点时优先于默认轮廓：
+     * 瞄准触点越界时投影到多边形最近的边上。
+     */
+    @Volatile
+    var mouseAreaPolygon: List<Offset> = emptyList()
+
+    /** 手绘回中随机落点范围（屏幕坐标多边形）；至少 3 个点时在其中随机取点。 */
+    @Volatile
+    var landingAreaPolygon: List<Offset> = emptyList()
+
     /** 进入光标模式时光标的落点（悬浮层坐标）；null = 回退到准心按钮位置。 */
     var cursorSpawnPosition: Offset? = null
 
-
-    private fun triggerWalk(sprint: Boolean = false) {
-        val key = walkKeyCode ?: -10_005
-        val pointer = pointerIds[key] ?: return
-        val position = keyMap[key]?.position ?: lastWalkPosition ?: return
-        lastWalkPosition = position
-        val down = { eventInjector.injectPointer(pointer, position) }
-        val up = { eventInjector.releasePointer(pointer) }
-        if (sprint) walkToggle.sprint(down, up) else walkToggle.toggle(down, up)
-    }
 
     private val mappingPressed = HashMap<Int, Boolean>(64)
     private val cancelToggle = HashMap<Int, Boolean>(32)
@@ -1140,7 +1128,7 @@ class EventHandler(
 
                 else -> {
                     val pointerId = pointerIds[keyCode] ?: return@forEach
-                    if (keyCode != shootingModeKeyCode && keyCode != walkKeyCode &&
+                    if (keyCode != shootingModeKeyCode &&
                         (keyTouchMode[keyCode] ?: normalTouchMode) == TouchMode.HOLD) {
                         handleKeyDown(keyCode, pointerId)
                     }
@@ -1200,21 +1188,12 @@ class EventHandler(
         if (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP) {
             if (macroEdge(event.keyCode, event.action == KeyEvent.ACTION_DOWN, event.repeatCount > 0)) return true
         }
-        if (event.keyCode == walkKeyCode && event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0) return true
         val wasdBit = keyToWasdMask(event.keyCode)
         val sprintBit = keyToSprintMask(event.keyCode)
         val hasWasd = pointerIds.containsKey(KEYCODE_WASD)
         val handlesAsWasd = wasdBit != 0 && hasWasd
         val pointerIdKey = if (handlesAsWasd) KEYCODE_WASD else event.keyCode
         val pointerId = pointerIds[pointerIdKey]
-
-        // Shift 起跑时，如果静步是我们自己点开的，补点一次静步键取消掉，
-        // 避免「一按 Shift 就变成慢走」。用户手动开的静步不介入。
-        if (sprintBit != 0 && event.action == KeyEvent.ACTION_DOWN &&
-            event.repeatCount == 0 && !pressedKeyCodes.contains(event.keyCode) &&
-            shiftCancelWalkEnabled) {
-            triggerWalk(sprint = true)
-        }
 
         // Shift 作为 WASD 疾跑修饰键（当存在 WASD 摇杆时）。按下时把疾跑位并入
         // wasdMask，让摇杆沿中心方向延长到疾跑档，而不是触发独立的 SPRINT 按钮。
@@ -1424,7 +1403,6 @@ class EventHandler(
     /* ---------- normal keys ---------- */
 
     private fun handleKeyDown(keyCode: Int, pointerId: Int) {
-        if (keyCode == walkKeyCode) { triggerWalk(); return }
         if (keyCode in mouseHoldKeys) activeFireKeys.add(keyCode)
         Log.d("KeySyncInput", "KEY code=$keyCode pointer=$pointerId mapping=${keyMap[keyCode]}")
         keyMap[keyCode]?.let {
@@ -1479,7 +1457,7 @@ class EventHandler(
 
     private fun handleKeyUp(keyCode: Int, pointerId: Int) {
         // The toggle owns a persistent aim contact; normal UP handlers must not lift it.
-        if (keyCode == walkKeyCode || keyCode == shootingModeKeyCode) return
+        if (keyCode == shootingModeKeyCode) return
         activeFireKeys.remove(keyCode)
         stopKeyJitter(pointerId)
         val id = keyId(keyCode)
@@ -1834,6 +1812,10 @@ class EventHandler(
      * 同时路径边界像真人手部扫过的范围。
      */
     private fun clampAimToBounds(p: Offset): Offset {
+        val polygon = mouseAreaPolygon
+        if (polygon.size >= 3) {
+            return clampToScreen(AreaMath.clampTo(polygon, p))
+        }
         val areaHalf = mouseAreaHalfSize
         if (areaHalf > 0f) {
             return clampToMouseShape(p, mouseAreaCenter, areaHalf)
@@ -1921,8 +1903,12 @@ class EventHandler(
         fallback: Offset = aimCenter,
         direction: Offset = Offset.Zero,
     ): Offset {
+        val polygon = landingAreaPolygon
         val half = landingAreaHalfSize
-        var point = if (half > 0.5f) {
+        var point = if (polygon.size >= 3) {
+            // 用户手绘的回中范围：在多边形内均匀取点。
+            AreaMath.randomPoint(polygon)
+        } else if (half > 0.5f) {
             val c = landingAreaCenter
             Offset(
                 c.x + (Random.nextFloat() * 2f - 1f) * half,
@@ -2158,7 +2144,6 @@ class EventHandler(
         releaseSwitch.reset()
         cursorDownAt.clear()
         cursorGeneration.keys.toList().forEach { cursorGeneration[it] = cursorGeneration.getValue(it) + 1 }
-        walkToggle.interrupt()
         MappingConflictDetector.detect(items).forEach {
             Log.w("EventHandler", "Mapping conflict: ${it.message}")
         }
@@ -2199,9 +2184,6 @@ class EventHandler(
         wheelActive = false
         _wheelCursor.value = null
         wheelPointerId = -1
-        walkKeyCode = items.filterIsInstance<DraggableItem.FixedKey>()
-            .firstOrNull { it.type == DraggableItemType.WALK_TOGGLE }
-            ?.keyCode?.takeUnless { keyToSprintMask(it) != 0 || keyToWasdMask(it) != 0 }
         mouseHoldKeys = items.filterIsInstance<DraggableItem.FixedKey>()
             .filter { it.type == DraggableItemType.FIRE || it.type == DraggableItemType.SCOPE }
             .map { it.keyCode }.toSet()
@@ -2262,7 +2244,6 @@ class EventHandler(
             }
         }
 
-        if (walkKeyCode == null && lastWalkPosition != null) alloc(-10_005)
         alloc(KEYCODE_LMC)
     }
 
@@ -2308,7 +2289,6 @@ class EventHandler(
         releaseSwitch.reset()
         cursorDownAt.clear()
         cursorGeneration.keys.toList().forEach { cursorGeneration[it] = cursorGeneration.getValue(it) + 1 }
-        walkToggle.interrupt()
         heldMouseButtons.clear()
         normalHandlers.values.filterIsInstance<TapModeTouchHandler>()
             .forEach { it.resetPendingActions() }

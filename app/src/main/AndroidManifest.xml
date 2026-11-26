@@ -10,10 +10,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
+    <!-- 关闭系统自动备份：卸载重装后不应把旧布局/旧按键配置恢复回来，
+         否则用户会看到自己没添加过的按键凭空出现。布局仍可用导出/导入迁移。 -->
     <application
-        android:allowBackup="true"
-        android:dataExtractionRules="@xml/data_extraction_rules"
-        android:fullBackupContent="@xml/backup_rules"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:name=".KeySyncApplication"

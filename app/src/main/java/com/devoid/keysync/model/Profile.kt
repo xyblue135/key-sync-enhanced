@@ -34,8 +34,6 @@ data class Profile(
     val scallopDashMacro: KeySeqMacro = defaultScallopDashMacro(),
     /** 快速近战宏：默认 Alt+0，点一次近战键 → 延迟 → 点一次 1；按住触发键循环。 */
     val quickMeleeMacro: QuickMeleeMacro = QuickMeleeMacro(),
-    /** Shift 按下时取消我们自己开启的静步（WALK_TOGGLE）。默认开启。 */
-    val shiftCancelWalkEnabled: Boolean = true,
     /** Ordered independent click points, separate from ordinary key bindings. */
     val macros: List<ClickMacro> = emptyList(),
     /**
@@ -51,6 +49,16 @@ data class Profile(
      * 空 = 使用默认方形；按下 ` 时从多边形质心注入。
      */
     val shootingAreaPoints: List<AreaPoint> = emptyList(),
+    /**
+     * 手绘鼠标活动范围（悬浮层坐标，多边形）。空 = 沿用默认方形（以 ` 为中心）。
+     * 瞄准触点越界时投影到该多边形最近的边上。
+     */
+    val mouseAreaPoints: List<AreaPoint> = emptyList(),
+    /**
+     * 手绘回中随机落点范围（悬浮层坐标，多边形）。空 = 沿用默认小方形。
+     * 每次回中/重新落指时在范围内随机取点。
+     */
+    val landingAreaPoints: List<AreaPoint> = emptyList(),
     /** 进入光标模式时光标出现的位置（悬浮层坐标）。null = 使用屏幕中心。 */
     val cursorSpawnX: Float? = null,
     val cursorSpawnY: Float? = null,
@@ -82,6 +90,18 @@ const val MAX_EXTRA_TAP_POINTS = 6
 
 /** ` 键手绘区域的最大顶点数。 */
 const val MAX_SHOOTING_AREA_POINTS = 12
+
+/** 鼠标活动范围 / 回中范围手绘多边形的最大顶点数（逐点绘制，点太多会卡）。 */
+const val MAX_MOUSE_AREA_POINTS = 32
+
+/** 当前正在手绘哪一种范围；null 表示不在绘制。 */
+enum class AreaDrawTarget {
+    /** 鼠标活动范围（大范围，限制瞄准触点位移）。 */
+    MOUSE,
+
+    /** 回中随机落点范围（小范围，决定每次抬按的落点）。 */
+    LANDING,
+}
 
 /** 连按判定窗口（ms）：两次按下间隔超过该值就重新从第 1 次开始计数。 */
 const val EXTRA_TAP_WINDOW_MS = 250L

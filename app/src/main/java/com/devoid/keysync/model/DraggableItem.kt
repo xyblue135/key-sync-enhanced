@@ -143,7 +143,7 @@ enum class DraggableItemType {
     // 追加项（不改既有项位置）
     BACKPACK, MAP, QUICK_SWITCH, USE, ESC,
     // 通用「按住」键：VariableKey + HOLD 模式，自定义按键，用于探头等按住操作
-    HOLD_KEY, WALK_TOGGLE
+    HOLD_KEY
 }
 
 /**
@@ -164,7 +164,6 @@ fun DraggableItemType.defaultKeyCode(): Int = when (this) {
     DraggableItemType.JUMP -> KeyEvent.KEYCODE_SPACE
     DraggableItemType.CROUCH -> KeyEvent.KEYCODE_C
     DraggableItemType.PRONE -> KeyEvent.KEYCODE_Z
-    DraggableItemType.WALK_TOGGLE -> KeyEvent.KEYCODE_CAPS_LOCK
     DraggableItemType.SPRINT -> KeyEvent.KEYCODE_SHIFT_LEFT
     DraggableItemType.RELOAD -> KeyEvent.KEYCODE_R
     DraggableItemType.MELEE -> KeyEvent.KEYCODE_V

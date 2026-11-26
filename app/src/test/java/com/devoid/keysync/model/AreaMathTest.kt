@@ -43,4 +43,59 @@ class AreaMathTest {
     fun emptyReturnsZero() {
         assertOffset(Offset.Zero, AreaMath.centroid(emptyList()))
     }
+
+    private val square = listOf(
+        Offset(0f, 0f),
+        Offset(10f, 0f),
+        Offset(10f, 10f),
+        Offset(0f, 10f),
+    )
+
+    @Test
+    fun containsChecksInsideAndOutside() {
+        assertEquals(true, AreaMath.contains(square, Offset(5f, 5f)))
+        assertEquals(false, AreaMath.contains(square, Offset(15f, 5f)))
+        assertEquals(false, AreaMath.contains(square, Offset(-1f, 5f)))
+        assertEquals(false, AreaMath.contains(square, Offset(5f, -1f)))
+    }
+
+    @Test
+    fun fewerThanThreePointsNeverContains() {
+        val line = listOf(Offset(0f, 0f), Offset(10f, 10f))
+        assertEquals(false, AreaMath.contains(line, Offset(5f, 5f)))
+    }
+
+    @Test
+    fun insidePointIsUnchangedByClamp() {
+        val p = Offset(4f, 6f)
+        assertOffset(p, AreaMath.clampTo(square, p))
+    }
+
+    @Test
+    fun outsidePointProjectsToNearestEdge() {
+        // 右侧越界：投影到右边 x = 10，y 保持。
+        assertOffset(Offset(10f, 5f), AreaMath.clampTo(square, Offset(20f, 5f)))
+        // 下方越界：投影到下边 y = 10，x 保持。
+        assertOffset(Offset(5f, 10f), AreaMath.clampTo(square, Offset(5f, 20f)))
+    }
+
+    @Test
+    fun radiusIsHalfDiagonalForSquare() {
+        assertEquals(7.071f, AreaMath.radius(square), 0.01f)
+    }
+
+    @Test
+    fun randomPointStaysInsidePolygon() {
+        val random = kotlin.random.Random(42)
+        repeat(200) {
+            val p = AreaMath.randomPoint(square, random)
+            assertEquals(true, AreaMath.contains(square, p))
+        }
+    }
+
+    @Test
+    fun randomPointDegeneratePolygonFallsBackToCentroid() {
+        val line = listOf(Offset(0f, 0f), Offset(10f, 10f), Offset(20f, 20f))
+        assertOffset(Offset(10f, 10f), AreaMath.randomPoint(line))
+    }
 }

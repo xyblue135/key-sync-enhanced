@@ -19,6 +19,8 @@ import kotlin.math.roundToLong
 import com.devoid.keysync.data.local.DataStoreManager
 import com.devoid.keysync.data.local.ProfilesLoad
 import com.devoid.keysync.model.AppConfig
+import com.devoid.keysync.model.AreaDrawTarget
+import com.devoid.keysync.model.AreaMath
 import com.devoid.keysync.model.AreaPoint
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.DraggableItemType
@@ -49,6 +51,7 @@ import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.ExtraTapPoint
 import com.devoid.keysync.model.EXTRA_TAP_WINDOW_MS
 import com.devoid.keysync.model.MAX_EXTRA_TAP_POINTS
+import com.devoid.keysync.model.MAX_MOUSE_AREA_POINTS
 import com.devoid.keysync.model.MAX_SHOOTING_AREA_POINTS
 import com.devoid.keysync.model.clampToViewport
 import com.devoid.keysync.model.layoutSizeForClamp
@@ -235,7 +238,12 @@ class FloatingWindowStateManager @Inject constructor(
         overlayOrigin = origin
         _overlayOriginFlow.value = origin
         _reportedViewport.value = viewport
-        _shootingAnchorFlow.value = shootingModeAnchor()
+        // 光标初始值是按整屏中心算的；窗口原点/尺寸变化后必须裁回悬浮层本地坐标，
+        // 否则运行时光标圆圈会画在屏幕外或整体偏移。
+        _mousePointerOffset.value = Offset(
+            _mousePointerOffset.value.x.coerceIn(0f, (viewport.x - 1f).coerceAtLeast(0f)),
+            _mousePointerOffset.value.y.coerceIn(0f, (viewport.y - 1f).coerceAtLeast(0f)),
+        )
         if (mouseAreaHalf.value > 0f) {
             recomputeMouseAreaCenters()
             syncMouseAreas()
@@ -283,9 +291,6 @@ class FloatingWindowStateManager @Inject constructor(
     /** 悬浮窗原点（屏幕坐标），供高级层把双范围从屏幕坐标换算到本地坐标。 */
     private val _overlayOriginFlow = MutableStateFlow(Offset.Zero)
     val overlayOriginFlow = _overlayOriginFlow.asStateFlow()
-    /** ` 按钮中心（屏幕坐标），` 移动后更新，供齿轮设置显示相对偏移。 */
-    private val _shootingAnchorFlow = MutableStateFlow<Offset?>(null)
-    val shootingAnchorFlow = _shootingAnchorFlow.asStateFlow()
     private var discardDragJob: Job? = null
     /** M 键开关地图并切换鼠标（全局），默认开启。 */
     val mapMouseToggleEnabled = MutableStateFlow(true)
@@ -313,6 +318,10 @@ class FloatingWindowStateManager @Inject constructor(
     val escAfterTapIntervalMs = MutableStateFlow(DEFAULT_ESC_AFTER_TAP_INTERVAL_MS)
     /** ` 键手绘区域草稿；null = 未在绘制。 */
     val shootingAreaDraft = MutableStateFlow<List<AreaPoint>?>(null)
+    /** 鼠标活动范围 / 回中范围的手绘草稿（悬浮层坐标）；null = 未在绘制。 */
+    val areaDraft = MutableStateFlow<List<AreaPoint>?>(null)
+    /** 当前正在绘制哪一种范围；null = 未在绘制。 */
+    val areaDraftTarget = MutableStateFlow<AreaDrawTarget?>(null)
     /** 回瞄准延迟任务：等游戏把界面关掉再重建瞄准触点。 */
     private var aimReturnJob: Job? = null
 
@@ -363,11 +372,9 @@ class FloatingWindowStateManager @Inject constructor(
     var keyCaptureListener: ((Int) -> Unit)? = null
 
     val isShootingMode = eventHandler.shootingModeFlow
-    val walkEnabled = eventHandler.walkEnabled
     val wheelCursor = eventHandler.wheelCursor
     fun wheelCircle(): Pair<Offset, Float> = wheelCursorLocal(eventHandler.wheelCenterPosition) to eventHandler.wheelRadiusPx
     fun wheelCursorLocal(position: Offset): Offset = position - (overlayOrigin ?: Offset.Zero)
-    fun calibrateWalkOff() = eventHandler.calibrateWalkOff()
 
     /* ----------------- profiles ----------------- */
 
@@ -943,9 +950,8 @@ class FloatingWindowStateManager @Inject constructor(
         }
         eventHandler.updateKeyMapping(items)
         eventHandler.shootingAreaOffsets = active.shootingAreaPoints.map { Offset(it.x, it.y) }
-        eventHandler.shiftCancelWalkEnabled =
-            activePlayMode.assists && active.shiftCancelWalkEnabled
         ensureDefaultMouseAreas()
+        applyAreaPolygons()
         syncMacros()
         scrollTracker.reset()
     }
@@ -1373,12 +1379,6 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     fun addNewItem(itemType: DraggableItemType) {
-        if (itemType == DraggableItemType.WALK_TOGGLE && containerItems.value.any {
-                it is DraggableItem.FixedKey && it.type == DraggableItemType.WALK_TOGGLE
-            }) {
-            android.widget.Toast.makeText(context, "此预设已有静步按钮，请拖动或编辑现有按钮", android.widget.Toast.LENGTH_SHORT).show()
-            return
-        }
         // maxOfOrNull (not sumOf) so ids keep incrementing by one instead of
         // drifting upwards every time an item is removed and re-added.
         val itemID = (containerItems.value.maxOfOrNull { it.id } ?: 0) + 1
@@ -1397,7 +1397,7 @@ class FloatingWindowStateManager @Inject constructor(
                 DraggableItem.WASDGroup(itemID, offset)
 
             // 射击三件套仍是固定键：开火 / 开镜 / 射击模式切换，各自有专用语义。
-            DraggableItemType.WALK_TOGGLE, DraggableItemType.FIRE, DraggableItemType.SCOPE, DraggableItemType.SHOOTING_MODE ->
+            DraggableItemType.FIRE, DraggableItemType.SCOPE, DraggableItemType.SHOOTING_MODE ->
                 DraggableItem.FixedKey(
                     itemID,
                     offset,
@@ -1413,6 +1413,7 @@ class FloatingWindowStateManager @Inject constructor(
                 DraggableItem.VariableKey(itemID, position = offset, size = 0)
         }
         _containerItems.value = containerItems.value.plus(item)
+        refreshAreasForItems()
         persistActiveProfile()
     }
 
@@ -1606,6 +1607,107 @@ class FloatingWindowStateManager @Inject constructor(
         persistActiveProfile()
     }
 
+    /* ---------- 鼠标活动范围 / 回中范围：逐点手绘多边形 ---------- */
+
+    /** 进入绘制：从零开始画新的多边形。 */
+    fun beginAreaDrawing(target: AreaDrawTarget) {
+        if (!_isEditMode.value) return
+        areaDraftTarget.value = target
+        areaDraft.value = emptyList()
+    }
+
+    /** 记录一次点击（悬浮层坐标）。点数上限用于避免端点过多导致渲染卡顿。 */
+    fun addAreaDraftPoint(absolute: Offset) {
+        val draft = areaDraft.value ?: return
+        if (draft.size >= MAX_MOUSE_AREA_POINTS) return
+        val viewport = overlayViewport ?: currentScreenSize()
+        val x = absolute.x.coerceIn(0f, viewport.x.coerceAtLeast(0f))
+        val y = absolute.y.coerceIn(0f, viewport.y.coerceAtLeast(0f))
+        areaDraft.value = draft + AreaPoint(x, y)
+    }
+
+    fun undoAreaDraftPoint() {
+        val draft = areaDraft.value ?: return
+        if (draft.isNotEmpty()) areaDraft.value = draft.dropLast(1)
+    }
+
+    fun clearAreaDraft() {
+        if (areaDraft.value == null) return
+        areaDraft.value = emptyList()
+    }
+
+    fun cancelAreaDrawing() {
+        areaDraft.value = null
+        areaDraftTarget.value = null
+    }
+
+    /** 完成绘制：少于 3 个点视为放弃；否则写入当前预设并立即生效。 */
+    fun finishAreaDrawing() {
+        val draft = areaDraft.value ?: return
+        val target = areaDraftTarget.value ?: return
+        areaDraft.value = null
+        areaDraftTarget.value = null
+        if (draft.size < 3) return
+        val id = _activeProfileId.value ?: return
+        _profiles.value = _profiles.value.map {
+            if (it.id != id) it else when (target) {
+                AreaDrawTarget.MOUSE -> it.copy(mouseAreaPoints = draft)
+                AreaDrawTarget.LANDING -> it.copy(landingAreaPoints = draft)
+            }
+        }
+        applyAreaPolygons()
+        persistActiveProfile()
+    }
+
+    /** 恢复默认方形：清空对应范围的手绘多边形。 */
+    fun clearArea(target: AreaDrawTarget) {
+        areaDraft.value = null
+        areaDraftTarget.value = null
+        val id = _activeProfileId.value ?: return
+        val profile = activeProfile() ?: return
+        val alreadyEmpty = when (target) {
+            AreaDrawTarget.MOUSE -> profile.mouseAreaPoints.isEmpty()
+            AreaDrawTarget.LANDING -> profile.landingAreaPoints.isEmpty()
+        }
+        if (alreadyEmpty) return
+        _profiles.value = _profiles.value.map {
+            if (it.id != id) it else when (target) {
+                AreaDrawTarget.MOUSE -> it.copy(mouseAreaPoints = emptyList())
+                AreaDrawTarget.LANDING -> it.copy(landingAreaPoints = emptyList())
+            }
+        }
+        ensureDefaultMouseAreas()
+        applyAreaPolygons()
+        persistActiveProfile()
+    }
+
+    /**
+     * 把手绘多边形同步给事件处理器。
+     *
+     * 预设里存的是悬浮层坐标，运行时触点用屏幕坐标，这里加上窗口原点。
+     * 有多边形时把它换算出的质心/外接半径写回双范围，让回中阈值、补发上限
+     * 等按「半宽」估算的逻辑仍然合理。
+     */
+    private fun applyAreaPolygons() {
+        val profile = activeProfile() ?: return
+        val origin = overlayOrigin ?: Offset.Zero
+        val mouse = profile.mouseAreaPoints.map { Offset(it.x, it.y) + origin }
+        val landing = profile.landingAreaPoints.map { Offset(it.x, it.y) + origin }
+        if (mouse.size >= 3) {
+            val center = AreaMath.centroid(mouse)
+            mouseAreaCenter.value = center
+            mouseAreaHalf.value = AreaMath.radius(mouse, center)
+        }
+        if (landing.size >= 3) {
+            val center = AreaMath.centroid(landing)
+            landingAreaCenter.value = center
+            landingAreaHalf.value = AreaMath.radius(landing, center)
+        }
+        syncMouseAreas()
+        eventHandler.mouseAreaPolygon = if (mouse.size >= 3) mouse else emptyList()
+        eventHandler.landingAreaPolygon = if (landing.size >= 3) landing else emptyList()
+    }
+
     private fun updateExtraTapPoints(points: List<ExtraTapPoint>) {
         val id = _activeProfileId.value
         _profiles.value = _profiles.value.map {
@@ -1795,21 +1897,22 @@ class FloatingWindowStateManager @Inject constructor(
         eventHandler.landingAreaHalfSize = landingAreaHalf.value
     }
 
-    /** ` 按钮当前测得的屏幕中心；供悬浮层换算本地坐标。 */
-    fun shootingModeAnchorPoint(): Offset? =
-        _containerItems.value.filterIsInstance<DraggableItem.FixedKey>()
-            .firstOrNull { it.type == DraggableItemType.SHOOTING_MODE }?.touchCenter
+    /** ` 按钮的屏幕中心；没有该按钮时返回 null（不再伪造一个必定偏移的锚点）。 */
+    private fun shootingModeAnchorOrNull(): Offset? {
+        val origin = overlayOrigin ?: Offset.Zero
+        val toggle = _containerItems.value.filterIsInstance<DraggableItem.FixedKey>()
+            .firstOrNull { it.type == DraggableItemType.SHOOTING_MODE }
+            ?: return null
+        return toggle.touchCenter
+            ?: origin + toggle.position + Offset(toggle.size / 2f, toggle.size / 2f)
+    }
 
     /** ` 按钮的屏幕中心；没有该按钮时回落到右半屏默认位置。 */
     private fun shootingModeAnchor(): Offset {
         val viewport = overlayViewport ?: currentScreenSize()
         val origin = overlayOrigin ?: Offset.Zero
-        val fallback = origin + Offset(viewport.x * 0.68f, viewport.y * 0.5f)
-        val toggle = _containerItems.value.filterIsInstance<DraggableItem.FixedKey>()
-            .firstOrNull { it.type == DraggableItemType.SHOOTING_MODE }
-            ?: return fallback
-        return toggle.touchCenter
-            ?: origin + toggle.position + Offset(toggle.size / 2f, toggle.size / 2f)
+        return shootingModeAnchorOrNull()
+            ?: (origin + Offset(viewport.x * 0.68f, viewport.y * 0.5f))
     }
 
     /** 由「相对 ` 的偏移」换算出绝对中心，主按钮移动后自动跟随。 */
@@ -1848,8 +1951,19 @@ class FloatingWindowStateManager @Inject constructor(
     /**
      * 首次使用时生成默认双范围：都以准心（` 按钮）为中心，
      * 大范围限制视角触点的活动区域，小范围用于每次回中的随机落点。
+     *
+     * 没有 ` 按钮时不生成任何默认范围：否则空预设里会凭空出现一个锚在
+     * 伪坐标上的范围框，看起来像「没添加 ` 却出现了键位」。
      */
     private fun ensureDefaultMouseAreas() {
+        if (shootingModeAnchorOrNull() == null) {
+            mouseAreaHalf.value = 0f
+            landingAreaHalf.value = 0f
+            mouseAreaCenter.value = Offset.Zero
+            landingAreaCenter.value = Offset.Zero
+            syncMouseAreas()
+            return
+        }
         if (mouseAreaCustomized) {
             recomputeMouseAreaCenters()
             syncMouseAreas()
@@ -1866,11 +1980,37 @@ class FloatingWindowStateManager @Inject constructor(
         syncMouseAreas()
     }
 
+    /** 没有 ` 按钮且没有手绘范围时清空双范围，避免在空白区域偷偷限制触点。 */
+    private fun refreshAreasForItems() {
+        val hasToggle = shootingModeAnchorOrNull() != null
+        val profile = activeProfile()
+        val hasPolygon = profile != null &&
+            (profile.mouseAreaPoints.size >= 3 || profile.landingAreaPoints.size >= 3)
+        if (!hasToggle) {
+            if (!hasPolygon) ensureDefaultMouseAreas()
+            applyAreaPolygons()
+            return
+        }
+        if (mouseAreaHalf.value <= 0f) {
+            ensureDefaultMouseAreas()
+        } else {
+            recomputeMouseAreaCenters()
+            syncMouseAreas()
+        }
+        applyAreaPolygons()
+    }
+
     /** 主按钮 ` 移动后重新锚定双范围（编辑态拖动时实时跟随）。 */
     fun refreshMouseAreaAnchor() {
-        if (mouseAreaHalf.value <= 0f) return
+        if (mouseAreaHalf.value <= 0f) {
+            ensureDefaultMouseAreas()
+            applyAreaPolygons()
+            return
+        }
         recomputeMouseAreaCenters()
         syncMouseAreas()
+        // 手绘多边形是绝对坐标，不跟随 ` 移动；这里重新覆盖回去。
+        applyAreaPolygons()
     }
 
     /** 高级层拖动/缩放「鼠标活动范围」（大范围，形状为手绘不规则多边形）。 */
@@ -2045,8 +2185,6 @@ class FloatingWindowStateManager @Inject constructor(
         if (!mode.assists) {
             tapSequence234Job?.cancel()
         }
-        eventHandler.shiftCancelWalkEnabled =
-            mode.assists && (activeProfile()?.shiftCancelWalkEnabled ?: true)
         if (!mode.fCursor) fScrollControlActive = false
     }
 
@@ -2177,8 +2315,7 @@ class FloatingWindowStateManager @Inject constructor(
         }
         // ` 按钮的位置变化（拖动/改布局）时，双范围整体跟着走。
         if (item is DraggableItem.FixedKey && item.type == DraggableItemType.SHOOTING_MODE) {
-            _shootingAnchorFlow.value = item.touchCenter
-            refreshMouseAreaAnchor()
+            refreshAreasForItems()
         }
         eventHandler.updateMeasuredPosition(item)
         // 只测量，不改布局、不落盘。
@@ -2237,6 +2374,7 @@ class FloatingWindowStateManager @Inject constructor(
     fun removeItem(id: Int) {
         _containerItems.value = _containerItems.value.filterNot { it.id == id }
         eventHandler.updateKeyMapping(_containerItems.value)
+        refreshAreasForItems()
         persistActiveProfile()
     }
 
@@ -2254,6 +2392,7 @@ class FloatingWindowStateManager @Inject constructor(
         }
         _containerItems.value = _containerItems.value + withFreshId
         eventHandler.updateKeyMapping(_containerItems.value)
+        refreshAreasForItems()
         persistActiveProfile()
     }
 
@@ -2309,6 +2448,7 @@ class FloatingWindowStateManager @Inject constructor(
      * Ids are renumbered from 1 so the layout stays internally consistent.
      */
     fun replaceAllItems(items: List<DraggableItem>) {
+        editSnapshot = null
         val renumbered = items.mapIndexed { index, item ->
             val newId = index + 1
             when (item) {
@@ -2553,6 +2693,9 @@ class FloatingWindowStateManager @Inject constructor(
     fun switchProfile(id: String) {
         if (_profiles.value.none { it.id == id }) return
         if (_activeProfileId.value == id) return
+        // 跨预设时丢弃编辑快照：否则在编辑态下新建/切换预设后点「回退」，
+        // 会把这个旧快照里的按键灌进新预设（表现为新建预设自带 ` 键）。
+        editSnapshot = null
         // updateKeyMapping() lifts every contact, so remember what is still
         // physically held and press it again against the new mapping. Without
         // this a held W would go dead until the user let go and re-pressed it.
@@ -2561,6 +2704,8 @@ class FloatingWindowStateManager @Inject constructor(
         val heldMouse = eventHandler.heldMouseButtons()
         _activeProfileId.value = id
         shootingAreaDraft.value = null
+        areaDraft.value = null
+        areaDraftTarget.value = null
         clearPendingExtraTap()
         scope.launch { dataStoreManager.saveActiveProfileId(id) }
         applyActiveProfile()
@@ -2573,6 +2718,8 @@ class FloatingWindowStateManager @Inject constructor(
 
     fun createProfile(name: String): String {
         val id = UUID.randomUUID().toString()
+        // 新建预设后旧编辑快照已经不对应当前预设，丢弃它，避免「回退」把旧按键写回来。
+        editSnapshot = null
         val newProfile = Profile(
             id = id,
             name = name.ifBlank { "预设 ${_profiles.value.size + 1}" },
@@ -2596,6 +2743,7 @@ class FloatingWindowStateManager @Inject constructor(
 
     fun deleteProfile(id: String) {
         if (_profiles.value.size <= 1) return // keep at least one profile
+        editSnapshot = null
         val remaining = _profiles.value.filterNot { it.id == id }
         _profiles.value = remaining
         scope.launch { dataStoreManager.saveProfiles(remaining) }
@@ -2626,6 +2774,7 @@ class FloatingWindowStateManager @Inject constructor(
      */
     fun duplicateProfile(id: String): String? {
         persistActiveProfile()
+        editSnapshot = null
         val source = _profiles.value.firstOrNull { it.id == id } ?: return null
         val newId = UUID.randomUUID().toString()
         _profiles.value = _profiles.value + source.independentCopy(newId, nextCopyName(source.name))
@@ -2653,6 +2802,7 @@ class FloatingWindowStateManager @Inject constructor(
             importProfileCopies(sources, _profiles.value) { UUID.randomUUID().toString() }
         }.getOrElse { return "导入失败：${it.message ?: "请复制完整预设文本"}" }
         _profiles.value = _profiles.value + result
+        editSnapshot = null
         scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
         return null
     }
@@ -2685,6 +2835,8 @@ class FloatingWindowStateManager @Inject constructor(
             syncMacros()
             // 退出编辑时丢弃未完成的区域草稿，避免下次进入编辑态闪出半截多边形。
             shootingAreaDraft.value = null
+            areaDraft.value = null
+            areaDraftTarget.value = null
             // 编辑期间挂起的批量落点也不能留到游戏里执行。
             clearPendingExtraTap()
             // Position/size edits currently mutate DraggableItem in place, so
@@ -2709,6 +2861,8 @@ class FloatingWindowStateManager @Inject constructor(
         }
         clearActivePointers()
         shootingAreaDraft.value = null
+        areaDraft.value = null
+        areaDraftTarget.value = null
         clearPendingExtraTap()
         _profiles.value = snapshot.profiles
         val restored = snapshot.containerItems.map { it.copy() }

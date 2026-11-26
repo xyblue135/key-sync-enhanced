@@ -111,11 +111,13 @@ import com.devoid.keysync.domain.KEYCODE_MMC
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.AreaMath
+import com.devoid.keysync.model.AreaDrawTarget
 import com.devoid.keysync.model.AreaPoint
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.DraggableItemType
 import com.devoid.keysync.model.ExtraTapPoint
 import com.devoid.keysync.model.MAX_EXTRA_TAP_POINTS
+import com.devoid.keysync.model.MAX_MOUSE_AREA_POINTS
 import com.devoid.keysync.model.MAX_SHOOTING_AREA_POINTS
 import com.devoid.keysync.model.TouchMode
 import com.devoid.keysync.model.clampToViewport
@@ -134,8 +136,6 @@ fun ItemsContainer(
     containerItems: List<DraggableItem>,
     appConfig: AppConfig = AppConfig.Default,
     editing: Boolean = true,
-    walkEnabled: Boolean = false,
-    onCalibrateWalkOff: () -> Unit = {},
     onItemMeasured: (DraggableItem) -> Unit = {},
     onRemove: (Int) -> Unit,
     onUpdateKeyCode: (Int, Int, TouchMode?) -> Unit = { _, _, _ -> },
@@ -165,10 +165,23 @@ fun ItemsContainer(
     mouseMoveAreaHalf: Float = 0f,
     landingAreaCenter: Offset? = null,
     landingAreaHalf: Float = 0f,
-    /** ` 按钮的本地中心，用于齿轮设置里按相对偏移调整双范围。 */
-    shootingModeAnchor: Offset? = null,
+    /** 手绘鼠标活动范围 / 回中范围（悬浮层坐标）；空 = 使用默认方形。 */
+    mouseAreaPolygon: List<AreaPoint> = emptyList(),
+    landingAreaPolygon: List<AreaPoint> = emptyList(),
+    /** 默认方形拖动回调；手绘多边形不使用。 */
     onMouseAreaChange: (Offset, Float) -> Unit = { _, _ -> },
     onLandingAreaChange: (Offset, Float) -> Unit = { _, _ -> },
+    /** 正在绘制中的范围草稿；null = 未在绘制。 */
+    areaDraft: List<AreaPoint>? = null,
+    areaDraftTarget: AreaDrawTarget? = null,
+    onAreaDraftTap: (Offset) -> Unit = {},
+    onUndoAreaPoint: () -> Unit = {},
+    onClearAreaDraft: () -> Unit = {},
+    onFinishAreaDrawing: () -> Unit = {},
+    onCancelAreaDrawing: () -> Unit = {},
+    /** 从 ` 齿轮进入绘制 / 恢复默认方形。 */
+    onStartAreaDrawing: (AreaDrawTarget) -> Unit = {},
+    onClearArea: (AreaDrawTarget) -> Unit = {},
     /** 射击模式空闲多久后重新落指（ms），0 = 关闭；在 ` 的齿轮设置里调整。 */
     aimIdleReanchorMs: Int = 1000,
     onAimIdleReanchorMsChange: (Int) -> Unit = {},
@@ -249,33 +262,53 @@ fun ItemsContainer(
                 WasdRadiusRings(wasdGroup, ring, wasdSprintPreview, wasdCenterJitterPx)
             }
         }
-        // 鼠标双范围：大方形限制视角触点的活动范围，小方形决定每次回中的随机落点。
+        // 鼠标双范围：手绘多边形优先；没画时仍用默认方形（以 ` 为中心）。
         // 放在最底层绘制，避免挡住按键、丢弃点、光标落点等其他可拖动元素。
         if (editing || showAdvancedMarkers) {
             val areaAlpha = if (!editing) 0.6f else 1f
-            mouseMoveAreaCenter?.let { c ->
-                MouseAreaBlob(
-                    center = c,
-                    half = mouseMoveAreaHalf,
+            val areaColor = MaterialTheme.colorScheme.onSurfaceVariant
+            if (mouseAreaPolygon.size >= 3) {
+                AreaPolygonOutline(
+                    points = mouseAreaPolygon,
                     label = "鼠标范围",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = areaColor,
                     alpha = areaAlpha,
-                    enabled = editing,
-                    onCommit = onMouseAreaChange,
                 )
+            } else {
+                mouseMoveAreaCenter?.let { c ->
+                    MouseAreaBlob(
+                        center = c,
+                        half = mouseMoveAreaHalf,
+                        label = "鼠标范围",
+                        color = areaColor,
+                        alpha = areaAlpha,
+                        enabled = editing,
+                        onCommit = onMouseAreaChange,
+                    )
+                }
             }
-            landingAreaCenter?.let { c ->
-                MouseAreaBox(
-                    center = c,
-                    half = landingAreaHalf,
+            if (landingAreaPolygon.size >= 3) {
+                AreaPolygonOutline(
+                    points = landingAreaPolygon,
                     label = "回中范围",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = areaColor,
                     alpha = areaAlpha,
-                    enabled = editing,
-                    onCommit = onLandingAreaChange,
                 )
+            } else {
+                landingAreaCenter?.let { c ->
+                    MouseAreaBox(
+                        center = c,
+                        half = landingAreaHalf,
+                        label = "回中范围",
+                        color = areaColor,
+                        alpha = areaAlpha,
+                        enabled = editing,
+                        onCommit = onLandingAreaChange,
+                    )
+                }
             }
         }
+        // 手绘范围：绘制中全屏接管点击，逐点加点形成多边形。
         if (showKeys) {
         containerItems.forEach { item ->
             key(item.id) {
@@ -421,16 +454,14 @@ fun ItemsContainer(
                             GenericFixedKey(
                                 modifier = Modifier.onSizeChanged { onSizeChangeListener(it) },
                                 sizeDp = item.customSizeDp.dp,
-                                label = if (item.type == DraggableItemType.WALK_TOGGLE)
-                                    (if (walkEnabled) "静步 开" else "静步 关") else item.keyCode.keyCodeToString(),
+                                label = item.keyCode.keyCodeToString(),
                                 iconRes = when (item.type) {
                                     DraggableItemType.SHOOTING_MODE -> R.drawable.move
                                     DraggableItemType.FIRE -> R.drawable.bullet
                                     DraggableItemType.SCOPE -> R.drawable.scope
                                     else -> null
                                 },
-                                pressed = pressedKeys.contains(item.keyCode) ||
-                                    (item.type == DraggableItemType.WALK_TOGGLE && walkEnabled),
+                                pressed = pressedKeys.contains(item.keyCode),
                                 borderColor = touchModeColor(item.touchMode ?: normalTouchMode),
                             )
                         }
@@ -620,6 +651,20 @@ fun ItemsContainer(
                 }
             }
         }
+        // 手绘鼠标活动范围 / 回中范围：绘制中全屏接管点击，逐点加点形成多边形。
+        // 放在按键层之后渲染，保证盖在按钮上方，点到按钮位置也能正常加点。
+        if (editing && areaDraft != null) {
+            AreaPolygonDraftEditor(
+                points = areaDraft,
+                label = if (areaDraftTarget == AreaDrawTarget.LANDING) "回中落点范围" else "鼠标活动范围",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                onTap = onAreaDraftTap,
+                onUndo = onUndoAreaPoint,
+                onClear = onClearAreaDraft,
+                onDone = onFinishAreaDrawing,
+                onCancel = onCancelAreaDrawing,
+            )
+        }
         // ` 键自定义区域：编辑态显示已保存的多边形；绘制中显示草稿并接管全屏点击。
         if (editing) {
             val shootingKey = containerItems.filterIsInstance<DraggableItem.FixedKey>()
@@ -661,13 +706,18 @@ fun ItemsContainer(
                         onRemove(target.id)
                         configuringFixedKey = null
                     },
-                    anchor = shootingModeAnchor,
-                    mouseCenter = mouseMoveAreaCenter,
-                    mouseHalf = mouseMoveAreaHalf,
-                    landingCenter = landingAreaCenter,
-                    landingHalf = landingAreaHalf,
-                    onMouseAreaChange = onMouseAreaChange,
-                    onLandingAreaChange = onLandingAreaChange,
+                    hasMouseArea = mouseAreaPolygon.size >= 3,
+                    hasLandingArea = landingAreaPolygon.size >= 3,
+                    onDrawMouseArea = {
+                        onStartAreaDrawing(AreaDrawTarget.MOUSE)
+                        configuringFixedKey = null
+                    },
+                    onDrawLandingArea = {
+                        onStartAreaDrawing(AreaDrawTarget.LANDING)
+                        configuringFixedKey = null
+                    },
+                    onClearMouseArea = { onClearArea(AreaDrawTarget.MOUSE) },
+                    onClearLandingArea = { onClearArea(AreaDrawTarget.LANDING) },
                     aimIdleReanchorMs = aimIdleReanchorMs,
                     onAimIdleReanchorMsChange = onAimIdleReanchorMsChange,
                     aimRecenterMode = aimRecenterMode,
@@ -675,8 +725,6 @@ fun ItemsContainer(
                 )
             } else {
                 KeyCaptureDialog(
-                    walkCustomization = target.type == DraggableItemType.WALK_TOGGLE,
-                    onCalibrateWalkOff = onCalibrateWalkOff,
                     currentKeyCode = target.keyCode,
                     currentWheelRadius = target.wheelRadius,
                     onWheelRadiusChange = { target.wheelRadius = it },
@@ -858,6 +906,125 @@ private fun ShootingAreaEditor(
 }
 
 /**
+ * 已保存的鼠标活动范围 / 回中范围：虚线多边形 + 顶点 + 质心十字。
+ * 坐标直接是悬浮层坐标，不需要再相对某个按键换算。
+ */
+@Composable
+private fun AreaPolygonOutline(
+    points: List<AreaPoint>,
+    label: String,
+    color: Color,
+    alpha: Float,
+) {
+    if (points.size < 3) return
+    val absolute = points.map { Offset(it.x, it.y) }
+    val centroid = AreaMath.centroid(absolute)
+    Box(modifier = Modifier.fillMaxSize().alpha(alpha)) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val path = Path().apply {
+                moveTo(absolute.first().x, absolute.first().y)
+                absolute.drop(1).forEach { lineTo(it.x, it.y) }
+                close()
+            }
+            drawPath(path, color = color.copy(alpha = 0.10f))
+            drawPath(
+                path = path,
+                color = color,
+                style = Stroke(
+                    width = 2.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f)),
+                ),
+            )
+            absolute.forEach { drawCircle(color, radius = 4.dp.toPx(), center = it) }
+            val arm = 7.dp.toPx()
+            drawLine(color, centroid - Offset(arm, 0f), centroid + Offset(arm, 0f), 1.dp.toPx())
+            drawLine(color, centroid - Offset(0f, arm), centroid + Offset(0f, arm), 1.dp.toPx())
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            fontSize = 9.sp,
+            color = color,
+            modifier = Modifier.offset {
+                IntOffset((centroid.x + 8f).roundToInt(), (centroid.y + 4f).roundToInt())
+            },
+        )
+    }
+}
+
+/**
+ * 逐点绘制鼠标活动范围 / 回中范围：点击屏幕加顶点，顶部工具条撤销 / 清空 / 取消 / 完成。
+ * 用点数上限（[MAX_MOUSE_AREA_POINTS]）控制渲染开销，避免端点过多卡顿。
+ */
+@Composable
+private fun AreaPolygonDraftEditor(
+    points: List<AreaPoint>,
+    label: String,
+    color: Color,
+    onTap: (Offset) -> Unit,
+    onUndo: () -> Unit,
+    onClear: () -> Unit,
+    onDone: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val absolute = points.map { Offset(it.x, it.y) }
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.18f))
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { onTap(it) })
+                }
+        )
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            if (absolute.isNotEmpty()) {
+                val path = Path().apply {
+                    moveTo(absolute.first().x, absolute.first().y)
+                    absolute.drop(1).forEach { lineTo(it.x, it.y) }
+                    if (absolute.size >= 3) close()
+                }
+                if (absolute.size >= 3) {
+                    drawPath(path, color = color.copy(alpha = 0.18f))
+                }
+                drawPath(
+                    path = path,
+                    color = color,
+                    style = Stroke(
+                        width = 2.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f)),
+                    ),
+                )
+                absolute.forEach { drawCircle(color, radius = 5.dp.toPx(), center = it) }
+            }
+        }
+        Surface(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 16.dp),
+            shape = RoundedCornerShape(12.dp),
+            tonalElevation = 6.dp,
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = "$label：点击屏幕添加顶点（${points.size}/$MAX_MOUSE_AREA_POINTS）",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = onUndo, enabled = points.isNotEmpty()) { Text("撤销") }
+                    TextButton(onClick = onClear, enabled = points.isNotEmpty()) { Text("清空") }
+                    TextButton(onClick = onCancel) { Text("取消") }
+                    TextButton(onClick = onDone, enabled = points.size >= 3) { Text("完成") }
+                }
+            }
+        }
+    }
+}
+
+/**
  * 悬浮窗专用的内联对话框：渲染在当前 Compose 树内，不创建独立 window。
  *
  * 悬浮窗跑在 Service 里（没有 Activity 的 window token），Material3 的
@@ -902,14 +1069,6 @@ fun ShootingModeKeyDialog(
     onConfirm: (Int) -> Unit,
     onDismiss: () -> Unit,
     onDelete: (() -> Unit)? = null,
-    /** ` 按钮的本地中心，以及当前双范围，用于在齿轮里按相对偏移调整。 */
-    anchor: Offset? = null,
-    mouseCenter: Offset? = null,
-    mouseHalf: Float = 0f,
-    landingCenter: Offset? = null,
-    landingHalf: Float = 0f,
-    onMouseAreaChange: ((Offset, Float) -> Unit)? = null,
-    onLandingAreaChange: ((Offset, Float) -> Unit)? = null,
     /** 射击模式空闲重锚阈值（ms），0 = 关闭。 */
     aimIdleReanchorMs: Int = 1000,
     onAimIdleReanchorMsChange: (Int) -> Unit = {},
@@ -920,6 +1079,13 @@ fun ShootingModeKeyDialog(
     hasShootingArea: Boolean = false,
     onDrawShootingArea: () -> Unit = {},
     onClearShootingArea: () -> Unit = {},
+    /** 鼠标活动范围 / 回中范围是否已手绘多边形。 */
+    hasMouseArea: Boolean = false,
+    hasLandingArea: Boolean = false,
+    onDrawMouseArea: () -> Unit = {},
+    onDrawLandingArea: () -> Unit = {},
+    onClearMouseArea: () -> Unit = {},
+    onClearLandingArea: () -> Unit = {},
 ) {
     var selected by remember { mutableStateOf(currentKeyCode) }
     InlineDialog(onDismiss = onDismiss) {
@@ -978,74 +1144,65 @@ fun ShootingModeKeyDialog(
                 }
             }
         }
-        if (anchor != null && mouseCenter != null && onMouseAreaChange != null) {
-            val bigAnchor = anchor
-            val bigCurrent = mouseCenter
-            val smallCurrent = landingCenter ?: mouseCenter
-            var bigOx by remember(bigAnchor, bigCurrent) { mutableFloatStateOf(bigCurrent.x - bigAnchor.x) }
-            var bigOy by remember(bigAnchor, bigCurrent) { mutableFloatStateOf(bigCurrent.y - bigAnchor.y) }
-            var bigHalfValue by remember(mouseHalf) { mutableFloatStateOf(mouseHalf) }
-            var smallOx by remember(bigAnchor, smallCurrent) { mutableFloatStateOf(smallCurrent.x - bigAnchor.x) }
-            var smallOy by remember(bigAnchor, smallCurrent) { mutableFloatStateOf(smallCurrent.y - bigAnchor.y) }
-            var smallHalfValue by remember(landingHalf) { mutableFloatStateOf(landingHalf) }
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                Text("鼠标范围（相对 ` 的偏移）", style = MaterialTheme.typography.titleSmall)
-                MouseRangeSlider("横向偏移", bigOx, -600f..600f) {
-                    bigOx = it
-                    onMouseAreaChange(bigAnchor + Offset(bigOx, bigOy), bigHalfValue)
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            Text("鼠标活动范围", style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = if (hasMouseArea) "已手绘：瞄准触点越界时投影到多边形内"
+                else "默认以 ` 为中心的方形；可逐点手绘自己的可滑动范围",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onDrawMouseArea) {
+                    Text(if (hasMouseArea) "重新绘制" else "手绘范围")
                 }
-                MouseRangeSlider("纵向偏移", bigOy, -600f..600f) {
-                    bigOy = it
-                    onMouseAreaChange(bigAnchor + Offset(bigOx, bigOy), bigHalfValue)
+                if (hasMouseArea) {
+                    TextButton(onClick = onClearMouseArea) { Text("恢复默认") }
                 }
-                MouseRangeSlider("大小（半边长）", bigHalfValue, 40f..700f) {
-                    bigHalfValue = it
-                    onMouseAreaChange(bigAnchor + Offset(bigOx, bigOy), bigHalfValue)
-                }
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                Text("回中随机落点（小方形）", style = MaterialTheme.typography.titleSmall)
-                MouseRangeSlider("横向偏移", smallOx, -600f..600f) {
-                    smallOx = it
-                    onLandingAreaChange?.invoke(bigAnchor + Offset(smallOx, smallOy), smallHalfValue)
-                }
-                MouseRangeSlider("纵向偏移", smallOy, -600f..600f) {
-                    smallOy = it
-                    onLandingAreaChange?.invoke(bigAnchor + Offset(smallOx, smallOy), smallHalfValue)
-                }
-                MouseRangeSlider("大小（半边长）", smallHalfValue, 8f..400f) {
-                    smallHalfValue = it
-                    onLandingAreaChange?.invoke(bigAnchor + Offset(smallOx, smallOy), smallHalfValue)
-                }
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                Text("空闲重锚", style = MaterialTheme.typography.titleSmall)
-                val idleMs = aimIdleReanchorMs.coerceIn(0, 5000)
-                Text(
-                    text = if (idleMs <= 0) "关闭：一直沿用原位置"
-                    else "停手 ${idleMs}ms 后重新落指（轨迹出现断点）",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Slider(
-                    value = idleMs.toFloat(),
-                    onValueChange = { onAimIdleReanchorMsChange(it.roundToInt()) },
-                    valueRange = 0f..5000f,
-                )
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                Text("瞄准回中预设", style = MaterialTheme.typography.titleSmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    AimRecenterMode.entries.forEach { mode ->
-                        FilterChip(
-                            selected = aimRecenterMode == mode,
-                            onClick = { onAimRecenterModeChange(mode) },
-                            label = { Text(mode.displayName) },
-                        )
-                    }
-                }
-                Text(aimRecenterMode.description, style = MaterialTheme.typography.bodySmall)
             }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            Text("回中随机落点范围", style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = if (hasLandingArea) "已手绘：每次回中在多边形内随机落点"
+                else "默认小方形；可逐点手绘自己的回中范围",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onDrawLandingArea) {
+                    Text(if (hasLandingArea) "重新绘制" else "手绘范围")
+                }
+                if (hasLandingArea) {
+                    TextButton(onClick = onClearLandingArea) { Text("恢复默认") }
+                }
+            }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            Text("空闲重锚", style = MaterialTheme.typography.titleSmall)
+            val idleMs = aimIdleReanchorMs.coerceIn(0, 5000)
+            Text(
+                text = if (idleMs <= 0) "关闭：一直沿用原位置"
+                else "停手 ${idleMs}ms 后重新落指（轨迹出现断点）",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Slider(
+                value = idleMs.toFloat(),
+                onValueChange = { onAimIdleReanchorMsChange(it.roundToInt()) },
+                valueRange = 0f..5000f,
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            Text("瞄准回中预设", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                AimRecenterMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = aimRecenterMode == mode,
+                        onClick = { onAimRecenterModeChange(mode) },
+                        label = { Text(mode.displayName) },
+                    )
+                }
+            }
+            Text(aimRecenterMode.description, style = MaterialTheme.typography.bodySmall)
         }
         Row(
             modifier = Modifier
@@ -1099,8 +1256,6 @@ fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
     onWheelCenterOffsetChange: (Offset) -> Unit = {},
     currentSizeDp: Float = 50f,
     onSizeDpChange: (Float) -> Unit = {},
-    walkCustomization: Boolean = false,
-    onCalibrateWalkOff: () -> Unit = {},
     currentKeyCode: Int,
     currentTouchMode: TouchMode?,
     onConfirm: (Int, TouchMode?) -> Unit,
@@ -1206,7 +1361,7 @@ fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
                     color = MaterialTheme.colorScheme.error
                 )
             }
-            if (!walkCustomization && onAddExtraTap != null && onClearExtraTaps != null) {
+            if (onAddExtraTap != null && onClearExtraTaps != null) {
                 HorizontalDivider()
                 Text(
                     "连按落点 $nextExtraCount/$MAX_EXTRA_TAP_POINTS",
@@ -1275,10 +1430,6 @@ fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
                 )
                 Text("按住此键打开轮盘，移动鼠标选择，松开确认。圆心默认是此按钮的位置，可用偏移移到屏幕中间；默认半径 50px。", style = MaterialTheme.typography.bodySmall)
             }
-            if (walkCustomization) {
-                Text("静步定制化：按一次开启，再按一次关闭；开启后按 Shift 自动取消。默认 Caps Lock。不能绑定 Shift 或 WASD。", style = MaterialTheme.typography.bodySmall)
-                TextButton(onClick = onCalibrateWalkOff) { Text("游戏已关闭静步：校准为关闭") }
-            } else {
             HorizontalDivider()
 
             Text(
@@ -1326,7 +1477,6 @@ fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1349,10 +1499,8 @@ fun KeyCaptureDialog(    currentWheelRadius: Float = 50f,
                         Text(stringResource(R.string.key_rebind_cancel))
                     }
                     TextButton(
-                        enabled = !conflict && (!walkCustomization || (captured ?: currentKeyCode) !in setOf(
-                            KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT,
-                            KeyEvent.KEYCODE_W, KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_S, KeyEvent.KEYCODE_D)),
-                        onClick = { onWheelRadiusChange(radius); onWheelCenterOffsetChange(Offset(wheelOffsetX, wheelOffsetY)); onConfirm(captured ?: currentKeyCode, if (walkCustomization) TouchMode.TAP else selectedMode) }
+                        enabled = !conflict,
+                        onClick = { onWheelRadiusChange(radius); onWheelCenterOffsetChange(Offset(wheelOffsetX, wheelOffsetY)); onConfirm(captured ?: currentKeyCode, selectedMode) }
                     ) {
                         Text(stringResource(R.string.key_rebind_confirm))
                     }
@@ -1670,7 +1818,6 @@ fun MenuItems(
                     MenuCell(itemModifier, wasd, stringResource(R.string.label_compass)) { onItemClick(DraggableItemType.WASD_KEY) }
                     // 通用「按钮」：新建后点齿轮绑定按键 + 选点击/按住模式。
                     MenuCell(itemModifier, symbol("KEY"), stringResource(R.string.label_key)) { onItemClick(DraggableItemType.KEY) }
-                    MenuCell(itemModifier, symbol("静"), "静步定制化") { onItemClick(DraggableItemType.WALK_TOGGLE) }
                     Spacer(modifier = Modifier.size(30.dp))
                 }
             }
@@ -1709,28 +1856,6 @@ fun MenuItems(
 /** 丢弃点竖条尺寸：宽:高 ≈ 1:5。 */
 private const val DISCARD_BAR_WIDTH_DP = 36
 private const val DISCARD_BAR_HEIGHT_DP = 180
-@Composable
-private fun MouseRangeSlider(
-    label: String,
-    value: Float,
-    range: ClosedFloatingPointRange<Float>,
-    onChange: (Float) -> Unit,
-) {
-    Text(
-        text = "$label：${value.roundToInt()} px",
-        style = MaterialTheme.typography.bodySmall,
-    )
-    Slider(
-        value = value.coerceIn(range),
-        onValueChange = onChange,
-        valueRange = range,
-    )
-}
-
-/**
- * 高级层的鼠标活动范围：按手绘不规则轮廓绘制，拖框体移动中心，拖右下角改变半边长。
- * 与正方形相比更接近真人手部扫过的范围。
- */
 @Composable
 private fun MouseAreaBlob(
     center: Offset,
