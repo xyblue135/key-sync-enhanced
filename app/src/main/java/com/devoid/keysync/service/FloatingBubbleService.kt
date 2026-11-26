@@ -811,6 +811,7 @@ class FloatingBubbleService : Service() {
                 val wasdCenterJitterPx by stateManager.get().wasdCenterJitterPx.collectAsState()
                 val overlayOrigin by stateManager.get().overlayOriginFlow.collectAsState()
                 val shootingAnchor by stateManager.get().shootingAnchorFlow.collectAsState()
+                val shootingAreaDraft by stateManager.get().shootingAreaDraft.collectAsState()
                 Box {
                     // 光标：用半透明触摸指示圈代替箭头，视觉上更接近"手指触点"。
                     if (!isEditMode && !mappingPaused && !isShootingMode && wheelCursor == null) {
@@ -897,6 +898,24 @@ class FloatingBubbleService : Service() {
                                 stateManager.get().setAimRecenterMode(mode)
                             },
                             wasdCenterJitterPx = wasdCenterJitterPx,
+                            shootingArea = profiles.firstOrNull { it.id == activeId }
+                                ?.shootingAreaPoints.orEmpty(),
+                            shootingAreaDraft = shootingAreaDraft,
+                            onStartShootingAreaDrawing = {
+                                stateManager.get().beginShootingAreaDrawing()
+                            },
+                            onShootingAreaTap = { stateManager.get().addShootingAreaDraftPoint(it) },
+                            onUndoShootingAreaPoint = {
+                                stateManager.get().undoShootingAreaDraftPoint()
+                            },
+                            onClearShootingAreaDraft = { stateManager.get().clearShootingAreaDraft() },
+                            onFinishShootingArea = { stateManager.get().finishShootingAreaDrawing() },
+                            onCancelShootingArea = { stateManager.get().cancelShootingAreaDrawing() },
+                            onClearShootingArea = { stateManager.get().clearShootingArea() },
+                            onStickyDragStart = { id, cancel ->
+                                stateManager.get().beginStickyDrag(id, cancel)
+                            },
+                            onStickyDragRelease = { stateManager.get().releaseStickyDrag() },
                             // 滚轮操控已改为「光标位置全屏生效」，不再使用左右锚点。
                             showKeys = keysLayerVisible,
                             showAdvancedMarkers = advancedLayerVisible,

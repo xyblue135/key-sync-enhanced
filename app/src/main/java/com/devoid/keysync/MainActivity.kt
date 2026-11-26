@@ -233,6 +233,7 @@ class MainActivity : ComponentActivity() {
                         val mouseGuardEnabled by viewModel.mouseGuardEnabled.collectAsStateWithLifecycle()
                         val discardDragEnabled by viewModel.discardDragEnabled.collectAsStateWithLifecycle()
                         val discardDragSpeed by viewModel.discardDragSpeed.collectAsStateWithLifecycle()
+                        val discardPressHoldMs by viewModel.discardPressHoldMs.collectAsStateWithLifecycle()
                         val mapMouseToggleEnabled by viewModel.mapMouseToggleEnabled.collectAsStateWithLifecycle()
                         val fCursorClickEnabled by viewModel.fCursorClickEnabled.collectAsStateWithLifecycle()
                         val fCursorClickWindowMs by viewModel.fCursorClickWindowMs.collectAsStateWithLifecycle()
@@ -319,6 +320,8 @@ class MainActivity : ComponentActivity() {
                             onSetDiscardDragEnabled = viewModel::setDiscardDragEnabled,
                             discardDragSpeed = discardDragSpeed,
                             onSetDiscardDragSpeed = viewModel::setDiscardDragSpeed,
+                            discardPressHoldMs = discardPressHoldMs,
+                            onSetDiscardPressHoldMs = viewModel::setDiscardPressHoldMs,
                             mapMouseToggleEnabled = mapMouseToggleEnabled,
                             onSetMapMouseToggleEnabled = viewModel::setMapMouseToggleEnabled,
                             fCursorClickEnabled = fCursorClickEnabled,

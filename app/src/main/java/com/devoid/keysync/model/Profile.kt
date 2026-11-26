@@ -49,6 +49,11 @@ data class Profile(
     /** 拖拽丢弃落点（悬浮层坐标，竖条中心）。null = 尚未放置。 */
     val discardX: Float? = null,
     val discardY: Float? = null,
+    /**
+     * ` 键自定义区域：相对于该键左上角的顶点偏移（屏幕 px）。
+     * 空 = 使用默认方形；按下 ` 时从多边形质心注入。
+     */
+    val shootingAreaPoints: List<AreaPoint> = emptyList(),
     /** 进入光标模式时光标出现的位置（悬浮层坐标）。null = 使用屏幕中心。 */
     val cursorSpawnX: Float? = null,
     val cursorSpawnY: Float? = null,
@@ -68,8 +73,18 @@ data class ExtraTapPoint(
     val y: Float,
 )
 
+/** 自定义区域的一个顶点（相对所属按键左上角的偏移）。 */
+@Serializable
+data class AreaPoint(
+    val x: Float,
+    val y: Float,
+)
+
 /** 每个按键最多保留的连按落点数。 */
 const val MAX_EXTRA_TAP_POINTS = 6
+
+/** ` 键手绘区域的最大顶点数。 */
+const val MAX_SHOOTING_AREA_POINTS = 12
 
 /** 连按判定窗口（ms）：两次按下间隔超过该值就重新从第 1 次开始计数。 */
 const val EXTRA_TAP_WINDOW_MS = 250L

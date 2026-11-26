@@ -4,10 +4,13 @@ import android.annotation.SuppressLint
 import android.os.Bundle
 import android.util.Log
 import android.view.KeyEvent
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.rememberScrollState
@@ -71,6 +74,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -104,10 +108,13 @@ import com.devoid.keysync.domain.EventHandler
 import com.devoid.keysync.domain.KEYCODE_MMC
 import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.AppConfig
+import com.devoid.keysync.model.AreaMath
+import com.devoid.keysync.model.AreaPoint
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.DraggableItemType
 import com.devoid.keysync.model.ExtraTapPoint
 import com.devoid.keysync.model.MAX_EXTRA_TAP_POINTS
+import com.devoid.keysync.model.MAX_SHOOTING_AREA_POINTS
 import com.devoid.keysync.model.TouchMode
 import com.devoid.keysync.model.clampToViewport
 import com.devoid.keysync.model.layoutSizeForClamp
@@ -168,6 +175,21 @@ fun ItemsContainer(
     onAimRecenterModeChange: (AimRecenterMode) -> Unit = {},
     /** WASD 回中落点随机圆半径（px），编辑态在摇杆中心画出来。 */
     wasdCenterJitterPx: Int = 8,
+    /** ` 键自定义区域（相对按键左上角的顶点）；空 = 默认方形。 */
+    shootingArea: List<AreaPoint> = emptyList(),
+    /** 正在手绘时的草稿；null = 未在绘制。 */
+    shootingAreaDraft: List<AreaPoint>? = null,
+    onStartShootingAreaDrawing: () -> Unit = {},
+    onShootingAreaTap: (Offset) -> Unit = {},
+    onUndoShootingAreaPoint: () -> Unit = {},
+    onClearShootingAreaDraft: () -> Unit = {},
+    onFinishShootingArea: () -> Unit = {},
+    onCancelShootingArea: () -> Unit = {},
+    onClearShootingArea: () -> Unit = {},
+    /** 编辑态粘性拖动：(按键 id, 是否为取消键位置)。松手后锁定，鼠标移动继续带动。 */
+    onStickyDragStart: (Int, Boolean) -> Unit = { _, _ -> },
+    /** 任意一次按下时释放粘性锁定。 */
+    onStickyDragRelease: () -> Unit = {},
     /** 运行时是否显示普通按键层（Enter 层级预览用）。 */
     showKeys: Boolean = true,
     /** 运行时是否显示高级层标记（丢弃点），非编辑态只读。 */
@@ -214,6 +236,13 @@ fun ItemsContainer(
     Box(
         modifier
             .fillMaxSize()
+            // 任意位置按下都先结束「粘性拖动」；子节点收到事件后再开始新的拖动。
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    onStickyDragRelease()
+                }
+            }
             .onSizeChanged { viewport = Size(it.width.toFloat(), it.height.toFloat()) }
     ) {
         // 编辑态显示 WASD 的普通 / 疾跑半径圈，方便对照 Shift 位移设置是否合理。
@@ -271,6 +300,8 @@ fun ItemsContainer(
                             alpha = keysLayerAlpha,
                             onDoubleTap = if (editing && keysLayerInteractive) ({ configuringCancelableKey = item }) else null,
                             onScreenCenter = { item.touchCenter = it; onItemMeasured(item) },
+                            onDragEnded = { onStickyDragStart(item.id, false) },
+                            onPressed = onStickyDragRelease,
                             onOffsetChange = {
                                 val target = clampToViewport(
                                     position + it,
@@ -296,6 +327,8 @@ fun ItemsContainer(
                             enabled = draggingEnabled,
                             alpha = keysLayerAlpha,
                             onScreenCenter = { item.cancelTouchCenter = it; onItemMeasured(item) },
+                            onDragEnded = { onStickyDragStart(item.id, true) },
+                            onPressed = onStickyDragRelease,
                             onOffsetChange = {
                                 val target = clampToViewport(
                                     cancelableKeyPosition + it,
@@ -329,6 +362,8 @@ fun ItemsContainer(
                         }
                     }) else null,
                     onScreenCenter = { item.touchCenter = it; onItemMeasured(item) },
+                    onDragEnded = { onStickyDragStart(item.id, false) },
+                    onPressed = onStickyDragRelease,
                     onOffsetChange = {
                         val target = clampToViewport(
                             position + it,
@@ -593,11 +628,38 @@ fun ItemsContainer(
                 }
             }
         }
+        // ` 键自定义区域：编辑态显示已保存的多边形；绘制中显示草稿并接管全屏点击。
+        if (editing) {
+            val shootingKey = containerItems.filterIsInstance<DraggableItem.FixedKey>()
+                .firstOrNull { it.type == DraggableItemType.SHOOTING_MODE }
+            val draft = shootingAreaDraft
+            if (shootingKey != null) {
+                val points = draft ?: shootingArea
+                if (points.isNotEmpty() || draft != null) {
+                    ShootingAreaEditor(
+                        key = shootingKey,
+                        points = points,
+                        drafting = draft != null,
+                        onTap = onShootingAreaTap,
+                        onUndo = onUndoShootingAreaPoint,
+                        onClear = onClearShootingAreaDraft,
+                        onDone = onFinishShootingArea,
+                        onCancel = onCancelShootingArea,
+                    )
+                }
+            }
+        }
         configuringFixedKey?.let { target ->
             if (target.type == DraggableItemType.SHOOTING_MODE) {
                 // 射击模式切换键只允许在 ` 与鼠标中键之间下拉二选一。
                 ShootingModeKeyDialog(
                     currentKeyCode = target.keyCode,
+                    hasShootingArea = shootingArea.isNotEmpty(),
+                    onDrawShootingArea = {
+                        onStartShootingAreaDrawing()
+                        configuringFixedKey = null
+                    },
+                    onClearShootingArea = onClearShootingArea,
                     onConfirm = { newCode ->
                         onUpdateKeyCode(target.id, newCode, target.touchMode)
                         configuringFixedKey = null
@@ -707,6 +769,103 @@ fun ItemsContainer(
 }
 
 /**
+ * ` 键的自定义多边形区域：编辑态画出已保存/正在绘制的轮廓。
+ * 绘制态全屏接管点击加点，顶部工具条负责撤销 / 清空 / 取消 / 完成。
+ */
+@Composable
+private fun ShootingAreaEditor(
+    key: DraggableItem.FixedKey,
+    points: List<AreaPoint>,
+    drafting: Boolean,
+    onTap: (Offset) -> Unit,
+    onUndo: () -> Unit,
+    onClear: () -> Unit,
+    onDone: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val color = MaterialTheme.colorScheme.secondary
+    // 顶点存的是相对 ` 键左上角的偏移；绘制时换算成悬浮层绝对坐标。
+    val absolute = points.map { Offset(key.position.x + it.x, key.position.y + it.y) }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (drafting) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.18f))
+                    .pointerInput(Unit) {
+                        detectTapGestures(onTap = { onTap(it) })
+                    }
+            )
+        }
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            if (absolute.isNotEmpty()) {
+                val path = Path().apply {
+                    moveTo(absolute.first().x, absolute.first().y)
+                    absolute.drop(1).forEach { lineTo(it.x, it.y) }
+                    if (absolute.size >= 3) close()
+                }
+                if (absolute.size >= 3) {
+                    drawPath(path, color = color.copy(alpha = 0.18f))
+                }
+                drawPath(
+                    path = path,
+                    color = color,
+                    style = Stroke(
+                        width = 2.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f)),
+                    ),
+                )
+                absolute.forEach { drawCircle(color, radius = 5.dp.toPx(), center = it) }
+                // 质心：按下 ` 时触点就从这里注入。
+                if (absolute.size >= 3) {
+                    val centroid = AreaMath.centroid(absolute)
+                    drawCircle(color.copy(alpha = 0.9f), radius = 3.dp.toPx(), center = centroid)
+                    val arm = 9.dp.toPx()
+                    drawLine(
+                        color,
+                        centroid - Offset(arm, 0f),
+                        centroid + Offset(arm, 0f),
+                        strokeWidth = 1.5.dp.toPx(),
+                    )
+                    drawLine(
+                        color,
+                        centroid - Offset(0f, arm),
+                        centroid + Offset(0f, arm),
+                        strokeWidth = 1.5.dp.toPx(),
+                    )
+                }
+            }
+        }
+        if (drafting) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 16.dp),
+                shape = RoundedCornerShape(12.dp),
+                tonalElevation = 6.dp,
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = "点击屏幕添加顶点（${points.size}/$MAX_SHOOTING_AREA_POINTS）",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = onUndo, enabled = points.isNotEmpty()) { Text("撤销") }
+                        TextButton(onClick = onClear, enabled = points.isNotEmpty()) { Text("清空") }
+                        TextButton(onClick = onCancel) { Text("取消") }
+                        TextButton(onClick = onDone) { Text("完成") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
  * 悬浮窗专用的内联对话框：渲染在当前 Compose 树内，不创建独立 window。
  *
  * 悬浮窗跑在 Service 里（没有 Activity 的 window token），Material3 的
@@ -765,6 +924,10 @@ fun ShootingModeKeyDialog(
     /** 瞄准回中预设（经典 / 即回中 / 缓冲补发）。 */
     aimRecenterMode: AimRecenterMode = AimRecenterMode.INSTANT,
     onAimRecenterModeChange: (AimRecenterMode) -> Unit = {},
+    /** ` 键是否已手绘自定义区域。 */
+    hasShootingArea: Boolean = false,
+    onDrawShootingArea: () -> Unit = {},
+    onClearShootingArea: () -> Unit = {},
 ) {
     var selected by remember { mutableStateOf(currentKeyCode) }
     InlineDialog(onDismiss = onDismiss) {
@@ -806,6 +969,21 @@ fun ShootingModeKeyDialog(
                     text = stringResource(R.string.shooting_mode_key_mmb),
                     modifier = Modifier.padding(start = 4.dp)
                 )
+            }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            Text("` 的注入区域", style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = if (hasShootingArea) "已手绘：按下 ` 时从区域质心注入"
+                else "默认使用按钮自身方形区域，可手绘不规则多边形",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onDrawShootingArea) {
+                    Text(if (hasShootingArea) "重新绘制" else "手绘区域")
+                }
+                if (hasShootingArea) {
+                    TextButton(onClick = onClearShootingArea) { Text("恢复默认") }
+                }
             }
         }
         if (anchor != null && mouseCenter != null && onMouseAreaChange != null) {
@@ -1211,12 +1389,18 @@ fun DraggableItem(
     onDoubleTap: (() -> Unit)? = null,
     onOffsetChange: (Offset) -> Unit,
     onScreenCenter: (Offset) -> Unit = {},
+    /** 拖拽松手后通知：进入「粘性拖动」，鼠标继续移动也能带动该按钮。 */
+    onDragEnded: (() -> Unit)? = null,
+    /** 任意一次按下都先释放粘性锁定，再开始新的拖动/点击。 */
+    onPressed: (() -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     // pointerInput survives recomposition. Always invoke the latest callback:
     // callers may have replaced their position state after an earlier drag event.
     val currentOnOffsetChange by rememberUpdatedState(onOffsetChange)
     val currentOnDoubleTap by rememberUpdatedState(onDoubleTap)
+    val currentOnDragEnded by rememberUpdatedState(onDragEnded)
+    val currentOnPressed by rememberUpdatedState(onPressed)
     Box(modifier
         .alpha(alpha)
         .offset {
@@ -1237,11 +1421,20 @@ fun DraggableItem(
             val callback = currentOnDoubleTap ?: return@pointerInput
             detectTapGestures(onDoubleTap = { callback() })
         }
+        .pointerInput(id, enabled) {
+            // 每次按下先释放上一次的粘性锁定：再按一下就结束继续跟随。
+            if (!enabled) return@pointerInput
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                currentOnPressed?.invoke()
+            }
+        }
         .pointerInput(id, scale, enabled) {
             // 配置对话框打开时禁用拖动：此时屏幕上的手势属于对话框，
             // 绝不能让底层按钮跟着位移。
             if (!enabled) return@pointerInput
             detectDragGestures(onDragEnd = {
+                currentOnDragEnded?.invoke()
             }) { change, dragAmount ->
                 change.consume()
                 val newOffset = Offset(dragAmount.x, dragAmount.y) * scale

@@ -19,6 +19,7 @@ import kotlin.math.roundToLong
 import com.devoid.keysync.data.local.DataStoreManager
 import com.devoid.keysync.data.local.ProfilesLoad
 import com.devoid.keysync.model.AppConfig
+import com.devoid.keysync.model.AreaPoint
 import com.devoid.keysync.model.DraggableItem
 import com.devoid.keysync.model.DraggableItemType
 import com.devoid.keysync.domain.AimRecenterMode
@@ -48,8 +49,10 @@ import com.devoid.keysync.model.Profile
 import com.devoid.keysync.model.ExtraTapPoint
 import com.devoid.keysync.model.EXTRA_TAP_WINDOW_MS
 import com.devoid.keysync.model.MAX_EXTRA_TAP_POINTS
+import com.devoid.keysync.model.MAX_SHOOTING_AREA_POINTS
 import com.devoid.keysync.model.projectLayout
 import com.devoid.keysync.model.clampToViewport
+import com.devoid.keysync.model.layoutSizeForClamp
 import com.devoid.keysync.model.ProfileBundle
 import com.devoid.keysync.model.independentCopy
 import com.devoid.keysync.model.importProfileCopies
@@ -258,6 +261,8 @@ class FloatingWindowStateManager @Inject constructor(
     val discardDragEnabled = MutableStateFlow(false)
     /** Alt+D 拖拽速度倍数（1–100）：值越大移动越快，默认 25。 */
     val discardDragSpeed = MutableStateFlow(DEFAULT_DISCARD_DRAG_SPEED)
+    /** Alt+D 拖拽开始前先按住鼠标的时长（ms），默认 200。 */
+    val discardPressHoldMs = MutableStateFlow(DEFAULT_DISCARD_PRESS_HOLD_MS)
 
     /* -------- 鼠标双范围（全局）：位置相对 ` 按钮，主按钮移动时整体跟随（屏幕坐标） -------- */
     private val mouseAreaOffset = MutableStateFlow(Offset.Zero)
@@ -297,12 +302,14 @@ class FloatingWindowStateManager @Inject constructor(
     val tabEscAimEnabled = MutableStateFlow(true)
     /** 回瞄准延迟（ms），默认 110。 */
     val tabEscAimDelayMs = MutableStateFlow(DEFAULT_TAB_ESC_AIM_DELAY_MS)
-    /** ESC 按下后批量点击落点（全局），默认关闭；ESC 本体映射不受影响。 */
+    /** 按键松开后批量点击落点（全局），默认关闭；本体映射不受影响。 */
     val escAfterTapEnabled = MutableStateFlow(false)
-    /** ESC 后首次点击延迟（ms），默认 100。 */
+    /** 松开后首次点击延迟（ms），默认 100。 */
     val escAfterTapDelayMs = MutableStateFlow(DEFAULT_ESC_AFTER_TAP_DELAY_MS)
     /** 多个落点之间的间隔（ms），默认 50。 */
     val escAfterTapIntervalMs = MutableStateFlow(DEFAULT_ESC_AFTER_TAP_INTERVAL_MS)
+    /** ` 键手绘区域草稿；null = 未在绘制。 */
+    val shootingAreaDraft = MutableStateFlow<List<AreaPoint>?>(null)
     /** 回瞄准延迟任务：等游戏把界面关掉再重建瞄准触点。 */
     private var aimReturnJob: Job? = null
 
@@ -500,6 +507,10 @@ class FloatingWindowStateManager @Inject constructor(
                     dataStoreManager.save(DataStoreManager.DISCARD_DRAG_SPEED, discardDragSpeed.value)
                 }
             }
+            discardPressHoldMs.value =
+                (dataStoreManager.getInt(DataStoreManager.DISCARD_PRESS_HOLD_MS).first()
+                    ?: DEFAULT_DISCARD_PRESS_HOLD_MS)
+                    .coerceIn(MIN_DISCARD_PRESS_HOLD_MS, MAX_DISCARD_PRESS_HOLD_MS)
             mapMouseToggleEnabled.value =
                 dataStoreManager.getBoolean(DataStoreManager.MAP_MOUSE_TOGGLE_ENABLED).first() ?: true
             fCursorClickEnabled.value =
@@ -833,6 +844,9 @@ class FloatingWindowStateManager @Inject constructor(
         const val DEFAULT_DISCARD_DRAG_SPEED = 25f
         const val MIN_DISCARD_DRAG_SPEED = 1f
         const val MAX_DISCARD_DRAG_SPEED = 100f
+        const val DEFAULT_DISCARD_PRESS_HOLD_MS = 200
+        const val MIN_DISCARD_PRESS_HOLD_MS = 0
+        const val MAX_DISCARD_PRESS_HOLD_MS = 1000
         /** 旧版本滑杆上限；读到 1–10 的旧值按 10 倍换算到新刻度。 */
         private const val LEGACY_MAX_DISCARD_DRAG_SPEED = 10f
         /** 鼠标活动范围（大方形）与回中落点范围（小方形）的最小半边长（px）。 */
@@ -957,6 +971,7 @@ class FloatingWindowStateManager @Inject constructor(
             }
         }
         eventHandler.updateKeyMapping(items)
+        eventHandler.shootingAreaOffsets = active.shootingAreaPoints.map { Offset(it.x, it.y) }
         eventHandler.shiftCancelWalkEnabled =
             activePlayMode.assists && active.shiftCancelWalkEnabled
         ensureDefaultMouseAreas()
@@ -1041,6 +1056,14 @@ class FloatingWindowStateManager @Inject constructor(
     private var extraTapKeyCode = -1
     private var extraTapCount = 0
     private var extraTapLastAt = 0L
+    // 批量落点：按下时先挂起，等按键松开后再执行（延迟自动适配按住时长）。
+    private var pendingExtraTapKeyCode = -1
+    private var pendingExtraTapPoints: List<ExtraTapPoint> = emptyList()
+
+    private fun clearPendingExtraTap() {
+        pendingExtraTapKeyCode = -1
+        pendingExtraTapPoints = emptyList()
+    }
 
     /**
      * 连按落点触发：第 N 次按下（N≥2）额外点击该键的第 N-1 个落点，最多 3 个。
@@ -1048,16 +1071,12 @@ class FloatingWindowStateManager @Inject constructor(
      */
     private fun handleExtraTap(keyCode: Int) {
         val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return
-        // 批量落点模式：任何配置了落点的键（ESC、F 等），每次按下后延迟依次点击
-        // 该键的全部落点，本体映射仍照常触发。未开启时退回「快速连按才补点」。
+        // 批量落点模式：任何配置了落点的键（ESC、F 等）在松开后依次点击全部落点，
+        // 本体映射仍照常触发。按下时只挂起，避免落点与本体触点重叠。
         if (escAfterTapEnabled.value) {
             val points = profile.extraTapPoints.filter { it.keyCode == keyCode }
-            if (points.isEmpty()) return
-            eventHandler.tapExtraPointsSequential(
-                points.map { Offset(it.x, it.y) },
-                escAfterTapDelayMs.value.toLong(),
-                escAfterTapIntervalMs.value.toLong(),
-            )
+            pendingExtraTapKeyCode = if (points.isEmpty()) -1 else keyCode
+            pendingExtraTapPoints = points
             return
         }
         val now = SystemClock.uptimeMillis()
@@ -1071,6 +1090,34 @@ class FloatingWindowStateManager @Inject constructor(
         if (index !in 0 until MAX_EXTRA_TAP_POINTS) return
         val point = profile.extraTapPoints.filter { it.keyCode == keyCode }.getOrNull(index) ?: return
         eventHandler.tapExtraPoint(Offset(point.x, point.y))
+    }
+
+    /** 该键是否配了批量落点脚本；用于把 ESC 的回瞄准推迟到脚本结束后。 */
+    private fun hasBatchExtraTap(keyCode: Int): Boolean {
+        if (!escAfterTapEnabled.value) return false
+        val profile = _profiles.value.firstOrNull { it.id == _activeProfileId.value } ?: return false
+        return profile.extraTapPoints.any { it.keyCode == keyCode }
+    }
+
+    /**
+     * 按键松开后执行挂起的批量落点。
+     *
+     * 以松开时刻为起点，延迟自动适配用户按住了多久；全部落点跑完后，
+     * ESC / Tab 再按「回瞄准」配置切回射击模式。
+     */
+    private fun flushPendingExtraTap(keyCode: Int) {
+        if (keyCode != pendingExtraTapKeyCode) return
+        val points = pendingExtraTapPoints
+        clearPendingExtraTap()
+        if (points.isEmpty() || _isEditMode.value || _mappingPaused.value) return
+        val returnAim = tabEscAimEnabled.value &&
+            (keyCode == KeyEvent.KEYCODE_ESCAPE || keyCode == KeyEvent.KEYCODE_TAB)
+        eventHandler.tapExtraPointsSequential(
+            points.map { Offset(it.x, it.y) },
+            escAfterTapDelayMs.value.toLong(),
+            escAfterTapIntervalMs.value.toLong(),
+            onFinished = { if (returnAim) scheduleAimReturn() },
+        )
     }
 
     private var tapSequence234Job: Job? = null
@@ -1532,6 +1579,65 @@ class FloatingWindowStateManager @Inject constructor(
         if (updated.size != profile.extraTapPoints.size) updateExtraTapPoints(updated)
     }
 
+    /* ---------- ` 键手绘区域 ---------- */
+
+    /** 进入绘制：从零开始画新的多边形。 */
+    fun beginShootingAreaDrawing() {
+        if (!_isEditMode.value) return
+        shootingAreaDraft.value = emptyList()
+    }
+
+    /** 记录一次点击：坐标是悬浮层绝对坐标，存成相对 ` 键左上角的偏移。 */
+    fun addShootingAreaDraftPoint(absolute: Offset) {
+        val draft = shootingAreaDraft.value ?: return
+        if (draft.size >= MAX_SHOOTING_AREA_POINTS) return
+        val key = _containerItems.value.filterIsInstance<DraggableItem.FixedKey>()
+            .firstOrNull { it.type == DraggableItemType.SHOOTING_MODE } ?: return
+        shootingAreaDraft.value = draft + AreaPoint(
+            x = absolute.x - key.position.x,
+            y = absolute.y - key.position.y,
+        )
+    }
+
+    fun undoShootingAreaDraftPoint() {
+        val draft = shootingAreaDraft.value ?: return
+        if (draft.isNotEmpty()) shootingAreaDraft.value = draft.dropLast(1)
+    }
+
+    fun clearShootingAreaDraft() {
+        if (shootingAreaDraft.value == null) return
+        shootingAreaDraft.value = emptyList()
+    }
+
+    fun cancelShootingAreaDrawing() {
+        shootingAreaDraft.value = null
+    }
+
+    /** 完成绘制：少于 3 个点视为放弃；否则写入当前预设并立即生效。 */
+    fun finishShootingAreaDrawing() {
+        val draft = shootingAreaDraft.value ?: return
+        shootingAreaDraft.value = null
+        if (draft.size < 3) return
+        val profile = activeProfile() ?: return
+        _profiles.value = _profiles.value.map {
+            if (it.id == profile.id) it.copy(shootingAreaPoints = draft) else it
+        }
+        eventHandler.shootingAreaOffsets = draft.map { Offset(it.x, it.y) }
+        persistActiveProfile()
+    }
+
+    /** 恢复默认方形区域（清空手绘多边形）。 */
+    fun clearShootingArea() {
+        shootingAreaDraft.value = null
+        val profile = activeProfile() ?: return
+        if (profile.shootingAreaPoints.isEmpty()) return
+        _profiles.value = _profiles.value.map {
+            if (it.id == profile.id) it.copy(shootingAreaPoints = emptyList()) else it
+        }
+        eventHandler.shootingAreaOffsets = emptyList()
+        persistActiveProfile()
+    }
+
     private fun updateExtraTapPoints(points: List<ExtraTapPoint>) {
         val id = _activeProfileId.value
         _profiles.value = _profiles.value.map {
@@ -1578,7 +1684,10 @@ class FloatingWindowStateManager @Inject constructor(
     /** 全局开关：ESC 按下后延迟依次点击配置的落点（ESC 本体映射不变）。 */
     fun setEscAfterTapEnabled(enabled: Boolean) {
         escAfterTapEnabled.value = enabled
-        if (!enabled) eventHandler.cancelExtraTapSequence()
+        if (!enabled) {
+            eventHandler.cancelExtraTapSequence()
+            clearPendingExtraTap()
+        }
         scope.launch { dataStoreManager.save(DataStoreManager.ESC_AFTER_TAP_ENABLED, enabled) }
     }
 
@@ -1675,6 +1784,13 @@ class FloatingWindowStateManager @Inject constructor(
         val safe = speed.coerceIn(MIN_DISCARD_DRAG_SPEED, MAX_DISCARD_DRAG_SPEED)
         discardDragSpeed.value = safe
         scope.launch { dataStoreManager.save(DataStoreManager.DISCARD_DRAG_SPEED, safe) }
+    }
+
+    /** 全局设置：Alt+D 开始前先按住鼠标的时长（0–1000ms）。 */
+    fun setDiscardPressHoldMs(ms: Int) {
+        val safe = ms.coerceIn(MIN_DISCARD_PRESS_HOLD_MS, MAX_DISCARD_PRESS_HOLD_MS)
+        discardPressHoldMs.value = safe
+        scope.launch { dataStoreManager.save(DataStoreManager.DISCARD_PRESS_HOLD_MS, safe) }
     }
 
     /** 当前预设的丢弃点；未放置返回 null。 */
@@ -2011,7 +2127,7 @@ class FloatingWindowStateManager @Inject constructor(
     }
 
     /**
-     * Alt+D：在当前光标位置按住左键 → 拖到丢弃点 → 停顿 → 松开 → 光标回位。
+     * Alt+D：在当前光标位置按住左键（默认 200ms，可配）→ 拖到丢弃点 → 停顿 → 松开 → 光标回位。
      *
      * 只在光标模式（非射击模式）且真正出现过鼠标输入时生效；按住 Alt 是硬性前提，
      * 避免单按 D 或误触时在游戏里拖拽/转视角。
@@ -2042,7 +2158,9 @@ class FloatingWindowStateManager @Inject constructor(
             var released = false
             try {
                 eventHandler.beginCursorDrag(pointer, start + origin)
-                delay(40)
+                // 按下后先保持一段时间，等游戏识别「拿起物品」再开始移动；时长可配。
+                delay(discardPressHoldMs.value.toLong()
+                    .coerceIn(MIN_DISCARD_PRESS_HOLD_MS.toLong(), MAX_DISCARD_PRESS_HOLD_MS.toLong()))
                 repeat(stepCount) { index ->
                     val t = (index + 1f) / stepCount
                     val p = lerpOffset(start, target, t)
@@ -2079,8 +2197,83 @@ class FloatingWindowStateManager @Inject constructor(
     private fun lerpOffset(from: Offset, to: Offset, t: Float): Offset =
         Offset(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)
 
+    /** 编辑态「粘性拖动」：拖拽松手后仍锁定该按键，鼠标移动继续带动它。 */
+    private data class StickyDragTarget(val itemId: Int, val cancelPosition: Boolean)
+    private var stickyDragTarget: StickyDragTarget? = null
+    private var stickyDragLastRaw: Offset? = null
+    private var stickyPersistJob: Job? = null
+
+    /** 拖动松手：锁定该按键，之后鼠标悬停移动也会带着它走。 */
+    fun beginStickyDrag(itemId: Int, cancelPosition: Boolean) {
+        if (!_isEditMode.value) return
+        stickyDragTarget = StickyDragTarget(itemId, cancelPosition)
+        stickyDragLastRaw = null
+    }
+
+    /** 再次按下（或退出编辑）：结束粘性锁定并落盘。 */
+    fun releaseStickyDrag() {
+        if (stickyDragTarget == null) return
+        clearStickyDrag()
+        persistActiveProfile()
+    }
+
+    private fun clearStickyDrag() {
+        stickyDragTarget = null
+        stickyDragLastRaw = null
+        stickyPersistJob?.cancel()
+        stickyPersistJob = null
+    }
+
+    /**
+     * 编辑态鼠标悬停：锁定中的按键跟着鼠标走。
+     *
+     * 用 rawX/rawY 的屏幕绝对坐标做差，避免按键自身移动后局部坐标反向污染位移。
+     */
+    private fun handleStickyDragMotion(event: MotionEvent): Boolean {
+        val target = stickyDragTarget ?: return false
+        if (event.actionMasked != MotionEvent.ACTION_HOVER_MOVE) return false
+        val raw = Offset(event.rawX, event.rawY)
+        val last = stickyDragLastRaw
+        stickyDragLastRaw = raw
+        if (last == null) return true
+        val delta = raw - last
+        if (delta == Offset.Zero) return true
+        val items = _containerItems.value
+        val item = items.firstOrNull { it.id == target.itemId } ?: run {
+            clearStickyDrag()
+            return false
+        }
+        val viewport = overlayViewport ?: currentScreenSize()
+        val scale = if (item is DraggableItem.WASDGroup) item.scale else _appConfig.value.buttonScale
+        val current = if (target.cancelPosition && item is DraggableItem.CancelableKey)
+            item.cancelPosition else item.position
+        val moved = clampToViewport(
+            current + delta,
+            item.layoutSizeForClamp(scale),
+            scale,
+            Size(viewport.x, viewport.y),
+        )
+        when {
+            target.cancelPosition && item is DraggableItem.CancelableKey -> item.cancelPosition = moved
+            else -> {
+                item.position = moved
+                item.anchorPosition = moved
+            }
+        }
+        // 触发重组，让 Compose 里 remember(item.position) 的位置状态跟着更新。
+        _containerItems.value = items.toList()
+        // 连续移动时不频繁写 DataStore：停手 400ms 后再落盘。
+        stickyPersistJob?.cancel()
+        stickyPersistJob = scope.launch {
+            delay(400)
+            persistActiveProfile()
+        }
+        return true
+    }
+
     /** UI 弹出绑定框后调用，清除待绑定信号，避免下次重组又弹一次。 */
-    fun updateMeasuredPosition(item: DraggableItem) {        val size = when (item) {
+    fun updateMeasuredPosition(item: DraggableItem) {
+        val size = when (item) {
             is DraggableItem.FixedKey -> item.size
             is DraggableItem.VariableKey -> item.size
             else -> 0
@@ -2471,6 +2664,9 @@ class FloatingWindowStateManager @Inject constructor(
         val held = eventHandler.heldKeyCodes()
         val heldMouse = eventHandler.heldMouseButtons()
         _activeProfileId.value = id
+        shootingAreaDraft.value = null
+        clearPendingExtraTap()
+        clearStickyDrag()
         scope.launch { dataStoreManager.saveActiveProfileId(id) }
         applyActiveProfile()
         eventHandler.replayHeldKeys(held)
@@ -2482,11 +2678,16 @@ class FloatingWindowStateManager @Inject constructor(
 
     fun createProfile(name: String): String {
         val id = UUID.randomUUID().toString()
+        // 新建时就记录当前悬浮层的实测尺寸，预设行可以直接显示坐标基准，
+        // 不用等到用户第一次编辑保存后才补上。
+        val viewport = overlayViewport
         val newProfile = Profile(
             id = id,
             name = name.ifBlank { "预设 ${_profiles.value.size + 1}" },
             items = emptyList(),
             appConfig = AppConfig.Default,
+            layoutScreenWidth = viewport?.x?.toInt() ?: 0,
+            layoutScreenHeight = viewport?.y?.toInt() ?: 0,
         )
         _profiles.value = _profiles.value + newProfile
         scope.launch { dataStoreManager.saveProfiles(_profiles.value) }
@@ -2584,6 +2785,8 @@ class FloatingWindowStateManager @Inject constructor(
             )
         }
         _isEditMode.value = !_isEditMode.value
+        // 进/出编辑态都结束粘性拖动，避免锁定状态跨层级残留。
+        clearStickyDrag()
         // 进/出编辑态都清空按下状态：编辑态下不维护 pressedKeys，避免切换回来时
         // 残留上一个状态的「按下」高亮。
         _pressedKeys.value = emptySet()
@@ -2592,6 +2795,10 @@ class FloatingWindowStateManager @Inject constructor(
         if (!_isEditMode.value) {
             eventHandler.updateKeyMapping(containerItems.value)
             syncMacros()
+            // 退出编辑时丢弃未完成的区域草稿，避免下次进入编辑态闪出半截多边形。
+            shootingAreaDraft.value = null
+            // 编辑期间挂起的批量落点也不能留到游戏里执行。
+            clearPendingExtraTap()
             // Position/size edits currently mutate DraggableItem in place, so
             // closing edit mode is the natural commit point for persistence.
             persistActiveProfile()
@@ -2613,6 +2820,9 @@ class FloatingWindowStateManager @Inject constructor(
             return
         }
         clearActivePointers()
+        shootingAreaDraft.value = null
+        clearPendingExtraTap()
+        clearStickyDrag()
         _profiles.value = snapshot.profiles
         val restored = snapshot.containerItems.map { it.copy() }
         _containerItems.value = restored
@@ -2672,6 +2882,8 @@ class FloatingWindowStateManager @Inject constructor(
             if (_isEditMode.value) toggleEditMode()
             // 松开所有已按下的虚拟手指/鼠标键，避免恢复后游戏里还卡着按住状态。
             clearActivePointers()
+            clearPendingExtraTap()
+            clearStickyDrag()
         } else {
             // 暂停期间可能改过配置（例如通过设置页），恢复时重新同步键位。
             eventHandler.updateKeyMapping(containerItems.value)
@@ -2776,7 +2988,9 @@ class FloatingWindowStateManager @Inject constructor(
         // 物理 ESC / Tab：关闭背包、地图后延迟回瞄准；不吞按键，游戏照常收到。
         if (keyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.repeatCount == 0 &&
             tabEscAimEnabled.value &&
-            (keyEvent.keyCode == KeyEvent.KEYCODE_ESCAPE || keyEvent.keyCode == KeyEvent.KEYCODE_TAB)
+            (keyEvent.keyCode == KeyEvent.KEYCODE_ESCAPE || keyEvent.keyCode == KeyEvent.KEYCODE_TAB) &&
+            // 配了批量落点的键由脚本跑完后再回瞄准，避免准心先于落点重建。
+            !hasBatchExtraTap(keyEvent.keyCode)
         ) {
             // 用户已主动回射击模式，F 的唤出光标窗口立刻作废。
             fInteractArmedAt = 0L
@@ -2808,6 +3022,10 @@ class FloatingWindowStateManager @Inject constructor(
             // 预设级按 3 切近战负责整段注入，命中时吞掉原始 3，避免再点一次。
             if (!swapped && runTapSequence234(keyEvent.keyCode)) return true
         }
+        // 批量落点：按键松开后才真正开始点击，延迟从松开时刻算起。
+        if (keyEvent.action == KeyEvent.ACTION_UP) {
+            flushPendingExtraTap(keyEvent.keyCode)
+        }
         return eventHandler.handleKeyEvent(keyEvent)
     }
 
@@ -2815,6 +3033,8 @@ class FloatingWindowStateManager @Inject constructor(
         // 看到任何鼠标事件就认为光标模式可用；Alt+D 不允许在从未出现光标时盲拖。
         mouseCursorSeen = true
         if (isEditMode.value) {
+            // 粘性拖动：锁定中的按键跟着鼠标悬停移动，按下时由 UI 解除锁定。
+            if (handleStickyDragMotion(motionEvent)) return true
             val listener = keyCaptureListener ?: return false
             if (motionEvent.actionMasked == MotionEvent.ACTION_SCROLL) {
                 scrollTracker.update(motionEvent.getAxisValue(MotionEvent.AXIS_VSCROLL),

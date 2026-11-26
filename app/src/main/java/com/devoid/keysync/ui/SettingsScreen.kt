@@ -153,6 +153,8 @@ fun SettingsScreen(
     onSetDiscardDragEnabled: (Boolean) -> Unit = {},
     discardDragSpeed: Float = 25f,
     onSetDiscardDragSpeed: (Float) -> Unit = {},
+    discardPressHoldMs: Int = 200,
+    onSetDiscardPressHoldMs: (Int) -> Unit = {},
     fScrollControlEnabled: Boolean = true,
     onSetFScrollControlEnabled: (Boolean) -> Unit = {},
     fScrollSwipePx: Float = 120f,
@@ -710,11 +712,11 @@ fun SettingsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                "按下后批量点击落点（ESC / F 等）",
+                                "松开后批量点击落点（ESC / F 等）",
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "任何配了「连按落点」的键都适用：本体映射照常触发，按下后等待设定时间，" +
+                                "任何配了「连按落点」的键都适用：本体映射照常触发，按键松开后等待设定时间，" +
                                     "再依次点击该键的全部落点，落点之间间隔可调。例如 ESC 关背包后补点，" +
                                     "或 F 交互后补点另一个位置。落点在按键的齿轮里或工具菜单添加。",
                                 style = MaterialTheme.typography.labelMedium,
@@ -756,8 +758,8 @@ fun SettingsScreen(
                             onValueChange = { onSetEscAfterTapIntervalMs(it.roundToInt()) }
                         )
                         Text(
-                            "默认：按下后 100ms 点第一个，之后每 50ms 点下一个；每次按下保持 45–95ms。" +
-                                "快速连按 ESC 会取消上一轮并从最新一次重新计时。",
+                            "默认：松开后 100ms 点第一个，之后每 50ms 点下一个；每次按下保持 45–95ms。" +
+                                "ESC / Tab 的全部落点跑完后，再按上面的回瞄准延迟切回射击模式。",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -835,7 +837,7 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "光标模式下按住 Alt 再按 D：在光标处按住物品，分 12 步拖到编辑态放置的「丢弃点」" +
+                                "光标模式下按住 Alt 再按 D：在光标处按住物品（默认 200ms），分 12 步拖到编辑态放置的「丢弃点」" +
                                     "（默认 ×25 速，约为旧默认的一半），停顿 70ms 后松开，再按同样速度把光标送回原位。" +
                                     "射击模式、还没出现过鼠标、或没按住 Alt 时不生效。",
                                 style = MaterialTheme.typography.labelMedium,
@@ -848,6 +850,31 @@ fun SettingsScreen(
                         )
                     }
                     if (discardDragEnabled) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "按下后先按住",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                "${discardPressHoldMs} ms",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        Slider(
+                            value = discardPressHoldMs.toFloat().coerceIn(0f, 1000f),
+                            valueRange = 0f..1000f,
+                            steps = 19,
+                            onValueChange = {
+                                onSetDiscardPressHoldMs(it.roundToInt())
+                            }
+                        )
+                        Text(
+                            "默认 200ms：先按住物品再开始拖动。游戏识别不了「拿起」或刚拖就掉了可以调高；" +
+                                "调到 0 则按下后立刻移动。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 "拖拽速度",
@@ -869,7 +896,7 @@ fun SettingsScreen(
                         )
                         Text(
                             "1 = 原始速度（每步 14ms），25 = 25 倍速（默认），100 = 100 倍速（约 2ms 走完）。" +
-                                "只影响移动过程；按下前 40ms、松开前 70ms 的停顿保持不变。",
+                                "只影响移动过程；按下后的按住时长、松开前的 70ms 停顿不受影响。",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2489,7 +2516,7 @@ private fun ProfileRow(
             )
             if (profile.layoutScreenWidth > 0 && profile.layoutScreenHeight > 0) {
                 Text(
-                    text = "${profile.layoutScreenWidth} x ${profile.layoutScreenHeight}（悬浮层可用区域，不含系统栏）",
+                    text = "布局基准 ${profile.layoutScreenWidth} x ${profile.layoutScreenHeight}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

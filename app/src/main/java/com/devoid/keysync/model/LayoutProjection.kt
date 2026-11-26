@@ -38,14 +38,11 @@ internal fun projectLayout(items: List<DraggableItem>, from: Offset, to: Offset,
             val oldRange = (old - size * scale).coerceAtLeast(1f)
             val newRange = (new - size * scale).coerceAtLeast(0f)
             val projected = margin + ((value - margin) / oldRange) * newRange
-            // 边缘位置是用户有意选的：上一次修复把归一化坐标 coerceIn(0f,1f)，
-            // 结果 y=-12 的顶部按钮被压到 0，再被首帧测量写盘，变成永久下移。
-            // 这里只保证「触点中心还在屏幕内」——允许最多半个按钮的越界，
-            // 真正跑到屏幕外的旧坐标（例如 -500）仍会被拉回来。
-            val minAllowed = -size * 0.5f
-            val maxAllowed = new - size * scale
-            return if (maxAllowed < minAllowed) minAllowed
-            else projected.coerceIn(minAllowed, maxAllowed)
+            // 所有按钮都必须完整留在屏幕内，只能紧贴边缘：缩放后的绘制框
+            // 左/上边界不能小于 0，右/下边界不能大于新视口。
+            val minAllowed = margin
+            val maxAllowed = (new - size * (scale + 1f) / 2f).coerceAtLeast(minAllowed)
+            return projected.coerceIn(minAllowed, maxAllowed)
         }
         return Offset(axis(q.x, rotatedFrom.x, to.x), axis(q.y, rotatedFrom.y, to.y))
     }

@@ -125,6 +125,8 @@ class DataStoreManager internal constructor(
         val DISCARD_DRAG_SPEED = floatPreferencesKey("discard_drag_speed")
         /** 默认拖拽速度降速一半的一次性迁移标记。 */
         val DISCARD_SPEED_HALVED = booleanPreferencesKey("discard_speed_halved")
+        /** Alt+D 拖拽开始前先按住鼠标的时长（ms），默认 200。 */
+        val DISCARD_PRESS_HOLD_MS = intPreferencesKey("discard_press_hold_ms")
         /** F 光标滚轮操控（全局），默认开启。 */
         val F_SCROLL_CONTROL_ENABLED = booleanPreferencesKey("f_scroll_control_enabled")
         /** 每格滚轮短滑的像素距离，默认 120。 */

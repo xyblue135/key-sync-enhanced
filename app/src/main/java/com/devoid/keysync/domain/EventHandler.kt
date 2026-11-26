@@ -9,6 +9,7 @@ import android.view.MotionEvent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.nativeKeyCode
+import com.devoid.keysync.model.AreaMath
 import com.devoid.keysync.model.ClickMacro
 import com.devoid.keysync.model.AppConfig
 import com.devoid.keysync.model.DraggableItem
@@ -104,33 +105,56 @@ class EventHandler(
     private var extraTapCursor = 0
     private val extraTapPulse = TapPulse(schedule = { delay, action -> mainHandler.postDelayed({ action() }, delay) })
     private var extraTapSequenceJob: Job? = null
+    /** 序列当前按下、尚未抬起的触点；取消时要显式释放，避免留下幽灵手指。 */
+    private var extraTapInFlightPointer: Int? = null
 
     /** 取消 ESC 批量落点序列（关闭功能或重建映射时）。 */
     fun cancelExtraTapSequence() {
         extraTapSequenceJob?.cancel()
         extraTapSequenceJob = null
+        // 协程的 finally 可能在稍后才执行；这里先同步释放，避免新序列复用同一号段时
+        // 出现「上一条的按下还没抬起、下一条又按下」的错乱。
+        extraTapInFlightPointer?.let { eventInjector.releasePointer(it) }
+        extraTapInFlightPointer = null
     }
 
     /**
-     * ESC 按下后的批量落点：先等 [initialDelayMs]，再依次点击 [points]，
+     * 按键松开后的批量落点：先等 [initialDelayMs]，再依次点击 [points]，
      * 每次按下保持 45–95ms，间隔 [intervalMs]。本体按键映射不受影响。
+     *
+     * [onFinished] 只在全部落点正常跑完时回调；序列被取消（快速连按、切预设、
+     * 关功能）时不回调，由新的调用方自己负责后续动作。
      */
     fun tapExtraPointsSequential(
         points: List<Offset>,
         initialDelayMs: Long,
         intervalMs: Long,
+        onFinished: (() -> Unit)? = null,
     ) {
         cancelExtraTapSequence()
         if (points.isEmpty()) return
         extraTapSequenceJob = humanizeScope.launch {
-            delay(initialDelayMs.coerceAtLeast(0L))
-            for ((index, position) in points.withIndex()) {
-                if (!isActive) return@launch
-                val pointer = extraTapPointerBase + (extraTapCursor++ % 8)
-                eventInjector.injectPointer(pointer, position)
-                delay(sampleMacroHoldDuration().coerceIn(30L, 200L))
-                eventInjector.releasePointer(pointer)
-                if (index != points.lastIndex) delay(intervalMs.coerceAtLeast(0L))
+            try {
+                delay(initialDelayMs.coerceAtLeast(0L))
+                for ((index, position) in points.withIndex()) {
+                    if (!isActive) return@launch
+                    val pointer = extraTapPointerBase + (extraTapCursor++ % 8)
+                    extraTapInFlightPointer = pointer
+                    eventInjector.injectPointer(pointer, position)
+                    delay(sampleMacroHoldDuration().coerceIn(30L, 200L))
+                    if (extraTapInFlightPointer == pointer) {
+                        eventInjector.releasePointer(pointer)
+                        extraTapInFlightPointer = null
+                    }
+                    if (index != points.lastIndex) delay(intervalMs.coerceAtLeast(0L))
+                }
+                onFinished?.invoke()
+            } finally {
+                // 被取消时也要抬起当前触点，否则它会一直按在屏幕上。
+                extraTapInFlightPointer?.let {
+                    eventInjector.releasePointer(it)
+                    extraTapInFlightPointer = null
+                }
             }
         }
     }
@@ -938,7 +962,9 @@ class EventHandler(
      */
     @Volatile
     var shootingModeKeyCode: Int = KeyEvent.KEYCODE_GRAVE
-        private set
+    /** ` 键自定义区域顶点（相对该键左上角）；空 = 默认方形，注入点取按钮中心。 */
+    @Volatile
+    var shootingAreaOffsets: List<Offset> = emptyList()
 
     // 射击模式瞄准触点：从准心（SHOOTING_MODE 按钮位置）出发，随鼠标相对位移移动。
     // 触点拖到屏幕边缘时自动「抬按回中」到准心。拖拽式视角的游戏（三角洲/和平精英等）
@@ -1163,7 +1189,7 @@ class EventHandler(
 
         // 切换预设会重建映射，重新锚定回中基准到 SHOOTING_MODE 按钮位置（可拖动准心）。
         // 若设置了回中范围，则在范围内随机取点。
-        val center = randomLandingPoint(mapping.position)
+        val center = randomLandingPoint(shootingBasePoint(mapping.position))
         aimCenter = center
         aimPosition = center
         lastAimMoveTime = 0L
@@ -1977,6 +2003,13 @@ class EventHandler(
         eventInjector.injectPointer(pointerId, center)
     }
 
+    /** ` 键的注入基准点：画了自定义区域就取多边形质心，否则用按钮左上角。 */
+    private fun shootingBasePoint(fallback: Offset): Offset {
+        val offsets = shootingAreaOffsets
+        if (offsets.size < 3) return fallback
+        return fallback + AreaMath.centroid(offsets)
+    }
+
     private fun toggleShootingMode() {
         stopWheel()
         val newState = !shootingMode
@@ -2003,7 +2036,7 @@ class EventHandler(
                 keyMap[key]?.let {
                     // 进入射击模式：默认从 SHOOTING_MODE 按钮位置（可拖动准心）出发；
                     // 配置了回中范围时在小方形内随机落点，更接近真人按下的位置差异。
-                    val center = randomLandingPoint(it.position)
+                    val center = randomLandingPoint(shootingBasePoint(it.position))
                     lastRecenterTime = 0L
                     lastAimMoveTime = 0L
                     aimCenter = center
