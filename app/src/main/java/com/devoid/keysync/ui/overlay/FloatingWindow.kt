@@ -188,13 +188,6 @@ fun ItemsContainer(
     onFinishShootingArea: () -> Unit = {},
     onCancelShootingArea: () -> Unit = {},
     onClearShootingArea: () -> Unit = {},
-    /** 编辑态「点哪放哪」：当前选中的按键 id。 */
-    pendingPlaceItemId: Int? = null,
-    /** 点一下按钮：选中 / 取消选中。 */
-    onSelectForPlacement: (Int) -> Unit = {},
-    /** 选中后点击屏幕任意位置：把按钮放到该处（点击点作为中心）。 */
-    onPlaceSelected: (Offset) -> Unit = {},
-    onCancelPlacement: () -> Unit = {},
     /** 全局触摸模式：编辑态给按钮上色，便于一眼看清布局。 */
     normalTouchMode: TouchMode = TouchMode.TAP,
     cancelableTouchMode: TouchMode = TouchMode.TAP,
@@ -214,19 +207,7 @@ fun ItemsContainer(
     var configuringVariableKey by remember { mutableStateOf<DraggableItem.VariableKey?>(null) }
     var configuringCancelableKey by remember { mutableStateOf<DraggableItem.CancelableKey?>(null) }
 
-    // 打开任何按键配置框时，取消「点哪放哪」的选中，避免关掉弹框后误放置。
-    LaunchedEffect(
-        configuringFixedKey,
-        configuringVariableKey,
-        configuringCancelableKey,
-        configuringWasd,
-    ) {
-        if (configuringFixedKey != null || configuringVariableKey != null ||
-            configuringCancelableKey != null || configuringWasd != null
-        ) {
-            onCancelPlacement()
-        }
-    }
+
 
     // 只保留一个编辑层：按键、鼠标范围、丢弃点、连按落点同时可见可拖。
     // 之前分「按键层 / 高级层」，切换状态容易丢、也容易误触，已合并。
@@ -258,31 +239,6 @@ fun ItemsContainer(
     Box(
         modifier
             .fillMaxSize()
-            // 「点哪放哪」：选中按钮后，在任意位置点击一次即放置到该点。
-            .pointerInput(editing, pendingPlaceItemId) {
-                if (!editing || pendingPlaceItemId == null) return@pointerInput
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    // 放置点击独占本次手势：不触发按钮拖动、双击设置或齿轮按钮。
-                    down.consume()
-                    val start = down.position
-                    var moved = false
-                    var released = false
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Final)
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if ((change.position - start).getDistance() > viewConfiguration.touchSlop) {
-                            moved = true
-                        }
-                        if (change.changedToUpIgnoreConsumed()) {
-                            released = true
-                            break
-                        }
-                        if (!change.pressed) break
-                    }
-                    if (released && !moved) onPlaceSelected(start)
-                }
-            }
             .onSizeChanged { viewport = Size(it.width.toFloat(), it.height.toFloat()) }
     ) {
         // 编辑态显示 WASD 的普通 / 疾跑半径圈，方便对照 Shift 位移设置是否合理。
@@ -340,11 +296,6 @@ fun ItemsContainer(
                             alpha = keysLayerAlpha,
                             onDoubleTap = if (editing && keysLayerInteractive) ({ configuringCancelableKey = item }) else null,
                             onScreenCenter = { item.touchCenter = it; onItemMeasured(item) },
-                            selected = pendingPlaceItemId == item.id,
-                            onTap = {
-                                // 放置点击期间不再选中其他按钮。
-                                if (pendingPlaceItemId == null) onSelectForPlacement(item.id)
-                            },
                             onOffsetChange = {
                                 val target = clampToViewport(
                                     position + it,
@@ -403,11 +354,6 @@ fun ItemsContainer(
                         }
                     }) else null,
                     onScreenCenter = { item.touchCenter = it; onItemMeasured(item) },
-                    selected = pendingPlaceItemId == item.id,
-                    onTap = {
-                        // 放置点击期间不再选中其他按钮。
-                        if (pendingPlaceItemId == null) onSelectForPlacement(item.id)
-                    },
                     onOffsetChange = {
                         val target = clampToViewport(
                             position + it,
@@ -1434,17 +1380,12 @@ fun DraggableItem(
     onDoubleTap: (() -> Unit)? = null,
     onOffsetChange: (Offset) -> Unit,
     onScreenCenter: (Offset) -> Unit = {},
-    /** 单击（无拖动）：编辑态「点哪放哪」用它选中按钮。 */
-    onTap: (() -> Unit)? = null,
-    /** 选中高亮：等待用户点击目标位置。 */
-    selected: Boolean = false,
     content: @Composable () -> Unit
 ) {
     // pointerInput survives recomposition. Always invoke the latest callback:
     // callers may have replaced their position state after an earlier drag event.
     val currentOnOffsetChange by rememberUpdatedState(onOffsetChange)
     val currentOnDoubleTap by rememberUpdatedState(onDoubleTap)
-    val currentOnTap by rememberUpdatedState(onTap)
     Box(modifier
         .alpha(alpha)
         .offset {
@@ -1454,15 +1395,6 @@ fun DraggableItem(
             )
         }
         .scale(scale)
-        .then(
-            if (selected) {
-                Modifier.border(
-                    2.dp,
-                    MaterialTheme.colorScheme.primary,
-                    RoundedCornerShape(14.dp),
-                )
-            } else Modifier
-        )
         .onGloballyPositioned { coordinates ->
             onScreenCenter(coordinates.localToScreen(
                 Offset(coordinates.size.width / 2f, coordinates.size.height / 2f)))
@@ -1473,29 +1405,6 @@ fun DraggableItem(
             if (!enabled) return@pointerInput
             val callback = currentOnDoubleTap ?: return@pointerInput
             detectTapGestures(onDoubleTap = { callback() })
-        }
-        .pointerInput(id, enabled) {
-            // 单击（没有拖动）选中按钮，进入「点哪放哪」；拖动超过阈值则不算点击。
-            if (!enabled) return@pointerInput
-            awaitEachGesture {
-                val down = awaitFirstDown(requireUnconsumed = false)
-                val start = down.position
-                var moved = false
-                var released = false
-                while (true) {
-                    val event = awaitPointerEvent(PointerEventPass.Final)
-                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                    if ((change.position - start).getDistance() > viewConfiguration.touchSlop) {
-                        moved = true
-                    }
-                    if (change.changedToUpIgnoreConsumed()) {
-                        released = true
-                        break
-                    }
-                    if (!change.pressed) break
-                }
-                if (released && !moved) currentOnTap?.invoke()
-            }
         }
         .pointerInput(id, scale, enabled) {
             // 配置对话框打开时禁用拖动：此时屏幕上的手势属于对话框，
@@ -1514,7 +1423,9 @@ fun DraggableItem(
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .offset(x = 12.dp, y = (-12).dp)
+                    // 齿轮放在按钮内部右上角：按钮已经被限制在屏幕内，
+                    // 这样即使按钮紧贴屏幕边缘，齿轮也不会跑到屏幕外点不到。
+                    .offset(x = (-2).dp, y = 2.dp)
                     .size(20.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surface)

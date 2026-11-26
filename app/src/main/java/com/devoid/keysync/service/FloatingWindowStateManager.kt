@@ -2165,49 +2165,6 @@ class FloatingWindowStateManager @Inject constructor(
     private fun lerpOffset(from: Offset, to: Offset, t: Float): Offset =
         Offset(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)
 
-    /** 编辑态「点哪放哪」：点一下按钮选中，再点屏幕任意位置即可把它移过去。 */
-    val pendingPlaceItemId = MutableStateFlow<Int?>(null)
-    /** 放置后短暂抑制选中，避免落点位置上的其他按钮被顺带选中。 */
-    private var lastPlacementAt = 0L
-
-    /** 编辑态点一下按钮：选中 / 再点一次取消；不影响拖动与双击设置。 */
-    fun toggleSelectForPlacement(itemId: Int) {
-        if (!_isEditMode.value) return
-        if (SystemClock.uptimeMillis() - lastPlacementAt < 500L) return
-        pendingPlaceItemId.value = if (pendingPlaceItemId.value == itemId) null else itemId
-    }
-
-    fun clearPendingPlacement() {
-        pendingPlaceItemId.value = null
-    }
-
-    /**
-     * 把选中的按钮放到点击位置：点击点作为按钮中心，并限制在屏幕内。
-     * 放置后立即持久化。
-     */
-    fun placeSelectedItemAt(click: Offset) {
-        val id = pendingPlaceItemId.value ?: return
-        pendingPlaceItemId.value = null
-        if (!_isEditMode.value) return
-        val items = _containerItems.value
-        val item = items.firstOrNull { it.id == id } ?: return
-        val viewport = overlayViewport ?: currentScreenSize()
-        val scale = if (item is DraggableItem.WASDGroup) item.scale else _appConfig.value.buttonScale
-        val size = item.layoutSizeForClamp(scale)
-        if (size.width <= 0f || size.height <= 0f) return
-        val target = clampToViewport(
-            click - Offset(size.width / 2f, size.height / 2f),
-            size,
-            scale,
-            Size(viewport.x, viewport.y),
-        )
-        item.position = target
-        item.anchorPosition = target
-        _containerItems.value = items.toList()
-        lastPlacementAt = SystemClock.uptimeMillis()
-        persistActiveProfile()
-    }
-
     /** UI 弹出绑定框后调用，清除待绑定信号，避免下次重组又弹一次。 */
     fun updateMeasuredPosition(item: DraggableItem) {
         val size = when (item) {
@@ -2605,7 +2562,6 @@ class FloatingWindowStateManager @Inject constructor(
         _activeProfileId.value = id
         shootingAreaDraft.value = null
         clearPendingExtraTap()
-        clearPendingPlacement()
         scope.launch { dataStoreManager.saveActiveProfileId(id) }
         applyActiveProfile()
         eventHandler.replayHeldKeys(held)
@@ -2719,8 +2675,6 @@ class FloatingWindowStateManager @Inject constructor(
             )
         }
         _isEditMode.value = !_isEditMode.value
-        // 进/出编辑态都清掉“点哪放哪”的选中状态，避免跨层级残留。
-        clearPendingPlacement()
         // 进/出编辑态都清空按下状态：编辑态下不维护 pressedKeys，避免切换回来时
         // 残留上一个状态的「按下」高亮。
         _pressedKeys.value = emptySet()
@@ -2756,7 +2710,6 @@ class FloatingWindowStateManager @Inject constructor(
         clearActivePointers()
         shootingAreaDraft.value = null
         clearPendingExtraTap()
-        clearPendingPlacement()
         _profiles.value = snapshot.profiles
         val restored = snapshot.containerItems.map { it.copy() }
         _containerItems.value = restored
@@ -2817,7 +2770,6 @@ class FloatingWindowStateManager @Inject constructor(
             // 松开所有已按下的虚拟手指/鼠标键，避免恢复后游戏里还卡着按住状态。
             clearActivePointers()
             clearPendingExtraTap()
-            clearPendingPlacement()
         } else {
             // 暂停期间可能改过配置（例如通过设置页），恢复时重新同步键位。
             eventHandler.updateKeyMapping(containerItems.value)
