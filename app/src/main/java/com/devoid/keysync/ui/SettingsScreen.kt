@@ -1014,7 +1014,7 @@ fun SettingsScreen(
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "方向晃动（1–100）",
+                                    "乱线幅度（1–100）",
                                     modifier = Modifier.weight(1f),
                                     style = MaterialTheme.typography.titleMedium
                                 )
@@ -1028,7 +1028,8 @@ fun SettingsScreen(
                                 onValueChange = { onSetWasdSway(it.roundToInt().toFloat()) }
                             )
                             Text(
-                                "按住期间的轻微摆头，满值约 ±1.5°，默认 50；跑动觉得方向飘就调小。",
+                                "按住时触点围绕当前方向的摆动范围：默认 50 约 ±0.3 倍摇杆半径，" +
+                                    "拉满约 ±0.55。跑动觉得方向飘就调小。",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

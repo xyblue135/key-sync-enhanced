@@ -342,7 +342,7 @@ class EventHandler(
     @Volatile
     var humanizationStrength = 50f
 
-    /** WASD 方向晃动幅度，1–100（100 = 最大 ±1.5°）。与整体强度分开，便于单独压小前进晃动。 */
+    /** WASD 按住期间的乱线幅度，1–100；100 ≈ 摇杆半径的 ±0.55。 */
     @Volatile
     var wasdSwayStrength = 50f
 
@@ -841,6 +841,14 @@ class EventHandler(
         return perp * (if (Random.nextBoolean()) amplitude else -amplitude)
     }
 
+    /**
+     * 按住期间的拟人轨迹。
+     *
+     * 以前是 55–80ms 一次的「角度 ±2.5°」小摆动，轨迹图上是一条条光滑折线。
+     * 现在改成按 60Hz（[WasdScribblePath.STEP_MS]）播放一条预生成的 Catmull-Rom
+     * 乱线：方向连续变化、偶尔绕圈回穿，接近真人拇指在摇杆上的真实轨迹。
+     * 路径用完（约 19 秒）就换一条新的随机路径，避免出现可识别的周期。
+     */
     private fun restartWasdJitter(
         pointerId: Int,
         mask: Int,
@@ -859,26 +867,81 @@ class EventHandler(
         wasdJitterJob = motionScope.launch {
             // 过渡期间不抖；再额外静默一小段，等触点真正落定后再开始驻留抖动。
             delay(wasdHoldSettleMs.coerceIn(0, 800).toLong())
-            // 高频毛刺固定 55–80ms 一次；慢速摆头仍按用户设定的「抖动间隔」推进。
-            // 轨迹图里这样才能看到密集的小锯齿，而不是每 200ms 一个折角。
-            var nextSwayAt = 0L
+            var path: List<Offset> = emptyList()
+            var pathCenter: Offset? = null
+            var index = 0
             while (isActive && wasdHumanization) {
-                delay(55L + Random.nextLong(0L, 25L))
                 if (!wasdHumanization) break
-                // 过渡弧线正在铺开时不要插毛刺，否则会把弧线拽乱。
+                // 简易模式 / 强度归零时没有可播的路径，降频空转，避免 60Hz 白跑。
+                if (swayFactor <= 0.001f) {
+                    delay(200L)
+                    continue
+                }
+                delay(WasdScribblePath.STEP_MS)
+                // 过渡弧线正在铺开时不要插乱线，否则会把弧线拽乱。
                 if (wasdTransitionJob?.isActive == true) continue
                 // 只拖 current 触点，绝不 reanchor（见 JoystickMotion.jitter）。
                 val center = map.center ?: return@launch
-                val now = SystemClock.uptimeMillis()
-                if (now >= nextSwayAt) {
-                    advanceSway()
-                    nextSwayAt = now + nextWasdJitterDelay()
+                if (path.isEmpty() || pathCenter != center) {
+                    path = buildScribblePath(center, baseTarget)
+                    pathCenter = center
+                    // 从离当前触点最近的路径点开始，避免到位后第一帧瞬移。
+                    index = nearestPathIndex(path, joystickMotion.target)
+                    if (path.isEmpty()) {
+                        delay(200L)
+                        continue
+                    }
                 }
-                val target = jitterTarget(center, baseTarget) +
-                    tremorOffset(center, baseTarget, wasdHoldTremorPx)
-                joystickMotion.jitter(pointerId, mask, target)
+                if (index >= path.size) {
+                    // 一条路径播完：换一条新的随机路径，并接回当前触点位置。
+                    path = buildScribblePath(center, baseTarget)
+                    index = nearestPathIndex(path, joystickMotion.target)
+                }
+                val point = path[index]
+                // 在样条路径上再叠一层高频毛刺（「到位驻留抖动」滑杆），让线更碎。
+                joystickMotion.jitter(
+                    pointerId,
+                    mask,
+                    point + tremorOffset(center, point, wasdHoldTremorPx),
+                )
+                index++
             }
         }
+    }
+
+    private fun nearestPathIndex(path: List<Offset>, position: Offset): Int {
+        if (path.isEmpty()) return 0
+        var best = 0
+        var bestDistance = Float.MAX_VALUE
+        path.forEachIndexed { index, point ->
+            val distance = (point - position).getDistanceSquared()
+            if (distance < bestDistance) {
+                bestDistance = distance
+                best = index
+            }
+        }
+        return best
+    }
+
+    /**
+     * 生成一条围绕当前方向落点的乱线路径。
+     *
+     * 幅度随「WASD 方向晃动」滑杆缩放：默认 50 时约 ±0.30R，拉满约 ±0.55R。
+     * 意图点距离中心太近（起按点）时不生成，避免整条路径被死区裁成一团。
+     */
+    private fun buildScribblePath(center: Offset, intent: Offset): List<Offset> {
+        val radius = (intent - center).getDistance()
+        if (radius < 8f) return emptyList()
+        val sway = swayFactor
+        if (sway <= 0.001f) return emptyList()
+        val amplitude = radius * (0.05f + 0.50f * sway)
+        return WasdScribblePath.generate(
+            center = center,
+            intent = intent,
+            joystickRadius = radius,
+            amplitude = amplitude,
+            random = Random(System.nanoTime()),
+        )
     }
 
     /**
